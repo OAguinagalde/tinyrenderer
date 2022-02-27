@@ -16,10 +16,10 @@ if (!(Test-Path "obj")) { $null = New-Item "obj" -Type Directory }
 # /WX /W4 Warnings as error
 # /EHsc for exceptions
 if ($Release) {
-    cl main.cpp tgaimage.cpp /Zi /Fe".\bin\main.exe" /Fo".\obj\" /Fd".\obj\" /nologo /O2 /EHsc
+    cl main.cpp tgaimage.cpp model.cpp /Zi /Fe".\bin\main.exe" /Fo".\obj\" /Fd".\obj\" /nologo /O2 /EHsc
 }
 else {
-    cl main.cpp tgaimage.cpp /Zi /Fe".\bin\main.exe" /Fo".\obj\" /Fd".\obj\" /nologo /Od /EHsc
+    cl main.cpp tgaimage.cpp model.cpp /Zi /Fe".\bin\main.exe" /Fo".\obj\" /Fd".\obj\" /nologo /Od /EHsc
 }
 
 if ($?) {

@@ -1,5 +1,10 @@
 #include "tgaimage.h"
 #include <chrono>
+#include <vector>
+#include <cmath>
+
+#include "model.h"
+#include "geometry.h"
 
 int absolute(int value) {
     if (value < 0) {
@@ -23,7 +28,7 @@ void swap(int &a, int &b) {
 // measure_since(start);
 void measure_since(std::chrono::steady_clock::time_point start) {
     auto stop = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start);
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
     long long ns = duration.count();
     printf("Measured %lldns\n", ns);
 }
@@ -35,7 +40,6 @@ const TGAColor blue = TGAColor(0, 0, 255, 255);
 
 // Copyed from the lesson to test performance, I win!!!
 void line4th(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) { 
-    auto start = std::chrono::high_resolution_clock::now();
     bool steep = false; 
     if (std::abs(x0-x1)<std::abs(y0-y1)) { 
         std::swap(x0, y0); 
@@ -63,12 +67,9 @@ void line4th(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
             error -= 1.; 
         } 
     } 
-    measure_since(start);
 }
 
 void line5th(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) { 
-    auto start = std::chrono::high_resolution_clock::now();
-
     bool steep = false; 
     if (std::abs(x0-x1)<std::abs(y0-y1)) { 
         std::swap(x0, y0); 
@@ -96,12 +97,9 @@ void line5th(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
             error2 -= dx*2; 
         } 
     }
-    measure_since(start);
 } 
 
 void line5thImprovedIssue28(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) { 
-    auto start = std::chrono::high_resolution_clock::now();
-
     bool steep = false; 
     if (std::abs(x0-x1)<std::abs(y0-y1)) { 
         std::swap(x0, y0); 
@@ -137,12 +135,9 @@ void line5thImprovedIssue28(int x0, int y0, int x1, int y1, TGAImage &image, TGA
             }
         }
     }
-    measure_since(start);
 } 
 
 void line1(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
-    auto start = std::chrono::high_resolution_clock::now();
-
     int differenceX = x1-x0;
     int differenceXAbs = absolute(differenceX);
 
@@ -181,30 +176,33 @@ void line1(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
             percentageOfLineDone += increment;
         }
     }
-
-    measure_since(start);
-    image.set(x0, y0, green);
-    image.set(x1, y1, blue);
 }
 
 int main(int argc, char** argv) {
-    TGAImage image(100, 100, TGAImage::RGB);
+    Model *model = NULL;
+    const int width  = 800;
+    const int height = 800;
+    model = new Model("african_head.obj");
 
-    line4th(13, 20, 80, 40, image, white); 
-    line4th(20, 13, 40, 80, image, red); 
-    line4th(80, 40, 13, 20, image, red);
-
-    line5th(13, 20, 80, 40, image, white); 
-    line5th(20, 13, 40, 80, image, red); 
-    line5th(80, 40, 13, 20, image, red);
-
-    line5thImprovedIssue28(13, 20, 80, 40, image, white); 
-    line5thImprovedIssue28(20, 13, 40, 80, image, red); 
-    line5thImprovedIssue28(80, 40, 13, 20, image, red);
-    
-    line1(13, 20, 80, 40, image, white); 
-    line1(20, 13, 40, 80, image, red); 
-    line1(80, 40, 13, 20, image, red);
+    TGAImage image(width, height, TGAImage::RGB);
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i=0; i<model->nfaces(); i++) {
+        std::vector<int> face = model->face(i);
+        for (int j=0; j<3; j++) {
+            Vec3f v0 = model->vert(face[j]);
+            Vec3f v1 = model->vert(face[(j+1)%3]);
+            int x0 = (v0.x+1.)*width/2.;
+            int y0 = (v0.y+1.)*height/2.;
+            int x1 = (v1.x+1.)*width/2.;
+            int y1 = (v1.y+1.)*height/2.;
+            // line4th(x0, y0, x1, y1, image, white);
+            // line5th(x0, y0, x1, y1, image, white); // 2800 - 1400
+            // line5thImprovedIssue28(x0, y0, x1, y1, image, white);  //2700 - 1400
+            line1(x0, y0, x1, y1, image, white); // 2700 - 1200
+        }
+    }
+    measure_since(start);
+    delete model;
     
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
     image.write_tga_file("output.tga");
