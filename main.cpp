@@ -1,20 +1,5 @@
 #include "tgaimage.h"
-
-/*
-# First attempt
-
-The goal of the first lesson is to render the wire mesh. To do this, we should learn how to draw line segments.
-We can simply read what Bresenham’s line algorithm is, but let’s write code ourselves. How does the simplest code
-that draws a line segment between (x0, y0) and (x1, y1) points look like? Apparently, something like this:
-
-void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) { 
-    for (float t=0.; t<1.; t+=.01) { 
-        int x = x0 + (x1-x0)*t; 
-        int y = y0 + (y1-y0)*t; 
-        image.set(x, y, color); 
-    } 
-}
-*/
+#include <chrono>
 
 int absolute(int value) {
     if (value < 0) {
@@ -33,12 +18,59 @@ void swap(int &a, int &b) {
     b = c;
 }
 
+// Usage:
+// auto start = std::chrono::high_resolution_clock::now();
+// measure_since(start);
+void measure_since(std::chrono::steady_clock::time_point start) {
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start);
+    long long ns = duration.count();
+    printf("Measured %lldns\n", ns);
+}
+
 const TGAColor white = TGAColor(255, 255, 255, 255);
 const TGAColor red = TGAColor(255, 0, 0, 255);
 const TGAColor green = TGAColor(0, 255, 0, 255);
 const TGAColor blue = TGAColor(0, 0, 255, 255);
 
-void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
+#define line line1
+
+// Copyed from the lesson to test performance, I win!!!
+void line2(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) { 
+    auto start = std::chrono::high_resolution_clock::now();
+    bool steep = false; 
+    if (std::abs(x0-x1)<std::abs(y0-y1)) { 
+        std::swap(x0, y0); 
+        std::swap(x1, y1); 
+        steep = true; 
+    } 
+    if (x0>x1) { 
+        std::swap(x0, x1); 
+        std::swap(y0, y1); 
+    } 
+    int dx = x1-x0; 
+    int dy = y1-y0; 
+    float derror = std::abs(dy/float(dx)); 
+    float error = 0; 
+    int y = y0; 
+    for (int x=x0; x<=x1; x++) { 
+        if (steep) { 
+            image.set(y, x, color); 
+        } else { 
+            image.set(x, y, color); 
+        } 
+        error += derror; 
+        if (error>.5) { 
+            y += (y1>y0?1:-1); 
+            error -= 1.; 
+        } 
+    } 
+    measure_since(start);
+} 
+
+void line1(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
+    auto start = std::chrono::high_resolution_clock::now();
+
     int differenceX = x1-x0;
     int differenceXAbs = absolute(differenceX);
 
@@ -55,12 +87,10 @@ void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
 
         double percentageOfLineDone = 0.0;
         double increment = 1.0 / (double) differenceXAbs;
-        for (int pixel = x0; pixel != x1; ) {
-            int x = pixel;
+        for (int x = x0; x <= x1; x++) {
             int y = y0 + (y1-y0) * percentageOfLineDone;
             image.set(x, y, color);
             percentageOfLineDone += increment;
-            pixel++;
         }
     }
     else {
@@ -73,15 +103,14 @@ void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
 
         double percentageOfLineDone = 0.0;
         double increment = 1.0 / (double) differenceYAbs;
-        for (int pixel = y0; pixel != y1; ) {
+        for (int y = y0; y <= y1; y++) {
             int x = x0 + (x1-x0) * percentageOfLineDone;
-            int y = pixel;
             image.set(x, y, color);
             percentageOfLineDone += increment;
-            pixel++;
         }
     }
 
+    measure_since(start);
     image.set(x0, y0, green);
     image.set(x1, y1, blue);
 }
