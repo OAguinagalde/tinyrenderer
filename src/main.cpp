@@ -182,16 +182,17 @@ void line(int x0, int y0, int x1, int y1, TGAImage& image, TGAColor color) {
     }
 }
 
-int main(int argc, char** argv) {
-    Model* model = NULL;
-    const int width = 800;
-    const int height = 800;
-    model = new Model("res/african_head.obj");
+void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, TGAColor color) {
 
+}
+
+void lesson1_obj_to_tga(const char* inputObjModelFileName, const int width, const int height, const char* outputTgaFileName) {
+    Model* model = NULL;
+    model = new Model(inputObjModelFileName);
+    
+    
     TGAImage image(width, height, TGAImage::RGB);
-    
     auto start = measure_time();
-    
     for (int i = 0; i < model->nfaces(); i++) {
         std::vector<int> face = model->face(i);
         
@@ -226,7 +227,11 @@ int main(int argc, char** argv) {
     delete model;
 
     image.flip_vertically(); // I want to have the origin at the left bottom corner of the image
-    image.write_tga_file("output.tga");
+    image.write_tga_file(outputTgaFileName);
+}
+
+int main(int argc, char** argv) {
+    lesson1_obj_to_tga("res/african_head.obj", 800, 800, "output.tga");
     return 0;
 }
 
