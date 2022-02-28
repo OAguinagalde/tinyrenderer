@@ -251,31 +251,85 @@ void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& col
     int horizontalLinesBetweenTopAndMid = top->y - mid->y;
     int horizontalLinesBetweenMidAndBot = mid->y - bot->y;
     int horizontalLinesBetweenTopAndBot = top->y - bot->y;
-    
+
     int distanceFromTopXToMidX = top->x - mid->x;
+    int distanceFromTopXToBotX = top->x - bot->x;
+    int distanceFromMidXToBotX = mid->x - bot->x;
     if (distanceFromTopXToMidX < 0) {
         // top is more to the left than mid
         //   T
         //   | M
         // ? | ?
-        int distanceFromTopXToBotX = top->x - bot->x;
         if (distanceFromTopXToBotX < 0) {
             // top is more to the left than bot
             //    T
             //    |  M
             //    | ?  ?
-            int distanceFromMidXToBotX = mid->x - bot->x;
             if (distanceFromMidXToBotX < 0) {
                 // bot is to the right of mid
                 //    T
                 //    | M
                 //    |   B
+                // So we know that line(T-B) is going to be longer than line(T-M)
+                // So we can split the triangle in 2 triangles, divided by the horizontal line where y == mid.y
+
+                // Calculate the increments (the steepness?) of the segments of the triangle as we progress with the filling
+                float incrementLeftLine = distanceFromTopXToMidX / (float)horizontalLinesBetweenTopAndMid;
+                float incrementRightLine = distanceFromTopXToBotX / (float)horizontalLinesBetweenTopAndBot;
+                float incrementBottomLine = distanceFromMidXToBotX / (float)horizontalLinesBetweenMidAndBot;
+                float leftx = top->x;
+                float rightx = top->x;
+
+                // 3. loop though each "horizontal line" between top and mid
+                for (int y  = top->y; y > mid-> y; y--) {
+                    // draw a line now that we know both the x and the y of both extremes
+                    line(leftx, y, rightx, y, image, color);
+                    // get the x position in the current height for both the left and right line
+                    leftx -= incrementLeftLine;
+                    rightx -= incrementRightLine;
+                }
+
+                // 4. loop though each "horizontal line" between mid and bot
+                for (int y  = mid->y; y >= bot-> y; y--) {
+                    // draw a line now that we know both the x and the y of both extremes
+                    line(leftx, y, rightx, y, image, color);
+                    // get the x position in the current height for both the left and right line
+                    leftx -= incrementBottomLine;
+                    rightx -= incrementRightLine;
+                }
             }
             else {
                 // bot is to the left of mid
                 //    T
                 //    |  M
                 //    | B
+                // So we know that line(T-B) is going to be longer than line(T-M)
+                // So we can split the triangle in 2 triangles, divided by the horizontal line where y == mid.y
+
+                // Calculate the increments (the steepness?) of the segments of the triangle as we progress with the filling
+                float incrementLeftLine = distanceFromTopXToBotX / (float)horizontalLinesBetweenTopAndBot;
+                float incrementRightLine = distanceFromTopXToMidX / (float)horizontalLinesBetweenTopAndMid;
+                float incrementBottomLine = distanceFromMidXToBotX / (float)horizontalLinesBetweenMidAndBot;
+                float leftx = top->x;
+                float rightx = top->x;
+
+                // 3. loop though each "horizontal line" between top and mid
+                for (int y  = top->y; y > mid-> y; y--) {
+                    // draw a line now that we know both the x and the y of both extremes
+                    line(leftx, y, rightx, y, image, color);
+                    // get the x position in the current height for both the left and right line
+                    leftx -= incrementLeftLine;
+                    rightx -= incrementRightLine;
+                }
+
+                // 4. loop though each "horizontal line" between mid and bot
+                for (int y  = mid->y; y >= bot-> y; y--) {
+                    // draw a line now that we know both the x and the y of both extremes
+                    line(leftx, y, rightx, y, image, color);
+                    // get the x position in the current height for both the left and right line
+                    leftx -= incrementLeftLine;
+                    rightx -= incrementBottomLine;
+                }
             }
         }
         else {
@@ -289,7 +343,6 @@ void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& col
             // Calculate the increments (the steepness?) of the segments of the triangle as we progress with the filling
             float incrementLeftLine = distanceFromTopXToBotX / (float)horizontalLinesBetweenTopAndBot;
             float incrementRightLine = distanceFromTopXToMidX / (float)horizontalLinesBetweenTopAndMid;
-            int distanceFromMidXToBotX = mid->x - bot->x;
             float incrementBottomLine = distanceFromMidXToBotX / (float)horizontalLinesBetweenMidAndBot;
             float leftx = top->x;
             float rightx = top->x;
@@ -318,30 +371,109 @@ void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& col
         //   T
         // M | 
         // ? | ?
-        int distanceFromTopXToBotX = top->x - bot->x;
         if (distanceFromTopXToBotX < 0) {
             // top is more to the left than bot
             //    T
             //  M |  
             //    | B
+            // So we know that line(T-B) is going to be longer than line(T-M)
+            // So we can split the triangle in 2 triangles, divided by the horizontal line where y == mid.y
+
+            // Calculate the increments (the steepness?) of the segments of the triangle as we progress with the filling
+            float incrementLeftLine = distanceFromTopXToMidX / (float)horizontalLinesBetweenTopAndMid;
+            float incrementRightLine = distanceFromTopXToBotX / (float)horizontalLinesBetweenTopAndBot;
+            float incrementBottomLine = distanceFromMidXToBotX / (float)horizontalLinesBetweenMidAndBot;
+            float leftx = top->x;
+            float rightx = top->x;
+
+            // 3. loop though each "horizontal line" between top and mid
+            for (int y  = top->y; y > mid-> y; y--) {
+                // draw a line now that we know both the x and the y of both extremes
+                line(leftx, y, rightx, y, image, color);
+                // get the x position in the current height for both the left and right line
+                leftx -= incrementLeftLine;
+                rightx -= incrementRightLine;
+            }
+
+            // 4. loop though each "horizontal line" between mid and bot
+            for (int y  = mid->y; y >= bot-> y; y--) {
+                // draw a line now that we know both the x and the y of both extremes
+                line(leftx, y, rightx, y, image, color);
+                // get the x position in the current height for both the left and right line
+                leftx -= incrementBottomLine;
+                rightx -= incrementRightLine;
+            }
         }
         else {
             // top is more to the left than bot
             //    T
             //  M |
             // ? ?|
-            int distanceFromMidXToBotX = mid->x - bot->x;
             if (distanceFromMidXToBotX < 0) {
                 // bot is to the right of mid
                 //    T
                 //  M |
                 //   B|
+                // So we know that line(T-B) is going to be longer than line(T-M)
+                // So we can split the triangle in 2 triangles, divided by the horizontal line where y == mid.y
+
+                // Calculate the increments (the steepness?) of the segments of the triangle as we progress with the filling
+                float incrementLeftLine = distanceFromTopXToMidX / (float)horizontalLinesBetweenTopAndMid;
+                float incrementRightLine = distanceFromTopXToBotX / (float)horizontalLinesBetweenTopAndBot;
+                float incrementBottomLine = distanceFromMidXToBotX / (float)horizontalLinesBetweenMidAndBot;
+                float leftx = top->x;
+                float rightx = top->x;
+
+                // 3. loop though each "horizontal line" between top and mid
+                for (int y  = top->y; y > mid-> y; y--) {
+                    // draw a line now that we know both the x and the y of both extremes
+                    line(leftx, y, rightx, y, image, color);
+                    // get the x position in the current height for both the left and right line
+                    leftx -= incrementLeftLine;
+                    rightx -= incrementRightLine;
+                }
+
+                // 4. loop though each "horizontal line" between mid and bot
+                for (int y  = mid->y; y >= bot-> y; y--) {
+                    // draw a line now that we know both the x and the y of both extremes
+                    line(leftx, y, rightx, y, image, color);
+                    // get the x position in the current height for both the left and right line
+                    leftx -= incrementBottomLine;
+                    rightx -= incrementRightLine;
+                }
             }
             else {
                 // bot is to the left of mid
                 //    T
                 //  M |
                 // B  |
+                // So we know that line(T-B) is going to be longer than line(T-M)
+                // So we can split the triangle in 2 triangles, divided by the horizontal line where y == mid.y
+
+                // Calculate the increments (the steepness?) of the segments of the triangle as we progress with the filling
+                float incrementLeftLine = distanceFromTopXToBotX / (float)horizontalLinesBetweenTopAndBot;
+                float incrementRightLine = distanceFromTopXToMidX / (float)horizontalLinesBetweenTopAndMid;
+                float incrementBottomLine = distanceFromMidXToBotX / (float)horizontalLinesBetweenMidAndBot;
+                float leftx = top->x;
+                float rightx = top->x;
+
+                // 3. loop though each "horizontal line" between top and mid
+                for (int y  = top->y; y > mid-> y; y--) {
+                    // draw a line now that we know both the x and the y of both extremes
+                    line(leftx, y, rightx, y, image, color);
+                    // get the x position in the current height for both the left and right line
+                    leftx -= incrementLeftLine;
+                    rightx -= incrementRightLine;
+                }
+
+                // 4. loop though each "horizontal line" between mid and bot
+                for (int y  = mid->y; y >= bot-> y; y--) {
+                    // draw a line now that we know both the x and the y of both extremes
+                    line(leftx, y, rightx, y, image, color);
+                    // get the x position in the current height for both the left and right line
+                    leftx -= incrementLeftLine;
+                    rightx -= incrementBottomLine;
+                }
             }
         }
     }
@@ -405,6 +537,12 @@ int main(int argc, char** argv) {
     triangle(t1[0], t1[1], t1[2], image, whiteTransparent);
     Vec2i t2[3] = { Vec2i(180, 150), Vec2i(120, 160), Vec2i(130, 180) };
     triangle(t2[0], t2[1], t2[2], image, whiteTransparent);
+    Vec2i t4[3] = { Vec2i(100, 190),   Vec2i(110, 150),  Vec2i(170, 100) };
+    triangle(t4[0], t4[1], t4[2], image, whiteTransparent);
+    Vec2i t5[3] = { Vec2i(50, 70),   Vec2i(20, 40),  Vec2i(40, 10) };
+    triangle(t5[0], t5[1], t5[2], image, whiteTransparent);
+    Vec2i t6[3] = { Vec2i(90, 100),   Vec2i(80, 70),  Vec2i(30, 20) };
+    triangle(t6[0], t6[1], t6[2], image, whiteTransparent);
 
     image.flip_vertically(); // I want to have the origin at the left bot corner of the image
     image.write_tga_file("output.tga");
