@@ -6,6 +6,7 @@
 #include "geometry.h"
 #include "util.h"
 
+const TGAColor whiteTransparent = TGAColor(255, 255, 255, 50);
 const TGAColor white = TGAColor(255, 255, 255, 255);
 const TGAColor red = TGAColor(255, 0, 0, 255);
 const TGAColor green = TGAColor(0, 255, 0, 255);
@@ -156,8 +157,8 @@ void line(int x0, int y0, int x1, int y1, TGAImage& image, const TGAColor& color
             swap(y0, y1);
         }
 
-        double percentageOfLineDone = 0.0;
-        double increment = 1.0 / (double)differenceXAbs;
+        float percentageOfLineDone = 0.0;
+        float increment = 1.0 / (float)differenceXAbs;
         for (int x = x0; x <= x1; x++) {
             int y = y0 + (y1 - y0) * percentageOfLineDone;
             image.set(x, y, color);
@@ -172,8 +173,8 @@ void line(int x0, int y0, int x1, int y1, TGAImage& image, const TGAColor& color
             swap(y0, y1);
         }
 
-        double percentageOfLineDone = 0.0;
-        double increment = 1.0 / (double)differenceYAbs;
+        float percentageOfLineDone = 0.0;
+        float increment = 1.0 / (float)differenceYAbs;
         for (int y = y0; y <= y1; y++) {
             int x = x0 + (x1 - x0) * percentageOfLineDone;
             image.set(x, y, color);
@@ -188,34 +189,35 @@ void triangle_outline(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGACo
     line(t2.x, t2.y, t0.x, t0.y, image, color);
 }
 
-void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& color) {
-    triangle_outline(t0, t1, t2, image, white);
-    // 1. find the highest vertex and the lowest vertex
-    // 2. calculate dy between them
-    // 3. loop though each "horizontal line" between them
-    //     1. get the x position in the current height for both the left and right line
-    //     2. draw a line now that we know both the x and the y of both extremes
+void fat_dot(int x, int y, TGAImage& image, const TGAColor& color) {
+    image.set(x, y, color);
+    image.set(x+1, y, color);
+    image.set(x-1, y, color);
+    image.set(x, y+1, color);
+    image.set(x, y-1, color);
+}
 
+void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& color) {
     // 1. find the highest vertex and the lowest vertex
     Vec2i* top;
     Vec2i* mid;
-    Vec2i* bottom;
+    Vec2i* bot;
     if (t0.y > t1.y) {
         if (t0.y > t2.y) {
             top = &t0;
             if (t1.y > t2.y) {
                 mid = &t1;
-                bottom = &t2;
+                bot = &t2;
             }
             else {
                 mid = &t2;
-                bottom = &t1;
+                bot = &t1;
             }
         }
         else {
             top = &t2;
             mid = &t0;
-            bottom = &t1;
+            bot = &t1;
         }
     }
     else {
@@ -223,28 +225,131 @@ void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& col
             top = &t1;
             if (t0.y > t2.y) {
                 mid = &t0;
-                bottom = &t2;
+                bot = &t2;
             }
             else {
                 mid = &t2;
-                bottom = &t1;
+                bot = &t0;
             }
         }
         else {
             top = &t2;
             mid = &t1;
-            bottom = &t0;
+            bot = &t0;
         }
     }
     image.set(top->x, top->y, green);
+    image.set(top->x, top->y+1, green);
+    image.set(top->x, top->y+2, green);
     image.set(mid->x, mid->y, blue);
-    image.set(bottom->x, bottom->y, red);
+    image.set(mid->x, mid->y+1, blue);
+    image.set(mid->x, mid->y+2, blue);
+    image.set(bot->x, bot->y, red);
+    image.set(bot->x, bot->y+1, red);
+    image.set(bot->x, bot->y+2, red);
     // 2. calculate dy between them
-    // 3. loop though each "horizontal line" between them
-    //     1. get the x position in the current height for both the left and right line
-    //     2. draw a line now that we know both the x and the y of both extremes
+    int horizontalLinesBetweenTopAndMid = top->y - mid->y;
+    int horizontalLinesBetweenMidAndBot = mid->y - bot->y;
+    int horizontalLinesBetweenTopAndBot = top->y - bot->y;
+    
+    int distanceFromTopXToMidX = top->x - mid->x;
+    if (distanceFromTopXToMidX < 0) {
+        // top is more to the left than mid
+        //   T
+        //   | M
+        // ? | ?
+        int distanceFromTopXToBotX = top->x - bot->x;
+        if (distanceFromTopXToBotX < 0) {
+            // top is more to the left than bot
+            //    T
+            //    |  M
+            //    | ?  ?
+            int distanceFromMidXToBotX = mid->x - bot->x;
+            if (distanceFromMidXToBotX < 0) {
+                // bot is to the right of mid
+                //    T
+                //    | M
+                //    |   B
+            }
+            else {
+                // bot is to the left of mid
+                //    T
+                //    |  M
+                //    | B
+            }
+        }
+        else {
+            // top is more to the left than mid
+            //   T
+            //   | M
+            // B | 
+            // So we know that line(T-B) is going to be longer than line(T-M)
+            // So we can split the triangle in 2 triangles, divided by the horizontal line where y == mid.y
 
+            // Calculate the increments (the steepness?) of the segments of the triangle as we progress with the filling
+            float incrementLeftLine = distanceFromTopXToBotX / (float)horizontalLinesBetweenTopAndBot;
+            float incrementRightLine = distanceFromTopXToMidX / (float)horizontalLinesBetweenTopAndMid;
+            int distanceFromMidXToBotX = mid->x - bot->x;
+            float incrementBottomLine = distanceFromMidXToBotX / (float)horizontalLinesBetweenMidAndBot;
+            float leftx = top->x;
+            float rightx = top->x;
 
+            // 3. loop though each "horizontal line" between top and mid
+            for (int y  = top->y; y > mid-> y; y--) {
+                // draw a line now that we know both the x and the y of both extremes
+                line(leftx, y, rightx, y, image, color);
+                // get the x position in the current height for both the left and right line
+                leftx -= incrementLeftLine;
+                rightx -= incrementRightLine;
+            }
+
+            // 4. loop though each "horizontal line" between mid and bot
+            for (int y  = mid->y; y >= bot-> y; y--) {
+                // draw a line now that we know both the x and the y of both extremes
+                line(leftx, y, rightx, y, image, color);
+                // get the x position in the current height for both the left and right line
+                leftx -= incrementLeftLine;
+                rightx -= incrementBottomLine;
+            }
+        }
+    }
+    else {
+        // top is more to the right than mid
+        //   T
+        // M | 
+        // ? | ?
+        int distanceFromTopXToBotX = top->x - bot->x;
+        if (distanceFromTopXToBotX < 0) {
+            // top is more to the left than bot
+            //    T
+            //  M |  
+            //    | B
+        }
+        else {
+            // top is more to the left than bot
+            //    T
+            //  M |
+            // ? ?|
+            int distanceFromMidXToBotX = mid->x - bot->x;
+            if (distanceFromMidXToBotX < 0) {
+                // bot is to the right of mid
+                //    T
+                //  M |
+                //   B|
+            }
+            else {
+                // bot is to the left of mid
+                //    T
+                //  M |
+                // B  |
+            }
+        }
+    }
+
+    triangle_outline(t0, t1, t2, image, white);
+    fat_dot(top->x, top->y, image, green);
+    fat_dot(mid->x, mid->y, image, blue);
+    fat_dot(bot->x, bot->y, image, red);
 }
 
 void lesson1_obj_to_tga(const char* inputObjModelFileName, const int width, const int height, const char* outputTgaFileName) {
@@ -287,7 +392,7 @@ void lesson1_obj_to_tga(const char* inputObjModelFileName, const int width, cons
     measure_since(start);
     delete model;
 
-    image.flip_vertically(); // I want to have the origin at the left bottom corner of the image
+    image.flip_vertically(); // I want to have the origin at the left bot corner of the image
     image.write_tga_file(outputTgaFileName);
 }
 
@@ -295,13 +400,13 @@ int main(int argc, char** argv) {
     TGAImage image(200, 200, TGAImage::RGB);
 
     Vec2i t0[3] = { Vec2i(10, 70),   Vec2i(50, 160),  Vec2i(70, 80) };
+    triangle(t0[0], t0[1], t0[2], image, whiteTransparent);
     Vec2i t1[3] = { Vec2i(180, 50),  Vec2i(150, 1),   Vec2i(70, 180) };
+    triangle(t1[0], t1[1], t1[2], image, whiteTransparent);
     Vec2i t2[3] = { Vec2i(180, 150), Vec2i(120, 160), Vec2i(130, 180) };
-    triangle(t0[0], t0[1], t0[2], image, red);
-    triangle(t1[0], t1[1], t1[2], image, white);
-    triangle(t2[0], t2[1], t2[2], image, green);
+    triangle(t2[0], t2[1], t2[2], image, whiteTransparent);
 
-    image.flip_vertically(); // I want to have the origin at the left bottom corner of the image
+    image.flip_vertically(); // I want to have the origin at the left bot corner of the image
     image.write_tga_file("output.tga");
     return 0;
 }
