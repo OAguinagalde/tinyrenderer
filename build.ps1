@@ -1,6 +1,6 @@
 param (
-    [Switch]$Release,
     [Switch]$Run,
+    [Switch]$Release,
     [String]$VisualizeImage
 )
 if (!(Get-Command cl.exe -ErrorAction SilentlyContinue)) {
