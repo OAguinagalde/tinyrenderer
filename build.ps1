@@ -35,6 +35,6 @@ if ($?) {
             throw [Exception]::new("Can't visualize! Expect viu.exe to be in path but it's not")
         }
         # start-process powershell.exe -ArgumentList ("-command", "viu.exe ./output.tga -w 60 -h 30;pause")
-        viu.exe $VisualizeImage -w 60 -h 30
+        viu.exe $VisualizeImage
     }
 }
