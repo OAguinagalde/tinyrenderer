@@ -337,6 +337,49 @@ void lesson1_obj_to_tga(const char* inputObjModelFileName, const int width, cons
     image.write_tga_file(outputTgaFileName);
 }
 
+// https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/barycentric-coordinates#:~:text=To%20compute%20the%20position%20of,(barycentric%20coordinates%20are%20normalized)
+// https://www.youtube.com/watch?v=HYAgJN3x4GA
+void baricenter_coordinates(Vec2i &a, Vec2i &b, Vec2i &c, Vec2i &p, float *u, float *v, float *w, bool *isInside, TGAImage& image) {
+    #ifdef BARICENTER_NO_USE_OPTIMIZATION_1
+    Vec2i ab = b - a;
+    Vec2i ac = c - a;
+    Vec2i ap = p - a;
+    Vec2i bp = p - b;
+    Vec2i ca = a - c;
+    // the magnitude of the cross product can be interpreted as the area of the parallelogram.
+    float paralelogramAreaABC = ab.cross_product_magnitude(ac);
+    float triangleAreaABC = paralelogramAreaABC / 2.0f;
+    float paralelogramAreaABP = ab.cross_product_magnitude(bp);
+    float paralelogramAreaCAP = ca.cross_product_magnitude(ap);
+    *u = (paralelogramAreaABP / 2.0f) / triangleAreaABC;
+    *v = (paralelogramAreaCAP / 2.0f) / triangleAreaABC;
+    #else
+    Vec2i ab = b - a;
+    Vec2i ac = c - a;
+    Vec2i ap = p - a;
+    Vec2i bp = p - b;
+    Vec2i ca = a - c;
+    // There is actually no need to do the "/ 2.0f" divisions we can instead do...
+    *u = ab.cross_product_magnitude(bp) / (float)ab.cross_product_magnitude(ac);
+    *v = ca.cross_product_magnitude(ap) / (float)ab.cross_product_magnitude(ac);
+    #endif // BARICENTER_NO_USE_OPTIMIZATION_1
+
+    // since we have u and v we can figure out w
+    *w = (1.0f - *u - *v);
+    // figure out if the point is inside the triangle
+    *isInside = true;
+    if (*u < 0.0f || *u > 1.0f) { *isInside = false; }
+    if (*v < 0.0f || *v > 1.0f) { *isInside = false; }
+    if (*w < 0.0f || *w > 1.0f) { *isInside = false; }
+
+    if (*isInside) {
+        fat_dot(p.x, p.y, image, green);
+    }
+    else {
+        fat_dot(p.x, p.y, image, red);
+    }
+}
+
 int main(int argc, char** argv) {
     TGAImage image(200, 200, TGAImage::RGB);
 
@@ -352,6 +395,13 @@ int main(int argc, char** argv) {
     triangle(t5[0], t5[1], t5[2], image, whiteTransparent);
     Vec2i t6[3] = { Vec2i(90, 100),   Vec2i(80, 70),  Vec2i(30, 20) };
     triangle(t6[0], t6[1], t6[2], image, whiteTransparent);
+
+    srand (time(NULL));
+    float t0u, t0v, t0w; bool t0inside;
+    for (int i = 0; i < 100; i++) {
+        #define T t1
+        baricenter_coordinates(T[0], T[1], T[2], Vec2i(rand() % 200 + 1, rand() % 200 + 1), &t0u, &t0v, &t0w, &t0inside, image);
+    }
 
     image.flip_vertically(); // I want to have the origin at the left bot corner of the image
     image.write_tga_file("output.tga");
