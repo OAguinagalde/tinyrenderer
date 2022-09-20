@@ -504,15 +504,44 @@ void lesson2_obj_to_tga_triangle1(const char* inputObjModelFileName, const int w
 
     TGAImage image(width, height, TGAImage::RGB);
     auto start = measure_time();
+    
+    // Where the light is "coming from"
+    Vec3f light_dir(0,0,-1);
 
-    for (int i=0; i < model->nfaces(); i++) { 
-        std::vector<int> face = model->face(i); 
-        Vec2i screen_coords[3]; 
-        for (int j = 0; j < 3; j++) { 
-            Vec3f world_coords = model->vert(face[j]); 
-            screen_coords[j] = Vec2i( (world_coords.x+1.0) * width / 2.0, (world_coords.y+1.) * height / 2.); 
+    // For each triangle that froms the object...
+    for (int i=0; i < model->nfaces(); i++) {
+        
+        std::vector<int> face = model->face(i);
+        
+        Vec2i screen_coords[3]; // the 3 points in our screen (2D) that form the triangle
+        Vec3f world_coords[3]; // the 3 points in the world (3D) that form the triangle
+        
+        // For each vertex in this triangle
+        for (int j = 0; j < 3; j++) {
+        
+            Vec3f v = model->vert(face[j]);
+
+            screen_coords[j] = Vec2i( (v.x+1.0) * width / 2.0, (v.y+1.0) * height / 2.0);
+            world_coords[j] = v;
+        
+        }
+
+        // the intensity of illumination is equal to
+        // the scalar product of
+        // the light vector AND the triangle normal normal.
+        //
+        // The normal to the triangle can be calculated simply as the cross product of its two sides.
+        // 
+        //     v3 normal = cross_product(AC, BC)
+        //     float intensity = normal * light_direction
+        // 
+        Vec3f normal = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]); // normal
+        normal.normalize();
+        float intensity = normal * light_dir;
+
+        if (intensity>0) { 
+            triangle(screen_coords[0], screen_coords[1], screen_coords[2], image, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
         } 
-        triangle(screen_coords[0], screen_coords[1], screen_coords[2], image, TGAColor(rand()%255, rand()%255, rand()%255, 255)); 
     }
 
     measure_since(start);
@@ -534,16 +563,46 @@ void lesson2_obj_to_tga_triangle2(const char* inputObjModelFileName, const int w
     model = new Model(inputObjModelFileName);
 
     TGAImage image(width, height, TGAImage::RGB);
+    
     auto start = measure_time();
+    
+    // Where the light is "coming from"
+    Vec3f light_dir(0,0,-1);
 
-    for (int i=0; i<model->nfaces(); i++) { 
-        std::vector<int> face = model->face(i); 
-        Vec2i screen_coords[3]; 
-        for (int j=0; j<3; j++) { 
-            Vec3f world_coords = model->vert(face[j]); 
-            screen_coords[j] = Vec2i((world_coords.x+1.)*width/2., (world_coords.y+1.)*height/2.); 
+    // For each triangle that froms the object...
+    for (int i=0; i < model->nfaces(); i++) {
+        
+        std::vector<int> face = model->face(i);
+        
+        Vec2i screen_coords[3]; // the 3 points in our screen (2D) that form the triangle
+        Vec3f world_coords[3]; // the 3 points in the world (3D) that form the triangle
+        
+        // For each vertex in this triangle
+        for (int j = 0; j < 3; j++) {
+        
+            Vec3f v = model->vert(face[j]);
+
+            screen_coords[j] = Vec2i( (v.x+1.0) * width / 2.0, (v.y+1.0) * height / 2.0);
+            world_coords[j] = v;
+        
+        }
+
+        // the intensity of illumination is equal to
+        // the scalar product of
+        // the light vector AND the triangle normal normal.
+        //
+        // The normal to the triangle can be calculated simply as the cross product of its two sides.
+        // 
+        //     v3 normal = cross_product(AC, BC)
+        //     float intensity = normal * light_direction
+        // 
+        Vec3f normal = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]); // normal
+        normal.normalize();
+        float intensity = normal * light_dir;
+
+        if (intensity>0) { 
+            triangle2(screen_coords[0], screen_coords[1], screen_coords[2], image, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
         } 
-        triangle2(screen_coords[0], screen_coords[1], screen_coords[2], image, TGAColor(rand()%255, rand()%255, rand()%255, 255)); 
     }
 
     measure_since(start);
