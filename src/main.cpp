@@ -6,6 +6,9 @@
 #include "geometry.h"
 #include "util.h"
 
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+
 const TGAColor whiteTransparent = TGAColor(255, 255, 255, 50);
 const TGAColor white = TGAColor(255, 255, 255, 255);
 const TGAColor red = TGAColor(255, 0, 0, 255);
@@ -197,6 +200,7 @@ void fat_dot(int x, int y, TGAImage& image, const TGAColor& color) {
     image.set(x, y-1, color);
 }
 
+// Aparently this is an "old school" single cpu approach. The cool kids just brute-force it with the power of multi-threading, example below in `triangle2`
 void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& color) {
     // 1. find the highest vertex and the lowest vertex
     
@@ -339,7 +343,8 @@ void lesson1_obj_to_tga(const char* inputObjModelFileName, const int width, cons
 
 // https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/barycentric-coordinates#:~:text=To%20compute%20the%20position%20of,(barycentric%20coordinates%20are%20normalized)
 // https://www.youtube.com/watch?v=HYAgJN3x4GA
-void baricenter_coordinates(Vec2i &a, Vec2i &b, Vec2i &c, Vec2i &p, float *u, float *v, float *w, bool *isInside, TGAImage& image) {
+// Why did I make u, v, w and isInside pointers?????
+void baricenter_coordinates(Vec2i &a, Vec2i &b, Vec2i &c, Vec2i &p, float *u, float *v, float *w, bool *isInside/*, TGAImage& image*/) {
     #ifdef BARICENTER_NO_USE_OPTIMIZATION_1
     Vec2i ab = b - a;
     Vec2i ac = c - a;
@@ -372,35 +377,142 @@ void baricenter_coordinates(Vec2i &a, Vec2i &b, Vec2i &c, Vec2i &p, float *u, fl
     if (*v < 0.0f || *v > 1.0f) { *isInside = false; }
     if (*w < 0.0f || *w > 1.0f) { *isInside = false; }
 
-    if (*isInside) {
-        fat_dot(p.x, p.y, image, green);
+    // if (*isInside) {
+    //     fat_dot(p.x, p.y, image, green);
+    // }
+    // else {
+    //     fat_dot(p.x, p.y, image, red);
+    // }
+}
+
+// usage
+// 
+//     Vec2i tl;
+//     Vec2i br;
+//     find_bounding_box(t0, t1, t2, &tl, &br);
+// 
+void find_bounding_box(Vec2i t0, Vec2i t1, Vec2i t2, Vec2i* outTopLeft, Vec2i* outBottomRight) {
+    #ifdef A
+    // I have not tested this but its ugly lol
+    // Figure out top and bottom
+    if (t0.y > t1.y) {
+        if (t0.y > t2.y) {
+            outTopLeft->y = t0.y;
+            if (t1.y > t2.y) {
+                outBottomRight->y = t2.y;
+            }
+            else {
+                outBottomRight->y = t1.y;
+            }
+        }
+        else {
+            outTopLeft->y = t2.y;
+            outBottomRight->y = t1.y;
+        }
     }
     else {
-        fat_dot(p.x, p.y, image, red);
+        if (t1.y > t2.y) {
+            outTopLeft->y = t1.y;
+            if (t0.y > t2.y) {
+                outBottomRight->y = t2.y;
+            }
+            else {
+                outBottomRight->y = t0.y;
+            }
+        }
+        else {
+            outTopLeft->y = t2.y;
+            outBottomRight->y = t0.y;
+        }
     }
+
+    // Figure out left and right
+    if (t0.x < t1.x) {
+        if (t0.x < t2.x) {
+            outTopLeft->x = t0.x;
+            if (t1.x < t2.x) {
+                outBottomRight->x = t2.x;
+            }
+            else {
+                outBottomRight->x = t1.x;
+            }
+        }
+        else {
+            outTopLeft->x = t2.x;
+            outBottomRight->x = t1.x;
+        }
+    }
+    else {
+        if (t1.x < t2.x) {
+            outTopLeft->x = t1.x;
+            if (t0.x < t2.x) {
+                outBottomRight->x = t2.x;
+            }
+            else {
+                outBottomRight->x = t0.x;
+            }
+
+        }
+        else {
+            outTopLeft->x = t2.x;
+            outBottomRight->x = t1.x;
+        }
+    }
+    #endif
+    outTopLeft->x = MIN(t0.x, MIN(t1.x, t2.x));
+    outTopLeft->y = MAX(t0.y, MAX(t1.y, t2.y));
+
+    outBottomRight->x = MAX(t0.x, MAX(t1.x, t2.x));
+    outBottomRight->y = MIN(t0.y, MIN(t1.y, t2.y));
+}
+
+void triangle2(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& color) {
+    Vec2i tl;
+    Vec2i br;
+    find_bounding_box(t0, t1, t2, &tl, &br);
+    
+    float u;
+    float v;
+    float w;
+    bool isInside;
+    for (int y = tl.y; y > br.y; y--) { // top to bottom
+        for (int x = tl.x; x < br.x; x++) { // left to right
+            // image.set(x, y, color);
+            baricenter_coordinates(t0, t1, t2, Vec2i(x, y), &u, &v, &w, &isInside);
+            if (isInside) {
+                image.set(x, y, color);
+            }
+        }
+    }
+
+    triangle_outline(t0, t1, t2, image, white);
+    fat_dot(tl.x, tl.y, image, green);
+    fat_dot(br.x, br.y, image, blue);
+    // fat_dot(bot->x, bot->y, image, red);
 }
 
 int main(int argc, char** argv) {
     TGAImage image(200, 200, TGAImage::RGB);
 
+    #define tri triangle2
     Vec2i t0[3] = { Vec2i(10, 70),   Vec2i(50, 160),  Vec2i(70, 80) };
-    triangle(t0[0], t0[1], t0[2], image, whiteTransparent);
+    tri(t0[0], t0[1], t0[2], image, whiteTransparent);
     Vec2i t1[3] = { Vec2i(180, 50),  Vec2i(150, 1),   Vec2i(70, 180) };
-    triangle(t1[0], t1[1], t1[2], image, whiteTransparent);
+    tri(t1[0], t1[1], t1[2], image, whiteTransparent);
     Vec2i t2[3] = { Vec2i(180, 150), Vec2i(120, 160), Vec2i(130, 180) };
-    triangle(t2[0], t2[1], t2[2], image, whiteTransparent);
+    tri(t2[0], t2[1], t2[2], image, whiteTransparent);
     Vec2i t4[3] = { Vec2i(100, 190),   Vec2i(110, 150),  Vec2i(170, 100) };
-    triangle(t4[0], t4[1], t4[2], image, whiteTransparent);
+    tri(t4[0], t4[1], t4[2], image, whiteTransparent);
     Vec2i t5[3] = { Vec2i(50, 70),   Vec2i(20, 40),  Vec2i(40, 10) };
-    triangle(t5[0], t5[1], t5[2], image, whiteTransparent);
+    tri(t5[0], t5[1], t5[2], image, whiteTransparent);
     Vec2i t6[3] = { Vec2i(90, 100),   Vec2i(80, 70),  Vec2i(30, 20) };
-    triangle(t6[0], t6[1], t6[2], image, whiteTransparent);
+    tri(t6[0], t6[1], t6[2], image, whiteTransparent);
 
     srand (time(NULL));
     float t0u, t0v, t0w; bool t0inside;
     for (int i = 0; i < 100; i++) {
         #define T t1
-        baricenter_coordinates(T[0], T[1], T[2], Vec2i(rand() % 200 + 1, rand() % 200 + 1), &t0u, &t0v, &t0w, &t0inside, image);
+        // baricenter_coordinates(T[0], T[1], T[2], Vec2i(rand() % 200 + 1, rand() % 200 + 1), &t0u, &t0v, &t0w, &t0inside, image);
     }
 
     image.flip_vertically(); // I want to have the origin at the left bot corner of the image
