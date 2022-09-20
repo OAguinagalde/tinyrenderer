@@ -491,7 +491,75 @@ void triangle2(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& co
     // fat_dot(bot->x, bot->y, image, red);
 }
 
+// usage:
+// 
+//     int main(int argc, char** argv) {
+//         srand (time(NULL));
+//         lesson2_obj_to_tga_triangle1("res/african_head.obj", 800, 800, "output1.tga");
+//     }
+// 
+void lesson2_obj_to_tga_triangle1(const char* inputObjModelFileName, const int width, const int height, const char* outputTgaFileName) {
+    Model* model = NULL;
+    model = new Model(inputObjModelFileName);
+
+    TGAImage image(width, height, TGAImage::RGB);
+    auto start = measure_time();
+
+    for (int i=0; i < model->nfaces(); i++) { 
+        std::vector<int> face = model->face(i); 
+        Vec2i screen_coords[3]; 
+        for (int j = 0; j < 3; j++) { 
+            Vec3f world_coords = model->vert(face[j]); 
+            screen_coords[j] = Vec2i( (world_coords.x+1.0) * width / 2.0, (world_coords.y+1.) * height / 2.); 
+        } 
+        triangle(screen_coords[0], screen_coords[1], screen_coords[2], image, TGAColor(rand()%255, rand()%255, rand()%255, 255)); 
+    }
+
+    measure_since(start);
+    delete model;
+
+    image.flip_vertically(); // I want to have the origin at the left bot corner of the image
+    image.write_tga_file(outputTgaFileName);
+}
+
+// usage:
+// 
+//     int main(int argc, char** argv) {
+//         srand (time(NULL));
+//         lesson2_obj_to_tga_triangle2("res/african_head.obj", 800, 800, "output2.tga");
+//     }
+// 
+void lesson2_obj_to_tga_triangle2(const char* inputObjModelFileName, const int width, const int height, const char* outputTgaFileName) {
+    Model* model = NULL;
+    model = new Model(inputObjModelFileName);
+
+    TGAImage image(width, height, TGAImage::RGB);
+    auto start = measure_time();
+
+    for (int i=0; i<model->nfaces(); i++) { 
+        std::vector<int> face = model->face(i); 
+        Vec2i screen_coords[3]; 
+        for (int j=0; j<3; j++) { 
+            Vec3f world_coords = model->vert(face[j]); 
+            screen_coords[j] = Vec2i((world_coords.x+1.)*width/2., (world_coords.y+1.)*height/2.); 
+        } 
+        triangle2(screen_coords[0], screen_coords[1], screen_coords[2], image, TGAColor(rand()%255, rand()%255, rand()%255, 255)); 
+    }
+
+    measure_since(start);
+    delete model;
+
+    image.flip_vertically(); // I want to have the origin at the left bot corner of the image
+    image.write_tga_file(outputTgaFileName);
+}
+
 int main(int argc, char** argv) {
+    srand (time(NULL));
+    lesson2_obj_to_tga_triangle1("res/african_head.obj", 800, 800, "output1.tga");
+    lesson2_obj_to_tga_triangle2("res/african_head.obj", 800, 800, "output2.tga");
+}
+
+int main2(int argc, char** argv) {
     TGAImage image(200, 200, TGAImage::RGB);
 
     #define tri triangle2
@@ -516,6 +584,7 @@ int main(int argc, char** argv) {
     }
 
     image.flip_vertically(); // I want to have the origin at the left bot corner of the image
+    // Note: I'm using http://schmittl.github.io/tgajs/ to visualize the image
     image.write_tga_file("output.tga");
     return 0;
 }
