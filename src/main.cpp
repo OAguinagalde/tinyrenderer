@@ -712,6 +712,21 @@ void lesson3_obj_to_tga_triangle_zbuffer(const char* inputObjModelFileName, cons
     image.write_tga_file(outputTgaFileName);
 }
 
+TGAColor sample(TGAImage& texture_data, Vec3f triangle[3], Vec3f barycentric) {
+
+    float u = barycentric.x;
+    float v = barycentric.y;
+    float w = barycentric.z;
+
+    Vec3f a = triangle[0];
+    Vec3f b = triangle[1];
+    Vec3f c = triangle[2];
+
+    // P=uA+vB+wC
+    Vec3f point = a * u + b * v + c * w;
+    
+    return texture_data.get(point.x, point.y);
+}
 int main(int argc, char** argv) {
     srand (time(NULL));
     lesson2_obj_to_tga_triangle1("res/african_head.obj", 800, 800, "output1.tga");
