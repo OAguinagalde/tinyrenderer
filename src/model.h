@@ -4,17 +4,27 @@
 #include <vector>
 #include "geometry.h"
 
+struct Vertex {
+	std::vector<int> location; // 3 locations indices
+	std::vector<int> texture; // 3 texture indices
+};
+
 class Model {
 private:
+	// the location data of each vertex in the model
 	std::vector<Vec3f> verts_;
-	std::vector<std::vector<int> > faces_;
+	// the texture data of each vertex in the model
+	std::vector<Vec3f> text_verts_;
+	// each facet represents a group of 3 vertices (aka triangle)
+	std::vector<Vertex> faces_;
 public:
 	Model(const char *filename);
 	~Model();
 	int nverts();
 	int nfaces();
 	Vec3f vert(int i);
-	std::vector<int> face(int idx);
+	Vec3f text(int i);
+	Vertex face(int idx);
 };
 
 #endif //__MODEL_H__

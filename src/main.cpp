@@ -305,7 +305,7 @@ void lesson1_obj_to_tga(const char* inputObjModelFileName, const int width, cons
     TGAImage image(width, height, TGAImage::RGB);
     auto start = measure_time();
     for (int i = 0; i < model->nfaces(); i++) {
-        std::vector<int> face = model->face(i);
+        std::vector<int> face = model->face(i).location;
 
         // A face is a group of 3 Vertices in space, which form a triangle
         // for each vertex, draw a line between the vertex and the next one on the triangle:
@@ -549,7 +549,7 @@ void lesson2_obj_to_tga_triangle1(const char* inputObjModelFileName, const int w
     // For each triangle that froms the object...
     for (int i=0; i < model->nfaces(); i++) {
         
-        std::vector<int> face = model->face(i);
+        std::vector<int> face = model->face(i).location;
         
         Vec2i screen_coords[3]; // the 3 points in our screen (2D) that form the triangle
         Vec3f world_coords[3]; // the 3 points in the world (3D) that form the triangle
@@ -610,7 +610,7 @@ void lesson2_obj_to_tga_triangle2(const char* inputObjModelFileName, const int w
     // For each triangle that froms the object...
     for (int i=0; i < model->nfaces(); i++) {
         
-        std::vector<int> face = model->face(i);
+        std::vector<int> face = model->face(i).location;
         
         Vec2i screen_coords[3]; // the 3 points in our screen (2D) that form the triangle
         Vec3f world_coords[3]; // the 3 points in the world (3D) that form the triangle
@@ -668,7 +668,7 @@ void lesson2_obj_to_tga_triangle_zbuffer(const char* inputObjModelFileName, cons
     // For each triangle that froms the object...
     for (int i = 0; i < model->nfaces(); i++) {
         
-        std::vector<int> face = model->face(i);
+        std::vector<int> face = model->face(i).location;
         
         Vec3i screen_coords[3]; // the 3 points in our screen (2D) that form the triangle
         Vec3f world_coords[3]; // the 3 points in the world (3D) that form the triangle
