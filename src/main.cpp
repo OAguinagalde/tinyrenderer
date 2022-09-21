@@ -291,10 +291,10 @@ void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& col
         side2 -= incrementShortLine2;
     }
     
-    triangle_outline(t0, t1, t2, image, white);
-    fat_dot(top->x, top->y, image, green);
-    fat_dot(mid->x, mid->y, image, blue);
-    fat_dot(bot->x, bot->y, image, red);
+    // triangle_outline(t0, t1, t2, image, white);
+    // fat_dot(top->x, top->y, image, green);
+    // fat_dot(mid->x, mid->y, image, blue);
+    // fat_dot(bot->x, bot->y, image, red);
 }
 
 void lesson1_obj_to_tga(const char* inputObjModelFileName, const int width, const int height, const char* outputTgaFileName) {
@@ -485,10 +485,48 @@ void triangle2(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& co
         }
     }
 
-    triangle_outline(t0, t1, t2, image, white);
-    fat_dot(tl.x, tl.y, image, green);
-    fat_dot(br.x, br.y, image, blue);
-    // fat_dot(bot->x, bot->y, image, red);
+    // triangle_outline(t0, t1, t2, image, white);
+    // fat_dot(tl.x, tl.y, image, green);
+    // fat_dot(br.x, br.y, image, blue);
+}
+
+// t0, t1 and t2, expected to be a 2d point + z-buffer on the 3rd element (hence them being vec3i instead of vec2i)
+void triangle2_zbuffer(Vec3i t0, Vec3i t1, Vec3i t2, float* zbuffer, TGAImage& image, const TGAColor& color) {
+    Vec2i tl, br;
+    // Transform the input vertices to vec2i since I don't have the implementation for find_bounding_box
+    // and baricenter_coordinates with input being vec3i lol
+    Vec2i _t0(t0), _t1(t1), _t2(t2);
+    find_bounding_box(_t0, _t1, _t2, &tl, &br);
+    
+    int image_witdth = image.get_width();
+    for (int y = tl.y; y > br.y; y--) { // top to bottom
+        for (int x = tl.x; x < br.x; x++) { // left to right
+            float u, v, w;
+            bool isInside;
+            baricenter_coordinates(_t0, _t1, _t2, Vec2i(x, y), &u, &v, &w, &isInside);
+            if (!isInside) continue;
+
+            // > the idea is to take the barycentric coordinates version of triangle rasterization,
+            // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
+            // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
+            float z = 0;
+            z += (float) t0.z * u;
+            z += (float) t1.z * v;
+            z += (float) t2.z * w;
+
+            // calculate z-buffer value's index
+            int idx = int(x + y * image_witdth);
+            if (zbuffer[idx] < z) {
+                zbuffer[idx] = z;
+                image.set(x, y, color);
+            }
+
+        }
+    }
+
+    // triangle_outline(t0, t1, t2, image, white);
+    // fat_dot(tl.x, tl.y, image, green);
+    // fat_dot(br.x, br.y, image, blue);
 }
 
 // usage:
@@ -612,10 +650,73 @@ void lesson2_obj_to_tga_triangle2(const char* inputObjModelFileName, const int w
     image.write_tga_file(outputTgaFileName);
 }
 
+void lesson2_obj_to_tga_triangle_zbuffer(const char* inputObjModelFileName, const int width, const int height, const char* outputTgaFileName) {
+    Model* model = NULL;
+    model = new Model(inputObjModelFileName);
+
+    TGAImage image(width, height, TGAImage::RGB);
+    
+    auto start = measure_time();
+    
+    // Where the light is "coming from"
+    Vec3f light_dir(0,0,-1);
+
+    // Initialize the zbuffer
+    float* zbuffer = (float*)malloc(sizeof(float) * width * height);
+    for (int i = 0; i < width * height; i++) zbuffer[i] = -std::numeric_limits<float>::max();
+
+    // For each triangle that froms the object...
+    for (int i = 0; i < model->nfaces(); i++) {
+        
+        std::vector<int> face = model->face(i);
+        
+        Vec3i screen_coords[3]; // the 3 points in our screen (2D) that form the triangle
+        Vec3f world_coords[3]; // the 3 points in the world (3D) that form the triangle
+        
+        // For each vertex in this triangle
+        for (int j = 0; j < 3; j++) {
+        
+            Vec3f v = model->vert(face[j]);
+
+            screen_coords[j] = Vec3i(
+                (v.x + 1.0) * width / 2.0,
+                (v.y + 1.0) * height / 2.0,
+                (v.z)
+            );
+            world_coords[j] = v;
+        
+        }
+
+        // the intensity of illumination is equal to
+        // the scalar product of
+        // the light vector AND the triangle normal normal.
+        //
+        // The normal to the triangle can be calculated simply as the cross product of its two sides.
+        // 
+        //     v3 normal = cross_product(AC, BC)
+        //     float intensity = normal * light_direction
+        // 
+        Vec3f normal = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]); // normal
+        normal.normalize();
+        float intensity = normal * light_dir;
+
+        if (intensity>0) { 
+            triangle2_zbuffer(screen_coords[0], screen_coords[1], screen_coords[2], zbuffer, image, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
+        } 
+    }
+
+    measure_since(start);
+    delete model;
+
+    image.flip_vertically(); // I want to have the origin at the left bot corner of the image
+    image.write_tga_file(outputTgaFileName);
+}
+
 int main(int argc, char** argv) {
     srand (time(NULL));
     lesson2_obj_to_tga_triangle1("res/african_head.obj", 800, 800, "output1.tga");
     lesson2_obj_to_tga_triangle2("res/african_head.obj", 800, 800, "output2.tga");
+    lesson2_obj_to_tga_triangle_zbuffer("res/african_head.obj", 800, 800, "output3.tga");
 }
 
 int main2(int argc, char** argv) {
