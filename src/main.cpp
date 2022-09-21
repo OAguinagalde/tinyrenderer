@@ -650,7 +650,7 @@ void lesson2_obj_to_tga_triangle2(const char* inputObjModelFileName, const int w
     image.write_tga_file(outputTgaFileName);
 }
 
-void lesson2_obj_to_tga_triangle_zbuffer(const char* inputObjModelFileName, const int width, const int height, const char* outputTgaFileName) {
+void lesson3_obj_to_tga_triangle_zbuffer(const char* inputObjModelFileName, const int width, const int height, const char* outputTgaFileName) {
     Model* model = NULL;
     model = new Model(inputObjModelFileName);
 
@@ -716,7 +716,7 @@ int main(int argc, char** argv) {
     srand (time(NULL));
     lesson2_obj_to_tga_triangle1("res/african_head.obj", 800, 800, "output1.tga");
     lesson2_obj_to_tga_triangle2("res/african_head.obj", 800, 800, "output2.tga");
-    lesson2_obj_to_tga_triangle_zbuffer("res/african_head.obj", 800, 800, "output3.tga");
+    lesson3_obj_to_tga_triangle_zbuffer("res/african_head.obj", 800, 800, "output3.tga");
 }
 
 int main2(int argc, char** argv) {
