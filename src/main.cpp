@@ -725,8 +725,9 @@ TGAColor sample(TGAImage& texture_data, Vec3f triangle[3], Vec3f barycentric) {
 
     // P=uA+vB+wC
     Vec3f point = a * u + b * v + c * w;
-    
-    return texture_data.get(point.x, point.y);
+
+    // aparently in tga the coordinates seem to be normalized so everything is between 0 and 1 for the texture coords so gotta scale them with the textures size
+    return texture_data.get(point.x * texture_data.get_width(), point.y * texture_data.get_height());
 }
 
 // t0, t1 and t2, expected to be a 2d point + z-buffer on the 3rd element (hence them being vec3i instead of vec2i)
