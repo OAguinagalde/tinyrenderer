@@ -344,7 +344,8 @@ void lesson1_obj_to_tga(const char* inputObjModelFileName, const int width, cons
 // https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/barycentric-coordinates#:~:text=To%20compute%20the%20position%20of,(barycentric%20coordinates%20are%20normalized)
 // https://www.youtube.com/watch?v=HYAgJN3x4GA
 // Why did I make u, v, w and isInside pointers?????
-void baricenter_coordinates(Vec2i &a, Vec2i &b, Vec2i &c, Vec2i &p, float *u, float *v, float *w, bool *isInside/*, TGAImage& image*/) {
+template <class t>
+void baricenter_coordinates(Vec2<t> &a, Vec2<t> &b, Vec2<t> &c, Vec2<t> &p, float *u, float *v, float *w, bool *isInside /*, TGAImage& image*/) {
     #ifdef BARICENTER_NO_USE_OPTIMIZATION_1
     Vec2i ab = b - a;
     Vec2i ac = c - a;
@@ -359,11 +360,11 @@ void baricenter_coordinates(Vec2i &a, Vec2i &b, Vec2i &c, Vec2i &p, float *u, fl
     *u = (paralelogramAreaABP / 2.0f) / triangleAreaABC;
     *v = (paralelogramAreaCAP / 2.0f) / triangleAreaABC;
     #else
-    Vec2i ab = b - a;
-    Vec2i ac = c - a;
-    Vec2i ap = p - a;
-    Vec2i bp = p - b;
-    Vec2i ca = a - c;
+    Vec2<t> ab = b - a;
+    Vec2<t> ac = c - a;
+    Vec2<t> ap = p - a;
+    Vec2<t> bp = p - b;
+    Vec2<t> ca = a - c;
     // There is actually no need to do the "/ 2.0f" divisions we can instead do...
     *u = ab.cross_product_magnitude(bp) / (float)ab.cross_product_magnitude(ac);
     *v = ca.cross_product_magnitude(ap) / (float)ab.cross_product_magnitude(ac);
