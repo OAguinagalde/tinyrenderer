@@ -731,28 +731,29 @@ TGAColor sample(TGAImage& texture_data, Vec3f triangle[3], Vec3f barycentric) {
 }
 
 // t0, t1 and t2, expected to be a 2d point + z-buffer on the 3rd element (hence them being vec3i instead of vec2i)
-void triangle2_zbuffer_texture_sampling(Vec3i t0, Vec3i t1, Vec3i t2, Vec3f* texture_vertex, float* zbuffer, TGAImage& image, TGAImage& texture, const TGAColor& color) {
+void triangle2_zbuffer_texture_sampling(Vec3i* screen, Vec3f* world, Vec3f* texture, float* zbuffer, TGAImage& image, TGAImage& texture_data, const TGAColor& color) {
     Vec2i tl, br;
     // Transform the input vertices to vec2i since I don't have the implementation for find_bounding_box
     // and baricenter_coordinates with input being vec3i lol
-    Vec2i _t0(t0), _t1(t1), _t2(t2);
-    find_bounding_box(_t0, _t1, _t2, &tl, &br);
+    find_bounding_box(screen[0], screen[1], screen[2], &tl, &br);
     
     int image_witdth = image.get_width();
     for (int y = tl.y; y > br.y; y--) { // top to bottom
         for (int x = tl.x; x < br.x; x++) { // left to right
             float u, v, w;
             bool isInside;
-            baricenter_coordinates(_t0, _t1, _t2, Vec2i(x, y), &u, &v, &w, &isInside);
+            baricenter_coordinates(Vec2i(screen[0]), Vec2i(screen[1]), Vec2i(screen[2]), Vec2i(x, y), &u, &v, &w, &isInside);
             if (!isInside) continue;
 
             // > the idea is to take the barycentric coordinates version of triangle rasterization,
             // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
             // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
             float z = 0;
-            z += (float) t0.z * u;
-            z += (float) t1.z * v;
-            z += (float) t2.z * w;
+            z += (float) screen[0].z * u;
+            z += (float) screen[1].z * v;
+            z += (float) screen[2].z * w;
+            // This doesn't really make sense without knowing that when I convert from world to screen coordinates I keep the original z value which tells us the depth of the point
+            // which we use here to calculate the z buffer somehow, I dont really get this right now...
 
             // calculate z-buffer value's index
             int idx = int(x + y * image_witdth);
@@ -760,9 +761,8 @@ void triangle2_zbuffer_texture_sampling(Vec3i t0, Vec3i t1, Vec3i t2, Vec3f* tex
                 zbuffer[idx] = z;
 
                 // barycentric interpolation... I think
-                TGAColor texture_sample = sample(texture, texture_vertex, Vec3f(u, v, w));
-                
-                image.set(x, y, texture_sample * color);
+                TGAColor texture_sample = sample(texture_data, texture, Vec3f(u, v, w));
+                image.set(x, y, texture_sample /* * color */);
             }
 
         }
@@ -773,12 +773,13 @@ void triangle2_zbuffer_texture_sampling(Vec3i t0, Vec3i t1, Vec3i t2, Vec3f* tex
     // fat_dot(br.x, br.y, image, blue);
 }
 
-void lesson3_obj_to_tga_triangle_zbuffer_with_texture(const char* inputObjModelFileName, const int width, const int height, const char* outputTgaFileName) {
+void lesson3_obj_to_tga_triangle_zbuffer_with_texture(const char* inputObjModelFileName, const char* inputTextureFileName, const int width, const int height, const char* outputTgaFileName) {
     Model* model = NULL;
     model = new Model(inputObjModelFileName);
 
     TGAImage image(width, height, TGAImage::RGB);
-    TGAImage texture_data; // TODO load the texture
+    TGAImage texture_data;
+    texture_data.read_tga_file(inputTextureFileName); // TODO load the texture
     
     auto start = measure_time();
     
@@ -797,20 +798,20 @@ void lesson3_obj_to_tga_triangle_zbuffer_with_texture(const char* inputObjModelF
         
         Vec3i screen_coords[3]; // the 3 points in our screen (2D) that form the triangle
         Vec3f world_coords[3]; // the 3 points in the world (3D) that form the triangle
-        
-        Vec3f texture_vertex[3];
+        Vec3f texture_coords[3]; // the 3 points in the texture (2d) that form triangle that will be used to "paint" the triangle in the "world"
+
         // For each vertex in this triangle
         for (int j = 0; j < 3; j++) {
         
             Vec3f v = model->vert(face[j]);
-            texture_vertex[j] = model->text(face[j]);
 
+            texture_coords[j] = model->text(face[j]);
+            world_coords[j] = model->vert(face[j]);
             screen_coords[j] = Vec3i(
                 (v.x + 1.0) * width / 2.0,
                 (v.y + 1.0) * height / 2.0,
                 (v.z)
             );
-            world_coords[j] = v;
         
         }
 
@@ -827,13 +828,14 @@ void lesson3_obj_to_tga_triangle_zbuffer_with_texture(const char* inputObjModelF
         normal.normalize();
         float intensity = normal * light_dir;
 
-        if (intensity>0) { 
-            triangle2_zbuffer_texture_sampling(screen_coords[0], screen_coords[1], screen_coords[2], texture_vertex, zbuffer, image, texture_data, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
+        if (intensity>0) {
+            triangle2_zbuffer_texture_sampling(screen_coords, world_coords, texture_coords, zbuffer, image, texture_data, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
         } 
     }
 
     measure_since(start);
     delete model;
+    texture_data.clear();
 
     image.flip_vertically(); // I want to have the origin at the left bot corner of the image
     image.write_tga_file(outputTgaFileName);
@@ -844,7 +846,7 @@ int main(int argc, char** argv) {
     lesson2_obj_to_tga_triangle1("res/african_head.obj", 800, 800, "output1.tga");
     lesson2_obj_to_tga_triangle2("res/african_head.obj", 800, 800, "output2.tga");
     lesson3_obj_to_tga_triangle_zbuffer("res/african_head.obj", 800, 800, "output3.tga");
-    lesson3_obj_to_tga_triangle_zbuffer_with_texture("res/african_head.obj", 800, 800, "output4.tga");
+    lesson3_obj_to_tga_triangle_zbuffer_with_texture("res/african_head.obj", "res/african_head_diffuse.tga", 800, 800, "output4.tga");
 }
 
 int main2(int argc, char** argv) {
