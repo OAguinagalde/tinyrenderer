@@ -761,6 +761,10 @@ void triangle2_zbuffer_texture_sampling(Vec3i* screen, Vec3f* world, Vec3f* text
                 zbuffer[idx] = z;
 
                 // barycentric interpolation... I think
+                // TODO so it doesnt work yet and I think the reason is that the uvw were taken respective to the screen while the texture coordinates
+                // are in the context fo world coordinates. If that is correct, that means that I just need to get the u v w from the world perspective.
+                // The only stopper is that I dont quite understand how to get the baricenter coordinates with a 3rd coordinate, last time I barely managed
+                // and it was in 2D... I need to refresh my math fr
                 TGAColor texture_sample = sample(texture_data, texture, Vec3f(u, v, w));
                 image.set(x, y, texture_sample /* * color */);
             }
