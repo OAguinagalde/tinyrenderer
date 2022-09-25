@@ -344,8 +344,7 @@ void lesson1_obj_to_tga(const char* inputObjModelFileName, const int width, cons
 // https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/barycentric-coordinates#:~:text=To%20compute%20the%20position%20of,(barycentric%20coordinates%20are%20normalized)
 // https://www.youtube.com/watch?v=HYAgJN3x4GA
 // Why did I make u, v, w and isInside pointers?????
-template <class t>
-void baricenter_coordinates(Vec2<t> &a, Vec2<t> &b, Vec2<t> &c, Vec2<t> &p, float *u, float *v, float *w, bool *isInside /*, TGAImage& image*/) {
+void baricenter_coordinates(Vec2f &a, Vec2f &b, Vec2f &c, Vec2f &p, float *u, float *v, float *w, bool *isInside /*, TGAImage& image*/) {
     #ifdef BARICENTER_NO_USE_OPTIMIZATION_1
     Vec2i ab = b - a;
     Vec2i ac = c - a;
@@ -360,14 +359,14 @@ void baricenter_coordinates(Vec2<t> &a, Vec2<t> &b, Vec2<t> &c, Vec2<t> &p, floa
     *u = (paralelogramAreaABP / 2.0f) / triangleAreaABC;
     *v = (paralelogramAreaCAP / 2.0f) / triangleAreaABC;
     #else
-    Vec2<t> ab = b - a;
-    Vec2<t> ac = c - a;
-    Vec2<t> ap = p - a;
-    Vec2<t> bp = p - b;
-    Vec2<t> ca = a - c;
+    Vec2f ab = b - a;
+    Vec2f ac = c - a;
+    Vec2f ap = p - a;
+    Vec2f bp = p - b;
+    Vec2f ca = a - c;
     // There is actually no need to do the "/ 2.0f" divisions we can instead do...
-    *u = ab.cross_product_magnitude(bp) / (float)ab.cross_product_magnitude(ac);
-    *v = ca.cross_product_magnitude(ap) / (float)ab.cross_product_magnitude(ac);
+    *u = (ab ^ bp) / (ab ^ ac);
+    *v = (ca ^ ap) / (ab ^ ac);
     #endif // BARICENTER_NO_USE_OPTIMIZATION_1
 
     // since we have u and v we can figure out w
@@ -385,6 +384,11 @@ void baricenter_coordinates(Vec2<t> &a, Vec2<t> &b, Vec2<t> &c, Vec2<t> &p, floa
     //     fat_dot(p.x, p.y, image, red);
     // }
 }
+
+void baricenter_coordinates(Vec2i &a, Vec2i &b, Vec2i &c, Vec2i &p, float *u, float *v, float *w, bool *isInside /*, TGAImage& image*/) {
+    baricenter_coordinates(Vec2f(a.x, a.y), Vec2f(b.x, b.y), Vec2f(c.x, c.y), Vec2f(p.x, p.y), u, v, w, isInside);
+}
+
 
 // usage
 // 
@@ -465,6 +469,14 @@ void find_bounding_box(Vec2i t0, Vec2i t1, Vec2i t2, Vec2i* outTopLeft, Vec2i* o
 
     outBottomRight->x = MAX(t0.x, MAX(t1.x, t2.x));
     outBottomRight->y = MIN(t0.y, MIN(t1.y, t2.y));
+}
+
+void find_bounding_box(Vec2i* t, Vec2i* outTopLeft, Vec2i* outBottomRight) {
+    outTopLeft->x = MIN(t[0].x, MIN(t[1].x, t[2].x));
+    outTopLeft->y = MAX(t[0].y, MAX(t[1].y, t[2].y));
+
+    outBottomRight->x = MAX(t[0].x, MAX(t[1].x, t[2].x));
+    outBottomRight->y = MIN(t[0].y, MIN(t[1].y, t[2].y));
 }
 
 void triangle2(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& color) {
@@ -713,50 +725,49 @@ void lesson3_obj_to_tga_triangle_zbuffer(const char* inputObjModelFileName, cons
     image.write_tga_file(outputTgaFileName);
 }
 
-TGAColor sample(TGAImage& texture_data, Vec3f triangle[3], Vec3f barycentric) {
+TGAColor sample(TGAImage& texture_data, Vec2f* texture_triangle, Vec3f barycentric) {
 
     float u = barycentric.x;
     float v = barycentric.y;
     float w = barycentric.z;
 
-    Vec3f a = triangle[0];
-    Vec3f b = triangle[1];
-    Vec3f c = triangle[2];
+    Vec2f a = texture_triangle[0];
+    Vec2f b = texture_triangle[1];
+    Vec2f c = texture_triangle[2];
 
     // P=uA+vB+wC
-    Vec3f point = a * u + b * v + c * w;
+    Vec2f point = a * u + b * v + c * w;
 
     // aparently in tga the coordinates seem to be normalized so everything is between 0 and 1 for the texture coords so gotta scale them with the textures size
     return texture_data.get(point.x * texture_data.get_width(), point.y * texture_data.get_height());
 }
 
-// t0, t1 and t2, expected to be a 2d point + z-buffer on the 3rd element (hence them being vec3i instead of vec2i)
-void triangle2_zbuffer_texture_sampling(Vec3i* screen, Vec3f* world, Vec3f* texture, float* zbuffer, TGAImage& image, TGAImage& texture_data, const TGAColor& color) {
+void triangle2_zbuffer_texture_sampling(Vec2i* screen, Vec3f* world, Vec2f* texture, float* zbuffer, TGAImage& image, TGAImage& texture_data, const TGAColor& color) {
     Vec2i tl, br;
-    // Transform the input vertices to vec2i since I don't have the implementation for find_bounding_box
-    // and baricenter_coordinates with input being vec3i lol
-    find_bounding_box(screen[0], screen[1], screen[2], &tl, &br);
-    
     int image_witdth = image.get_width();
+
+    // find the 2d square that contains the screen triangle, as that is where we will render it
+    find_bounding_box(screen, &tl, &br);
+    
     for (int y = tl.y; y > br.y; y--) { // top to bottom
         for (int x = tl.x; x < br.x; x++) { // left to right
+
             float u, v, w;
             bool isInside;
-            baricenter_coordinates(Vec2i(screen[0]), Vec2i(screen[1]), Vec2i(screen[2]), Vec2i(x, y), &u, &v, &w, &isInside);
+            baricenter_coordinates(screen[0], screen[1], screen[2], Vec2i(x, y), &u, &v, &w, &isInside);
             if (!isInside) continue;
 
             // > the idea is to take the barycentric coordinates version of triangle rasterization,
             // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
             // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
             float z = 0;
-            z += (float) screen[0].z * u;
-            z += (float) screen[1].z * v;
-            z += (float) screen[2].z * w;
-            // This doesn't really make sense without knowing that when I convert from world to screen coordinates I keep the original z value which tells us the depth of the point
-            // which we use here to calculate the z buffer somehow, I dont really get this right now...
+            z += (float) world[0].z * u;
+            z += (float) world[1].z * v;
+            z += (float) world[2].z * w;
 
             // calculate z-buffer value's index
             int idx = int(x + y * image_witdth);
+
             if (zbuffer[idx] < z) {
                 zbuffer[idx] = z;
 
@@ -766,7 +777,7 @@ void triangle2_zbuffer_texture_sampling(Vec3i* screen, Vec3f* world, Vec3f* text
                 // The only stopper is that I dont quite understand how to get the baricenter coordinates with a 3rd coordinate, last time I barely managed
                 // and it was in 2D... I need to refresh my math fr
                 TGAColor texture_sample = sample(texture_data, texture, Vec3f(u, v, w));
-                image.set(x, y, texture_sample /* * color */);
+                image.set(x, y, texture_sample);
             }
 
         }
@@ -781,7 +792,8 @@ void lesson3_obj_to_tga_triangle_zbuffer_with_texture(const char* inputObjModelF
     Model* model = NULL;
     model = new Model(inputObjModelFileName);
 
-    TGAImage image(width, height, TGAImage::RGB);
+    TGAImage output_image(width, height, TGAImage::RGB);
+    
     TGAImage texture_data;
     texture_data.read_tga_file(inputTextureFileName); // TODO load the texture
     
@@ -800,9 +812,9 @@ void lesson3_obj_to_tga_triangle_zbuffer_with_texture(const char* inputObjModelF
         std::vector<int> face = model->face(i).location;
         std::vector<int> text = model->face(i).texture;
         
-        Vec3i screen_coords[3]; // the 3 points in our screen (2D) that form the triangle
+        Vec2i screen_coords[3]; // the 3 points in our screen (2D) that form the triangle
         Vec3f world_coords[3]; // the 3 points in the world (3D) that form the triangle
-        Vec3f texture_coords[3]; // the 3 points in the texture (2d) that form triangle that will be used to "paint" the triangle in the "world"
+        Vec2f texture_coords[3]; // the 3 points in the texture (2d) that form triangle that will be used to "paint" the triangle in the "world"
 
         // For each vertex in this triangle
         for (int j = 0; j < 3; j++) {
@@ -811,10 +823,9 @@ void lesson3_obj_to_tga_triangle_zbuffer_with_texture(const char* inputObjModelF
 
             texture_coords[j] = model->text(face[j]);
             world_coords[j] = model->vert(face[j]);
-            screen_coords[j] = Vec3i(
-                (v.x + 1.0) * width / 2.0,
-                (v.y + 1.0) * height / 2.0,
-                (v.z)
+            screen_coords[j] = Vec2i(
+                (v.x + 1.0) * (double)width / 2.0,
+                (v.y + 1.0) * (double)height / 2.0
             );
         
         }
@@ -828,12 +839,11 @@ void lesson3_obj_to_tga_triangle_zbuffer_with_texture(const char* inputObjModelF
         //     v3 normal = cross_product(AC, BC)
         //     float intensity = normal * light_direction
         // 
-        Vec3f normal = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]); // normal
-        normal.normalize();
-        float intensity = normal * light_dir;
+        Vec3f normal = (world_coords[2]-world_coords[0]) ^ (world_coords[1]-world_coords[0]); // normal
+        float intensity = normal.normalized() * light_dir;
 
-        if (intensity>0) {
-            triangle2_zbuffer_texture_sampling(screen_coords, world_coords, texture_coords, zbuffer, image, texture_data, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
+        if (intensity > 0) {
+            triangle2_zbuffer_texture_sampling(screen_coords, world_coords, texture_coords, zbuffer, output_image, texture_data, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
         } 
     }
 
@@ -841,15 +851,15 @@ void lesson3_obj_to_tga_triangle_zbuffer_with_texture(const char* inputObjModelF
     delete model;
     texture_data.clear();
 
-    image.flip_vertically(); // I want to have the origin at the left bot corner of the image
-    image.write_tga_file(outputTgaFileName);
+    output_image.flip_vertically(); // I want to have the origin at the left bot corner of the image
+    output_image.write_tga_file(outputTgaFileName);
 }
 
 int main(int argc, char** argv) {
     srand (time(NULL));
-    lesson2_obj_to_tga_triangle1("res/african_head.obj", 800, 800, "output1.tga");
-    lesson2_obj_to_tga_triangle2("res/african_head.obj", 800, 800, "output2.tga");
-    lesson3_obj_to_tga_triangle_zbuffer("res/african_head.obj", 800, 800, "output3.tga");
+    // lesson2_obj_to_tga_triangle1("res/african_head.obj", 800, 800, "output1.tga");
+    // lesson2_obj_to_tga_triangle2("res/african_head.obj", 800, 800, "output2.tga");
+    // lesson3_obj_to_tga_triangle_zbuffer("res/african_head.obj", 800, 800, "output3.tga");
     lesson3_obj_to_tga_triangle_zbuffer_with_texture("res/african_head.obj", "res/african_head_diffuse.tga", 800, 800, "output4.tga");
 }
 
