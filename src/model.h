@@ -14,7 +14,7 @@ private:
 	// the location data of each vertex in the model
 	std::vector<Vec3f> verts_;
 	// the texture data of each vertex in the model
-	std::vector<Vec3f> text_verts_;
+	std::vector<Vec2f> text_verts_;
 	// each facet represents a group of 3 vertices (aka triangle)
 	std::vector<Vertex> faces_;
 public:
@@ -23,7 +23,7 @@ public:
 	int nverts();
 	int nfaces();
 	Vec3f vert(int i);
-	Vec3f text(int i);
+	Vec2f text(int i);
 	Vertex face(int idx);
 };
 

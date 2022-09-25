@@ -24,8 +24,8 @@ Model::Model(const char *filename) : verts_(), text_verts_(), faces_() {
         // If the line is a "texture vertex" save its values
         if (!line.compare(0, 3, "vt ")) {
             iss >> trash >> trash;
-            Vec3f vt;
-            for (int i=0;i<3;i++) iss >> vt.raw[i];
+            Vec2f vt;
+            for (int i=0;i<2;i++) iss >> vt.raw[i];
             text_verts_.push_back(vt);
         }
         // If the line is a "face" save the index (the first int), we don't care about the rest
@@ -84,7 +84,7 @@ Vec3f Model::vert(int i) {
     return verts_[i];
 }
 
-Vec3f Model::text(int i) {
+Vec2f Model::text(int i) {
     return text_verts_[i];
 }
 
