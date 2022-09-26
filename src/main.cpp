@@ -12,7 +12,7 @@ const TGAColor red = TGAColor(255, 0, 0, 255);
 const TGAColor green = TGAColor(0, 255, 0, 255);
 const TGAColor blue = TGAColor(0, 0, 255, 255);
 
-void line(int x0, int y0, int x1, int y1, TGAImage& image, const TGAColor& color) {
+void line(int x0, int y0, int x1, int y1, IPixelBuffer& image, const TGAColor& color) {
     int differenceX = x1 - x0;
     int differenceXAbs = absolute(differenceX);
 
@@ -53,13 +53,13 @@ void line(int x0, int y0, int x1, int y1, TGAImage& image, const TGAColor& color
     }
 }
 
-void triangle_outline(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& color) {
+void triangle_outline(Vec2i t0, Vec2i t1, Vec2i t2, IPixelBuffer& image, const TGAColor& color) {
     line(t0.x, t0.y, t1.x, t1.y, image, color);
     line(t1.x, t1.y, t2.x, t2.y, image, color);
     line(t2.x, t2.y, t0.x, t0.y, image, color);
 }
 
-void fat_dot(int x, int y, TGAImage& image, const TGAColor& color) {
+void fat_dot(int x, int y, IPixelBuffer& image, const TGAColor& color) {
     image.set(x, y, color);
     image.set(x+1, y, color);
     image.set(x-1, y, color);
@@ -68,7 +68,7 @@ void fat_dot(int x, int y, TGAImage& image, const TGAColor& color) {
 }
 
 // Aparently this is an "old school" single cpu approach. The cool kids just brute-force it with the power of multi-threading, example below in `triangle2`
-void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage& image, const TGAColor& color) {
+void triangle(Vec2i t0, Vec2i t1, Vec2i t2, IPixelBuffer& image, const TGAColor& color) {
     // 1. find the highest vertex and the lowest vertex
     
     // Aparently this works too, but I'll leave it as I have it and that's another thing I can do without relying on the Standard library lol

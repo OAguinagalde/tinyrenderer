@@ -68,8 +68,12 @@ struct TGAColor {
 	}
 };
 
+struct IPixelBuffer {
+    virtual bool set(int x, int y, TGAColor c) = 0;
+    virtual TGAColor get(int x, int y) = 0;		
+};
 
-class TGAImage {
+class TGAImage: public IPixelBuffer {
 protected:
 	unsigned char* data;
 	int width;
