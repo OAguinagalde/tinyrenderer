@@ -150,7 +150,7 @@ TGAColor sample(IPixelBuffer& sampled_data, Vec2f t[3], Vec3f barycentric) {
     return sampled_data.get(point.x * sampled_data.get_width(), point.y * sampled_data.get_height());
 }
 
-void triangle_bb(Vec2i t[3], Vec2i out_bb[2]) {
+BoundingBox triangle_bb(Vec2i t[3]) {
     #ifdef A
     // I have not tested this but its ugly lol
     // Figure out top and bottom
@@ -218,11 +218,15 @@ void triangle_bb(Vec2i t[3], Vec2i out_bb[2]) {
         }
     }
     #endif
-    out_bb[0].x = MIN(t[0].x, MIN(t[1].x, t[2].x));
-    out_bb[0].y = MAX(t[0].y, MAX(t[1].y, t[2].y));
+    BoundingBox bb;
 
-    out_bb[1].x = MAX(t[0].x, MAX(t[1].x, t[2].x));
-    out_bb[1].y = MIN(t[0].y, MIN(t[1].y, t[2].y));
+    bb.tl.x = MIN(t[0].x, MIN(t[1].x, t[2].x));
+    bb.tl.y = MAX(t[0].y, MAX(t[1].y, t[2].y));
+
+    bb.br.x = MAX(t[0].x, MAX(t[1].x, t[2].x));
+    bb.br.y = MIN(t[0].y, MIN(t[1].y, t[2].y));
+
+    return bb;
 }
 
 // Aparently this is an "old school" single cpu approach.
@@ -326,15 +330,14 @@ void triangle(Vec2i t[3], IPixelBuffer& image, const TGAColor& color) {
 }
 
 void triangle2(Vec2i t[3], IPixelBuffer& image, const TGAColor& color) {
-    Vec2i tl, br;
-    triangle_bb(t, &tl);
-    
+    BoundingBox bb = triangle_bb(t);
+
     float u;
     float v;
     float w;
     bool isInside;
-    for (int y = tl.y; y > br.y; y--) { // top to bottom
-        for (int x = tl.x; x < br.x; x++) { // left to right
+    for (int y = bb.tl.y; y > bb.br.y; y--) { // top to bottom
+        for (int x = bb.tl.x; x < bb.br.x; x++) { // left to right
             Vec3f bar = barycentric(t, Vec2i(x, y));
             if (barycentric_inside(bar)) {
                 image.set(x, y, color);
@@ -344,12 +347,11 @@ void triangle2(Vec2i t[3], IPixelBuffer& image, const TGAColor& color) {
 }
 
 void triangle2_zbuffer(Vec2i screen[3], Vec3f world[3], IPixelBuffer& image, float* z_buffer, const TGAColor& color) {
-    Vec2i tl, br;
-    triangle_bb(screen, &tl);
+    BoundingBox bb = triangle_bb(screen);
     
     int image_witdth = image.get_width();
-    for (int y = tl.y; y > br.y; y--) { // top to bottom
-        for (int x = tl.x; x < br.x; x++) { // left to right
+    for (int y = bb.tl.y; y > bb.br.y; y--) { // top to bottom
+        for (int x = bb.tl.x; x < bb.br.x; x++) { // left to right
 
             Vec3f bar = barycentric(screen, Vec2i(x, y));
             if (!barycentric_inside(bar)) {
@@ -377,12 +379,11 @@ void triangle2_zbuffer(Vec2i screen[3], Vec3f world[3], IPixelBuffer& image, flo
 }
 
 void triangle2_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3], IPixelBuffer& image, IPixelBuffer& texture_data, float z_buffer[],  const TGAColor& color) {
-    Vec2i tl, br;
-    triangle_bb(screen, &tl);
+    BoundingBox bb = triangle_bb(screen);
     
     int image_witdth = image.get_width();
-    for (int y = tl.y; y > br.y; y--) { // top to bottom
-        for (int x = tl.x; x < br.x; x++) { // left to right
+    for (int y = bb.tl.y; y > bb.br.y; y--) { // top to bottom
+        for (int x = bb.tl.x; x < bb.br.x; x++) { // left to right
 
             Vec3f bar = barycentric(screen, Vec2i(x, y));
             if (!barycentric_inside(bar)) {
@@ -411,7 +412,12 @@ void triangle2_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3
                 TGAColor texture_sample = sample(texture_data, texture, Vec3f(bar.u, bar.v, bar.w));
 
                 // TODO take into account input color
-                image.set(x, y, texture_sample);
+                image.set(x, y, TGAColor(
+                    color.r / 255.0f * texture_sample.r,
+                    color.g / 255.0f * texture_sample.g,
+                    color.b / 255.0f * texture_sample.b,
+                    color.a
+                ));
             }
 
         }
