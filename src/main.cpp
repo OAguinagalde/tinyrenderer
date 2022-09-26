@@ -113,6 +113,19 @@ Vec3f barycentric(Vec2f t[3], Vec2f p) {
     return Vec3f(u, v, w);
 }
 
+Vec3f barycentric(Vec2i t[3], Vec2i p) {
+
+    Vec2f aux[3];
+    aux[0] = Vec2f(t[0].x, t[0].y);
+    aux[1] = Vec2f(t[1].x, t[1].y);
+    aux[2] = Vec2f(t[2].x, t[2].y);
+    
+    return barycentric(
+        aux,
+        Vec2f(p.x, p.y)
+    );
+}
+
 bool barycentric_inside(Vec3f bar) {
     if (bar.x < 0.0f || bar.x > 1.0f) { return false; }
     if (bar.y < 0.0f || bar.y > 1.0f) { return false; }
@@ -526,7 +539,6 @@ void obj_to_tga_illuminated_zbuffer(Model& model, IPixelBuffer& pixel_buffer) {
 
             Vec3f v = model.vert(face[j]);
             world[j] = v;
-
             screen[j] = Vec2i(
                 (v.x + 1.0) * pixel_buffer.get_width() / 2.0,
                 (v.y + 1.0) * pixel_buffer.get_height() / 2.0
@@ -540,7 +552,7 @@ void obj_to_tga_illuminated_zbuffer(Model& model, IPixelBuffer& pixel_buffer) {
         //     v3 normal = cross_product(AC, BC)
         //     float intensity = normal * light_direction
         // 
-        Vec3f normal = ((world[2] - world[0]) ^ (world[1] - world[0])).normalized();
+        Vec3f normal = ((world[2]-world[0]) ^ (world[1]-world[0])).normalized();
         float intensity = normal * light_dir;
 
         if (intensity > 0) {
@@ -548,6 +560,8 @@ void obj_to_tga_illuminated_zbuffer(Model& model, IPixelBuffer& pixel_buffer) {
         }
     }
 
+    free(z_buffer);
+    
     measure_since(start);
 }
 
@@ -700,4 +714,7 @@ int main(int argc, char** argv) {
     srand(time(NULL));
     test_barycentric("barycentric_test.tga");
     test_textured_object("textured.tga");
+    test_wireframe("wireframe.tga");
+    test_object("object.tga");
+    test_zbuffer_object("zbuffer.tga");
 }

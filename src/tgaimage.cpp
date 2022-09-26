@@ -8,7 +8,7 @@
 TGAImage::TGAImage() : data(NULL), width(0), height(0), bytespp(0) {
 }
 
-TGAImage::TGAImage(const char* filename) {
+TGAImage::TGAImage(const char* filename) : data(NULL), width(0), height(0), bytespp(0) {
 	read_tga_file(filename);
 }
 
