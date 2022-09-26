@@ -70,7 +70,9 @@ struct TGAColor {
 
 struct IPixelBuffer {
     virtual bool set(int x, int y, TGAColor c) = 0;
-    virtual TGAColor get(int x, int y) = 0;		
+	virtual TGAColor get(int x, int y) = 0;
+    virtual int get_width() = 0;
+    virtual int get_height() = 0;
 };
 
 class TGAImage: public IPixelBuffer {
@@ -88,6 +90,7 @@ public:
 	};
 
 	TGAImage();
+	TGAImage(const char *filename);
 	TGAImage(int w, int h, int bpp);
 	TGAImage(const TGAImage &img);
 	bool read_tga_file(const char *filename);

@@ -8,6 +8,10 @@
 TGAImage::TGAImage() : data(NULL), width(0), height(0), bytespp(0) {
 }
 
+TGAImage::TGAImage(const char* filename) {
+	read_tga_file(filename);
+}
+
 TGAImage::TGAImage(int w, int h, int bpp) : data(NULL), width(w), height(h), bytespp(bpp) {
 	unsigned long nbytes = width*height*bytespp;
 	data = new unsigned char[nbytes];
