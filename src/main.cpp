@@ -13,6 +13,7 @@ const TGAColor white = TGAColor(255, 255, 255, 255);
 const TGAColor red = TGAColor(255, 0, 0, 255);
 const TGAColor green = TGAColor(0, 255, 0, 255);
 const TGAColor blue = TGAColor(0, 0, 255, 255);
+const TGAColor aaa = TGAColor(125, 55, 255, 255);
 
 void line(Vec2i a, Vec2i b, IPixelBuffer& image, const TGAColor& color) {
     int differenceX = b.x - a.x;
@@ -96,8 +97,8 @@ Vec3f barycentric(Vec2f t[3], Vec2f p) {
     float triangle_area_abp = paralelogram_area_abp / 2.0f;
     float triangle_area_cap = paralelogram_area_cap / 2.0f;
     
-    *u = triangle_area_abp / triangle_area_abc;
-    *v = triangle_area_cap / triangle_area_abc;
+    u = triangle_area_abp / triangle_area_abc;
+    v = triangle_area_cap / triangle_area_abc;
     
     #else
     
@@ -133,7 +134,7 @@ bool barycentric_inside(Vec3f bar) {
     return true;
 }
 
-TGAColor sample(IPixelBuffer& sampled_data, Vec2f t[3], Vec3f barycentric) {
+Vec2f barycentric_inverse(Vec2f t[3], Vec3f barycentric) {
 
     float u = barycentric.u;
     float v = barycentric.v;
@@ -146,8 +147,31 @@ TGAColor sample(IPixelBuffer& sampled_data, Vec2f t[3], Vec3f barycentric) {
     // P=uA+vB+wC
     Vec2f point = a * u + b * v + c * w;
 
+    return point;
+}
+
+TGAColor sample(IPixelBuffer& sampled_data, Vec2f t[3], Vec3f barycentric) {
+
+    float u = barycentric.u;
+    float v = barycentric.v;
+    float w = barycentric.w;
+
+    Vec2f a = t[0];
+    Vec2f b = t[1];
+    Vec2f c = t[2];
+
+    // P=uA+vB+wC
+    // TODO I think the problem might be here... Or when I calculate the barycentric coords. What I think is A seems to not quite be A...
+    Vec2f point = a * u + b * v + c * w;
+
     // aparently in tga the coordinates seem to be normalized so everything is between 0 and 1 for the texture coords so gotta scale them with the textures size
-    return sampled_data.get(point.x * sampled_data.get_width(), point.y * sampled_data.get_height());
+    Vec2f scaled(point.x * sampled_data.get_width(), point.y * sampled_data.get_height());
+
+    // printf("in texture triangle %f, %f - %f, %f - %f, %f\n", a.x, a.y, b.x, b.y, c.x, c.y);
+    // printf("samples to p %f - %f\n", point.x, point.y);
+    // printf("scaled to p %f - %f\n", scaled.x, scaled.y);
+
+    return sampled_data.get(scaled.x, scaled.y);
 }
 
 BoundingBox triangle_bb(Vec2i t[3]) {
@@ -322,11 +346,6 @@ void triangle(Vec2i t[3], IPixelBuffer& image, const TGAColor& color) {
         side1 -= incrementLongLine;
         side2 -= incrementShortLine2;
     }
-    
-    // triangle_outline(t0, t1, t2, image, white);
-    // fat_dot(top->x, top->y, image, green);
-    // fat_dot(mid->x, mid->y, image, blue);
-    // fat_dot(bot->x, bot->y, image, red);
 }
 
 void triangle2(Vec2i t[3], IPixelBuffer& image, const TGAColor& color) {
@@ -404,12 +423,13 @@ void triangle2_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3
             if (z_buffer[idx] < z) {
                 z_buffer[idx] = z;
 
+                // printf("x %d, y %d with bar %f, %f, %f\n", x, y, bar.u, bar.v, bar.w);
                 // barycentric interpolation... I think
                 // TODO so it doesnt work yet and I think the reason is that the uvw were taken respective to the screen while the texture coordinates
                 // are in the context fo world coordinates. If that is correct, that means that I just need to get the u v w from the world perspective.
                 // The only stopper is that I dont quite understand how to get the baricenter coordinates with a 3rd coordinate, last time I barely managed
                 // and it was in 2D... I need to refresh my math fr
-                TGAColor texture_sample = sample(texture_data, texture, Vec3f(bar.u, bar.v, bar.w));
+                TGAColor texture_sample = sample(texture_data, texture, bar);
 
                 // TODO take into account input color
                 image.set(x, y, TGAColor(
@@ -680,6 +700,22 @@ void test_textured_object(const char* out_file) {
     
 }
 
+void test_textured_quad(const char* out_file) {
+    Model model;
+    TGAImage texture(2, 2, TGAImage::RGB);
+    texture.set(0, 0, red);
+    texture.set(1, 0, green);
+    texture.set(1, 1, blue);
+    texture.set(0, 1, white);
+    
+    TGAImage output(400, 400, TGAImage::RGB);
+
+    obj_to_tga_illuminated_zbuffer_textured(model, texture, output);
+
+    output.flip_vertically();
+    output.write_tga_file(out_file);
+}
+
 void test_barycentric(const char* out_file) {
     TGAImage image(200, 200, TGAImage::RGB);
 
@@ -716,11 +752,48 @@ void test_barycentric(const char* out_file) {
     image.write_tga_file(out_file);
 }
 
+void test_barycentric_2(const char* out_file) {
+    TGAImage image(200, 200, TGAImage::RGB);
+
+    Vec2i t[3] = { Vec2i(0,0), Vec2i(200,0), Vec2i(100, 200) };
+    // Vec2i random_point(rand() % 200 + 1, rand() % 200 + 1);
+    Vec2i random_point(103, 7);
+    Vec3f bar = barycentric(t, random_point);
+    printf("original %d, %d\n", random_point.x, random_point.y);
+
+    Vec2f aux[3];
+    aux[0] = Vec2f(t[0].x, t[0].y);
+    aux[1] = Vec2f(t[1].x, t[1].y);
+    aux[2] = Vec2f(t[2].x, t[2].y);
+    Vec2f result = barycentric_inverse(aux, bar);
+    printf("calculat %f, %f\n", result.x, result.y);
+
+    Vec2i t2[3] = { Vec2i(50, 50), Vec2i(100,0), Vec2i(100, 50) };
+    Vec2f aux2[3];
+    aux2[0] = Vec2f(t2[0].x, t2[0].y);
+    aux2[1] = Vec2f(t2[1].x, t2[1].y);
+    aux2[2] = Vec2f(t2[2].x, t2[2].y);
+    Vec2f result2 = barycentric_inverse(aux2, bar);
+    printf("calculat %f, %f\n", result2.x, result2.y);
+
+    // TODO: triangle is broken now?
+    triangle2(t, image, white);
+    triangle2(t2, image, blue);
+    fat_dot(random_point, image, red);
+    fat_dot(Vec2i(result.x, result.y), image, green);
+    fat_dot(Vec2i(result2.x, result2.y), image, aaa);
+
+    image.flip_vertically(); // I want to have the origin at the left bot corner of the image
+    image.write_tga_file(out_file);
+}
+
 int main(int argc, char** argv) {
     srand(time(NULL));
-    test_barycentric("barycentric_test.tga");
-    test_textured_object("textured.tga");
-    test_wireframe("wireframe.tga");
-    test_object("object.tga");
-    test_zbuffer_object("zbuffer.tga");
+    // test_barycentric("barycentric_test.tga");
+    // test_textured_object("textured.tga");
+    // test_wireframe("wireframe.tga");
+    // test_object("object.tga");
+    // test_zbuffer_object("zbuffer.tga");
+    // test_textured_quad("quad.tga");
+    test_barycentric_2("test_bar.tga");
 }
