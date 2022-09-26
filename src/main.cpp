@@ -144,25 +144,15 @@ Vec2f barycentric_inverse(Vec2f t[3], Vec3f barycentric) {
     Vec2f b = t[1];
     Vec2f c = t[2];
 
-    // P=uA+vB+wC
-    Vec2f point = a * u + b * v + c * w;
+    // P=wA+uB+vC
+    Vec2f point = (a * w) + (b * u) + (c * v);
 
     return point;
 }
 
 TGAColor sample(IPixelBuffer& sampled_data, Vec2f t[3], Vec3f barycentric) {
 
-    float u = barycentric.u;
-    float v = barycentric.v;
-    float w = barycentric.w;
-
-    Vec2f a = t[0];
-    Vec2f b = t[1];
-    Vec2f c = t[2];
-
-    // P=uA+vB+wC
-    // TODO I think the problem might be here... Or when I calculate the barycentric coords. What I think is A seems to not quite be A...
-    Vec2f point = a * u + b * v + c * w;
+    Vec2f point = barycentric_inverse(t, barycentric);
 
     // aparently in tga the coordinates seem to be normalized so everything is between 0 and 1 for the texture coords so gotta scale them with the textures size
     Vec2f scaled(point.x * sampled_data.get_width(), point.y * sampled_data.get_height());
