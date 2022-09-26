@@ -97,14 +97,14 @@ Vec3f barycentric(Vec2f t[3], Vec2f p) {
     float triangle_area_abp = paralelogram_area_abp / 2.0f;
     float triangle_area_cap = paralelogram_area_cap / 2.0f;
     
-    u = triangle_area_abp / triangle_area_abc;
-    v = triangle_area_cap / triangle_area_abc;
+    u = triangle_area_cap / triangle_area_abc;
+    v = triangle_area_abp / triangle_area_abc;
     
     #else
     
     // There is actually no need to do the "/ 2.0f" divisions we can instead do...
-    u = paralelogram_area_abp / paralelogram_area_abc;
-    v = paralelogram_area_cap / paralelogram_area_abc;
+    u = paralelogram_area_cap / paralelogram_area_abc;
+    v = paralelogram_area_abp / paralelogram_area_abc;
     
     #endif // BARICENTER_NO_USE_OPTIMIZATION_1
 
