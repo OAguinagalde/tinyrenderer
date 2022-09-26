@@ -18,7 +18,9 @@ private:
 	// each facet represents a group of 3 vertices (aka triangle)
 	std::vector<Vertex> faces_;
 public:
-	Model(const char *filename);
+	// for debugging only, represents a quad
+	Model();
+	Model(const char* filename);
 	~Model();
 	int nverts();
 	int nfaces();

@@ -65,6 +65,57 @@ Model::Model(const char *filename) : verts_(), text_verts_(), faces_() {
     std::cerr << "# v# " << verts_.size() << " f# "  << faces_.size() << std::endl;
 }
 
+Model::Model() : verts_(), text_verts_(), faces_() {
+
+    verts_.push_back(Vec3f(-0.90,-0.90,-0.90));
+    verts_.push_back(Vec3f(0.90,-0.90, 0.90));
+    verts_.push_back(Vec3f(0.90, 0.90, 0.90));
+    verts_.push_back(Vec3f(-0.90, 0.90, -0.90));
+    
+    text_verts_.push_back(Vec2f(0, 0));
+    text_verts_.push_back(Vec2f(1, 0));
+    text_verts_.push_back(Vec2f(1, 1));
+    text_verts_.push_back(Vec2f(0, 1));
+
+    {
+        std::vector<int> location_vertex_indices;
+        std::vector<int> texture_vertex_indices;
+
+        location_vertex_indices.push_back(0);
+        location_vertex_indices.push_back(1);
+        location_vertex_indices.push_back(2);
+
+        texture_vertex_indices.push_back(0);
+        texture_vertex_indices.push_back(1);
+        texture_vertex_indices.push_back(2);
+
+        Vertex vertex;
+        vertex.location = location_vertex_indices;
+        vertex.texture = texture_vertex_indices;
+
+        faces_.push_back(vertex);
+    }
+
+    {
+        std::vector<int> location_vertex_indices;
+        std::vector<int> texture_vertex_indices;
+        
+        location_vertex_indices.push_back(0);
+        location_vertex_indices.push_back(2);
+        location_vertex_indices.push_back(3);
+        
+        texture_vertex_indices.push_back(0);
+        texture_vertex_indices.push_back(2);
+        texture_vertex_indices.push_back(3);
+
+        Vertex vertex;
+        vertex.location = location_vertex_indices;
+        vertex.texture = texture_vertex_indices;
+
+        faces_.push_back(vertex);
+    }
+}
+
 Model::~Model() {
 }
 
