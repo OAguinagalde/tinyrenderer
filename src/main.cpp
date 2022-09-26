@@ -789,11 +789,11 @@ void test_barycentric_2(const char* out_file) {
 
 int main(int argc, char** argv) {
     srand(time(NULL));
-    // test_barycentric("barycentric_test.tga");
-    // test_textured_object("textured.tga");
-    // test_wireframe("wireframe.tga");
-    // test_object("object.tga");
-    // test_zbuffer_object("zbuffer.tga");
-    // test_textured_quad("quad.tga");
+    test_barycentric("barycentric_test.tga");
+    test_textured_object("textured.tga");
+    test_wireframe("wireframe.tga");
+    test_object("object.tga");
+    test_zbuffer_object("zbuffer.tga");
+    test_textured_quad("quad.tga");
     test_barycentric_2("test_bar.tga");
 }
