@@ -7,6 +7,8 @@
 #pragma comment(lib, "User32")
 #pragma comment(lib, "gdi32")
 
+namespace win32 {
+
 // clears the console associated with the stdout
 void ClearConsole() {
     HANDLE consoleStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -118,52 +120,6 @@ bool GetConsole() {
     return consoleIsExternal;
 }
 
-// A very basic, default, WindowProc.
-// This is a mess, and basically it just handles some quitting messages such as x and ESC
-LRESULT CALLBACK BasicWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg)
-    {
-        // case WM_SIZE: {
-        //     RECT win32_rect = (RECT) {0};
-        //     // This just gives us the "drawable" part of the window
-        //     win32_ GetClientRect(hwnd, &win32_rect);
-        //     int width = win32_rect.right - win32_rect.left;
-        //     int height = win32_rect.bottom - win32_rect.top;
-        //     win32_printf("WIDTH: %d, height: %d\n", width, height);
-            
-        //     // UINT width = LOWORD(lParam);
-        //     // UINT height = HIWORD(lParam);
-        // } break;
-        case WM_DESTROY: {
-            // TODO: turn win32_running to false
-            Print("WM_DESTROY\n");
-        } // break;
-        Print("and\n");
-        case WM_CLOSE: {
-            // TODO: turn win32_running to false
-            Print("WM_CLOSE\n");
-            // Basically makes the application post a WM_QUIT message
-            // win32_ DestroyWindow(hwnd); // This only closes the main window
-            PostQuitMessage(0); // This sends the quit message which the main loop will read and end the loop
-            return 0;
-        } break;
-        // case WM_PAINT: {
-        //     win32_print("WM_PAINT\n");
-        // } break;
-        case WM_SYSKEYDOWN:
-        case WM_KEYDOWN: {
-            if (wParam == VK_ESCAPE) {
-                // TODO: There is too many points where I want to quite the application... Which one does what?
-                PostQuitMessage(0);
-            }
-            return 0;
-        } break;
-    }
-    // Events that I'm consciously not capturing:
-    // . WM_SETCURSOR Sent to a window if the mouse causes the cursor to move within a window and mouse input is not captured
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
-}
-
 WNDCLASSA MakeWindowClass(const char* windowClassName, WNDPROC pfnWindowProc, HINSTANCE hInstance) {
     WNDCLASSA windowClass = {};
     windowClass.lpfnWndProc = pfnWindowProc;
@@ -214,14 +170,6 @@ void MoveAWindow(HWND windowHandle, int x, int y, int w, int h) {
     // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-redrawwindow
     // "If both the hrgnUpdate and lprcUpdate parameters are NULL, the entire client area is added to the update region."
     RedrawWindow(windowHandle, NULL, NULL, RDW_INVALIDATE);
-}
-
-void AllocateOnWindowsStuff() {
-    // Heap allocation and free on win32...
-    // unsigned char* data = NULL;
-    // data = win32_ HeapAlloc(win32_ GetProcessHeap(), 0, sizeof(unsigned char)*texture_data_size);
-    // win32_ memcpy(data, &texture_data[0], sizeof(unsigned char)*texture_data_size);
-    // win32_ HeapFree(win32_ GetProcessHeap(), 0, (LPVOID) data);
 }
 
 // unsigned long long cpuFrequencySeconds;
@@ -278,25 +226,6 @@ bool SetConsoleCursorPosition(short posX, short posY) {
     return SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), position);
 }
 
-// This is not a function, it's just a reference for me for when I want to do a message loop and I dont remember...
-void LoopWindowsMessages() {
-    // GetMessage blocks until a message is found.
-    // Instead, PeekMessage can be used.
-    MSG msg = {0};
-    // Look if there is a message and if so remove it
-    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-        TranslateMessage(&msg); 
-        DispatchMessage(&msg);
-
-        switch (msg.message) {
-            case WM_QUIT: {
-            } break;
-            case WM_SIZE: {
-            } break;
-        }
-    }
-}
-
 HDC GetDeviceContextHandle(HWND windowHandle) {
     HDC hdc = GetDC(windowHandle);
     return hdc;
@@ -306,4 +235,6 @@ void SwapPixelBuffers(HDC deviceContextHandle) {
     // The SwapBuffers function exchanges the front and back buffers if the
     // current pixel format for the window referenced by the specified device context includes a back buffer.
     SwapBuffers(deviceContextHandle);
+}
+
 }

@@ -777,6 +777,96 @@ void test_barycentric_2(const char* out_file) {
     image.write_tga_file(out_file);
 }
 
+#include "win32.h"
+#pragma comment(lib, "Msimg32")
+
+#define rgb(r,g,b) (((uint8_t)r << 16) | ((uint8_t)g << 8) | (uint8_t)b)
+
+LRESULT CALLBACK BasicWindowProc(HWND window, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    
+    static BITMAPINFO bitmap_info;
+    static void* pixel_data;
+
+    switch (uMsg) {
+        case WM_DESTROY: { /* fallthrough */ }
+        case WM_CLOSE: {
+            PostQuitMessage(0);
+            return 0;
+        } break;
+
+        case WM_SYSKEYDOWN: { /* fallthrough */ }
+        case WM_KEYDOWN: {
+
+            if (wParam == VK_ESCAPE) {
+                PostQuitMessage(0);
+            }
+            return 0;
+        } break;
+
+        case WM_PAINT: {
+            
+            if(pixel_data == NULL) return DefWindowProc(window, uMsg, wParam, lParam);
+
+            int w, h;
+            win32::GetClientSize(window, &w, &h);
+
+            PAINTSTRUCT paint;
+            HDC dc = BeginPaint(window, &paint);
+            StretchDIBits(
+                dc,
+                0, 0, w, h,
+                0, 0, w, h,
+                pixel_data,
+                &bitmap_info,
+                DIB_RGB_COLORS,
+                SRCCOPY
+            );
+            EndPaint(window, &paint);
+
+        } break;
+
+        case WM_SIZE: {
+
+            int w, h;
+            win32::GetClientSize(window, &w, &h);
+            if (w == 0 || h == 0) { return DefWindowProc(window, uMsg, wParam, lParam); }
+
+            bitmap_info.bmiHeader.biSize = sizeof(bitmap_info.bmiHeader);
+            bitmap_info.bmiHeader.biWidth = w;
+            bitmap_info.bmiHeader.biHeight = -h; // This is negative so that 0,0 is top left and w,h is bottom right
+            bitmap_info.bmiHeader.biPlanes = 1; // "Must be one" -Microsoft    Thanks Ms.
+            bitmap_info.bmiHeader.biBitCount = 32;
+            bitmap_info.bmiHeader.biCompression = BI_RGB;
+            
+            if (pixel_data != NULL) {
+                VirtualFree(pixel_data, 0, MEM_RELEASE);
+            }
+            
+            int pixel_size = sizeof(uint32_t);
+            int total_size = pixel_size * (w * h);
+            pixel_data = VirtualAlloc(0, total_size, MEM_COMMIT, PAGE_READWRITE);
+            
+            uint32_t* pixels = (uint32_t*) pixel_data;
+            for (int i = 0; i < w * h; i++) {
+                pixels[i] = rgb(255,255,255);
+            }
+
+            // color the 4 corners of my window
+            pixels[0] = rgb(255,0,0);
+            pixels[w - 1] = rgb(0,255,0);
+            pixels[w * (h - 1)] = rgb(0,0,255);
+            pixels[(w * h) - 1] = rgb(255,0,0);
+            
+            return DefWindowProc(window, uMsg, wParam, lParam);
+        } break;
+
+        case WM_SETCURSOR: {
+            return DefWindowProc(window, uMsg, wParam, lParam);
+        } break;
+    }
+    return DefWindowProc(window, uMsg, wParam, lParam);
+}
+
 int main(int argc, char** argv) {
     srand(time(NULL));
     test_barycentric("barycentric_test.tga");
@@ -786,4 +876,24 @@ int main(int argc, char** argv) {
     test_zbuffer_object("zbuffer.tga");
     test_textured_quad("quad.tga");
     test_barycentric_2("test_bar.tga");
+    
+    const char* windowClass = "MyWindowClass";
+    win32::MakeWindowClass(windowClass, BasicWindowProc, GetModuleHandle(NULL));
+    win32::MakeWindow(windowClass, "window", GetModuleHandle(NULL), SW_SHOW);
+    
+    bool running = true;
+    while (running) {
+        MSG msg;
+        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg); 
+            DispatchMessage(&msg);
+            switch (msg.message) {
+                case WM_QUIT: {
+                    running = false;
+                } break;
+                case WM_SIZE: {
+                } break;
+            }
+        }
+    }
 }

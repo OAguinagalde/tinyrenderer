@@ -7,6 +7,7 @@
 #pragma comment(lib, "User32")
 #pragma comment(lib, "gdi32")
 
+namespace win32 {
 // clears the console associated with the stdout
 void ClearConsole();
 
@@ -36,8 +37,6 @@ HWND MakeWindow(const char* windowClassName, const char* title, HINSTANCE hInsta
 
 void MoveAWindow(HWND windowHandle, int x, int y, int w, int h);
 
-void AllocateOnWindowsStuff();
-
 // unsigned long long cpuFrequencySeconds;
 // unsigned long long cpuCounter;
 // GetCpuCounterAndFrequencySeconds(&cpuCounter, &cpuFrequencySeconds);
@@ -52,9 +51,7 @@ bool GetConsoleCursorPosition(short *cursorX, short *cursorY);
 // The handle must have the GENERIC_READ access right
 bool SetConsoleCursorPosition(short posX, short posY);
 
-// This is not a function, it's just a reference for me for when I want to do a message loop and I dont remember...
-void LoopWindowsMessages();
-
 HDC GetDeviceContextHandle(HWND windowHandle);
 
 void SwapPixelBuffers(HDC deviceContextHandle);
+}
