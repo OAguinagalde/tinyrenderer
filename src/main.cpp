@@ -782,12 +782,42 @@ void test_barycentric_2(const char* out_file) {
 
 #define rgb(r,g,b) (((uint8_t)r << 16) | ((uint8_t)g << 8) | (uint8_t)b)
 
-LRESULT CALLBACK BasicWindowProc(HWND window, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    
-    static BITMAPINFO bitmap_info;
-    static void* pixel_data;
+BITMAPINFO bitmap_info;
+void* pixel_data;
 
+void paint(IPixelBuffer& image) {
+    uint32_t* pixels = (uint32_t*) pixel_data;
+
+    // uint32_t* pixels = (uint32_t*) pixel_data;
+    // for (int i = 0; i < w * h; i++) {
+    //     pixels[i] = rgb(255,255,255);
+    // }
+
+    // // color the 4 corners of my window
+    // pixels[0] = rgb(255,0,0);
+    // pixels[w - 1] = rgb(0,255,0);
+    // pixels[w * (h - 1)] = rgb(0,0,255);
+    // pixels[(w * h) - 1] = rgb(255,0,0);
+
+    for (int i = 0; i < image.get_width() * image.get_height(); i++) {
+        pixels[i] = rgb(255,255,255);
+    }
+
+    for (int y =  0; y < image.get_height(); y++) {
+        for (int x =  0; x < image.get_width(); x++) {
+
+            TGAColor color = image.get(x, y);
+            
+            int idx = int(x + y * image.get_width());
+            pixels[idx] = rgb(color.r, color.g, color.b);
+        
+        }
+    }
+}
+
+LRESULT CALLBACK BasicWindowProc(HWND window, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
+
         case WM_DESTROY: { /* fallthrough */ }
         case WM_CLOSE: {
             PostQuitMessage(0);
@@ -826,37 +856,6 @@ LRESULT CALLBACK BasicWindowProc(HWND window, UINT uMsg, WPARAM wParam, LPARAM l
         } break;
 
         case WM_SIZE: {
-
-            int w, h;
-            win32::GetClientSize(window, &w, &h);
-            if (w == 0 || h == 0) { return DefWindowProc(window, uMsg, wParam, lParam); }
-
-            bitmap_info.bmiHeader.biSize = sizeof(bitmap_info.bmiHeader);
-            bitmap_info.bmiHeader.biWidth = w;
-            bitmap_info.bmiHeader.biHeight = -h; // This is negative so that 0,0 is top left and w,h is bottom right
-            bitmap_info.bmiHeader.biPlanes = 1; // "Must be one" -Microsoft    Thanks Ms.
-            bitmap_info.bmiHeader.biBitCount = 32;
-            bitmap_info.bmiHeader.biCompression = BI_RGB;
-            
-            if (pixel_data != NULL) {
-                VirtualFree(pixel_data, 0, MEM_RELEASE);
-            }
-            
-            int pixel_size = sizeof(uint32_t);
-            int total_size = pixel_size * (w * h);
-            pixel_data = VirtualAlloc(0, total_size, MEM_COMMIT, PAGE_READWRITE);
-            
-            uint32_t* pixels = (uint32_t*) pixel_data;
-            for (int i = 0; i < w * h; i++) {
-                pixels[i] = rgb(255,255,255);
-            }
-
-            // color the 4 corners of my window
-            pixels[0] = rgb(255,0,0);
-            pixels[w - 1] = rgb(0,255,0);
-            pixels[w * (h - 1)] = rgb(0,0,255);
-            pixels[(w * h) - 1] = rgb(255,0,0);
-            
             return DefWindowProc(window, uMsg, wParam, lParam);
         } break;
 
@@ -876,11 +875,55 @@ int main(int argc, char** argv) {
     test_zbuffer_object("zbuffer.tga");
     test_textured_quad("quad.tga");
     test_barycentric_2("test_bar.tga");
+
+    const char* windowClassName = "MyWindowClass";
+    win32::MakeWindowClass(windowClassName, BasicWindowProc, GetModuleHandle(NULL));
+    HWND window = win32::MakeWindow(windowClassName, "window", GetModuleHandle(NULL), SW_SHOW);
     
-    const char* windowClass = "MyWindowClass";
-    win32::MakeWindowClass(windowClass, BasicWindowProc, GetModuleHandle(NULL));
-    win32::MakeWindow(windowClass, "window", GetModuleHandle(NULL), SW_SHOW);
+    // TGAImage image_to_load("barycentric_test.tga");
+    TGAImage image_to_load("textured.tga");
+    // TGAImage image_to_load("wireframe.tga");
+    // TGAImage image_to_load("object.tga");
+    // TGAImage image_to_load("zbuffer.tga");
+    // TGAImage image_to_load("quad.tga");
+    // TGAImage image_to_load("test_bar.tga");
+
+    // make the window the same size as the image, or rather not the window, but the "client size"...
+    // this is the best method I could think of lol
+    int w, h, x, y;
+    int cw, ch;
+    win32::GetWindowSizeAndPosition(window, &w, &h, &x, &y);
+    win32::GetClientSize(window, &cw, &ch);
+    printf("p %d, %d ... s %d, %d ... cs %d, %d\n", x, y , w, h, cw, ch);
+    win32::MoveAWindow(window, x, y, image_to_load.get_width(), image_to_load.get_height());
+    win32::GetWindowSizeAndPosition(window, &w, &h, &x, &y);
+    win32::GetClientSize(window, &cw, &ch);
+    printf("p %d, %d ... s %d, %d ... cs %d, %d\n", x, y , w, h, cw, ch);
+    int dw = w - cw;
+    int dh = h - ch;
+    win32::MoveAWindow(window, x, y, image_to_load.get_width() + dw, image_to_load.get_height() + dh);
+    win32::GetWindowSizeAndPosition(window, &w, &h, &x, &y);
+    win32::GetClientSize(window, &cw, &ch);
+    printf("p %d, %d ... s %d, %d ... cs %d, %d\n", x, y , w, h, cw, ch);
+    if (cw != image_to_load.get_width() || ch != image_to_load.get_height()) {
+        printf("Couldn't make the window the size I wanted AAAAAAAH!");
+    }
+
+    // setup the bitmap that will be rendered to the screen
+    bitmap_info.bmiHeader.biSize = sizeof(bitmap_info.bmiHeader);
+    bitmap_info.bmiHeader.biWidth = image_to_load.get_width();
+    bitmap_info.bmiHeader.biHeight = -image_to_load.get_height(); // This is negative so that 0,0 is top left and w,h is bottom right
+    bitmap_info.bmiHeader.biPlanes = 1; // "Must be one" -Microsoft    Thanks Ms.
+    bitmap_info.bmiHeader.biBitCount = 32;
+    bitmap_info.bmiHeader.biCompression = BI_RGB;
     
+    int pixel_size = sizeof(uint32_t);
+    int total_size = pixel_size * (image_to_load.get_width() * image_to_load.get_height());
+    pixel_data = VirtualAlloc(0, total_size, MEM_COMMIT, PAGE_READWRITE);
+    // defer VirtualFree(pixel_data, 0, MEM_RELEASE);
+    
+    paint(image_to_load);
+
     bool running = true;
     while (running) {
         MSG msg;
