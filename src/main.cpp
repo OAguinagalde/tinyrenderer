@@ -891,6 +891,14 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     return true;
 }
 
+DWORD WINAPI backgroundTask(LPVOID lpParam) {
+    printf("started\n");
+    Sleep(10000);
+    printf("finished\n");
+    return 0;
+}
+
+
 int main(int argc, char** argv) {
     srand(time(NULL));
     test_barycentric("barycentric_test.tga");
@@ -901,15 +909,20 @@ int main(int argc, char** argv) {
     test_textured_quad("quad.tga");
     test_barycentric_2("test_bar.tga");
 
-    auto image_name = "barycentric_test.tga";
-    // auto image_name = "textured.tga";
+    // auto image_name = "barycentric_test.tga";
+    auto image_name = "textured.tga";
     // auto image_name = "wireframe.tga";
     // auto image_name = "object.tga";
     // auto image_name = "zbuffer.tga";
     // auto image_name = "quad.tga";
     // auto image_name = "test_bar.tga";
     TGAImage image(image_name);
-    
+
+    void* someData;
+    HANDLE handle = 0;
+    handle = CreateThread(NULL, 0, backgroundTask, someData, 0, NULL);
+    if (!handle) return 1;
+
     win32::GetConsole();
     auto window = win32::NewWindow("myWindow", image_name, 100, 100, 10, 10, &window_callback);
     win32::SetWindowClientSize(window, image.get_width(), image.get_height());
@@ -920,4 +933,8 @@ int main(int argc, char** argv) {
     screen = &buffer_wrapper;
     
     win32::NewWindowLoopStart(window, onUpdate);
+
+    WaitForSingleObject(handle, INFINITE);
+    CloseHandle(handle);
+    printf("waited\n");
 }
