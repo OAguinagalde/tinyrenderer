@@ -156,6 +156,7 @@ namespace win32 {
 
     // return true if you handle a message, else return false and the internal code will handle it
     typedef bool windowsCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2);
+    typedef bool windowsCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2);
     
     static BITMAPINFO render_target;
     static void* pixel_buffer = NULL;
@@ -205,25 +206,9 @@ namespace win32 {
             } break;
 
             case WM_SIZE: {
-                
-                if (pixel_buffer != NULL) {
-                    int w, h;
-                    win32::GetClientSize(window, &w, &h);
-
-                    PAINTSTRUCT paint;
-                    HDC dc = BeginPaint(window, &paint);
-                    StretchDIBits(
-                        dc,
-                        0, 0, w, h,
-                        0, 0, w, h,
-                        pixel_buffer,
-                        &render_target,
-                        DIB_RGB_COLORS,
-                        SRCCOPY
-                    );
-                    EndPaint(window, &paint);
-                }
-
+                RECT rect;
+                GetClientRect(window, &rect);
+                InvalidateRect(window, &rect, true);
             } break;
         }
         
@@ -303,43 +288,64 @@ namespace win32 {
         return (uint32_t*) pixel_buffer;
     }
 
-    // enters a blocking loop in which keeps on reading and dispatching the windows messages, until the running flag is set to false
-    void NewWindowLoopStart(bool* running) {
+    // if returns false, loop will end
+    typedef bool OnUpdate(uint32_t* pixels, double dt_ms);
 
-        win32::GetConsole();
+    // enters a blocking loop in which keeps on reading and dispatching the windows messages, until the running flag is set to false
+    void NewWindowLoopStart(HWND window, OnUpdate* onUpdate) {
         
+        char windowTitle[100];
         unsigned long long cpuFrequencySeconds;
         unsigned long long cpuCounter;
         unsigned long long fps;
         double ms;
         win32::GetCpuCounterAndFrequencySeconds(&cpuCounter, &cpuFrequencySeconds);
 
-        while (*running) {
-            MSG msg;
-            while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-                
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
+        bool running = true;
+        while (running) {
 
-                if (user_callback != NULL && user_callback(msg.hwnd, msg.message, msg.wParam, msg.lParam)) {
-                    
-                }
-                else {
-                    switch (msg.message) {
-                        case WM_QUIT: {
-                            *running = false;
-                        } break;
+            cpuCounter = win32::GetTimeDifferenceMsAndFPS(cpuCounter, cpuFrequencySeconds, &ms, &fps);
+            
+            { // Message loop
+                MSG msg;
+                while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+
+                    TranslateMessage(&msg);
+                    DispatchMessage(&msg);
+
+                    if (user_callback != NULL && user_callback(msg.hwnd, msg.message, msg.wParam, msg.lParam)) {
+                        continue;
+                    }
+                    else {
+                        switch (msg.message) {
+                            case WM_QUIT: {
+                                running = false;
+                            } break;
+                        }
                     }
                 }
-
-                cpuCounter = win32::GetTimeDifferenceMsAndFPS(cpuCounter, cpuFrequencySeconds, &ms, &fps);
-
-                short cursorx, cursory;
-                if (win32::GetConsoleCursorPosition(&cursorx, &cursory)) {
-                    win32::FormattedPrint("ms %f", ms);
-                    win32::SetConsoleCursorPosition(cursorx, cursory);
-                }
             }
+
+            running = running && onUpdate((uint32_t*)pixel_buffer, ms);
+            if (!running) continue;
+            
+            // render
+            if (pixel_buffer != NULL) {
+                int cw, ch;
+                win32::GetClientSize(window, &cw, &ch);
+                HDC dc = GetDC(window);
+                StretchDIBits(
+                    dc,
+                    0, 0, cw, ch,
+                    0, 0, cw, ch,
+                    pixel_buffer,
+                    &render_target,
+                    DIB_RGB_COLORS,
+                    SRCCOPY
+                );
+                ReleaseDC(window, dc);
+            }
+            
         }
     }
 

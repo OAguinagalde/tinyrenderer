@@ -62,8 +62,11 @@ namespace win32 {
     // 0,0 is top left and w,h is bottom right
     uint32_t* NewWindowRenderTarget(int w, int h);
 
+    // if returns false, loop will end
+    typedef bool OnUpdate(uint32_t* pixels, double dt_ms);
+
     // enters a blocking loop in which keeps on reading and dispatching the windows messages, until the running flag is set to false
-    void NewWindowLoopStart(bool* running);
+    void NewWindowLoopStart(HWND window, OnUpdate* onUpdate);
 
 
     // 

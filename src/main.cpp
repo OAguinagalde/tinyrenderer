@@ -782,25 +782,47 @@ void test_barycentric_2(const char* out_file) {
 
 #define rgb(r,g,b) (((uint8_t)r << 16) | ((uint8_t)g << 8) | (uint8_t)b)
 
+static TGAImage* screen;
+
 void paint(uint32_t* pixels, IPixelBuffer& image) {
+    // clear
     for (int i = 0; i < image.get_width() * image.get_height(); i++) {
         pixels[i] = rgb(255,255,255);
     }
 
-    for (int y =  0; y < image.get_height(); y++) {
+    // paint the image
+    for (int y = 0; y < image.get_height(); y++) {
         for (int x =  0; x < image.get_width(); x++) {
-
             TGAColor color = image.get(x, y);
-            
             int idx = int(x + y * image.get_width());
             pixels[idx] = rgb(color.r, color.g, color.b);
-        
         }
     }
 }
 
 bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2) {
+    // nothing is explicitly handled
     return false;
+}
+
+bool onUpdate(uint32_t* pixels, double dt_ms) {
+
+    Vec2i t[3] = {
+        Vec2i(10,10),
+        Vec2i(20,10),
+        Vec2i(15,20)
+    };
+    triangle2(t, *screen, TGAColor(255 * (dt_ms * 100.0), 255, 255, 255));
+
+    short cursorx, cursory;
+    if (win32::GetConsoleCursorPosition(&cursorx, &cursory)) {
+        win32::FormattedPrint("ms %f", (dt_ms / 16));
+        win32::SetConsoleCursorPosition(cursorx, cursory);
+    }
+    
+    // on every frame, copy the image to the screen
+    paint(pixels, *screen);
+    return true;
 }
 
 int main(int argc, char** argv) {
@@ -821,12 +843,13 @@ int main(int argc, char** argv) {
     // auto image_name = "quad.tga";
     // auto image_name = "test_bar.tga";
 
-    TGAImage image_to_load(image_name);
+    TGAImage image(image_name);
+    screen = &image;
+
+    win32::GetConsole();
     
     auto window = win32::NewWindow("myWindow", image_name, 100, 100, 10, 10, &window_callback);
-    win32::SetWindowClientSize(window, image_to_load.get_width(), image_to_load.get_height());
-    auto pixels = win32::NewWindowRenderTarget(image_to_load.get_width(), image_to_load.get_height());
-    paint(pixels, image_to_load);
-    bool running = true;
-    win32::NewWindowLoopStart(&running);
+    win32::SetWindowClientSize(window, image.get_width(), image.get_height());
+    win32::NewWindowRenderTarget(image.get_width(), image.get_height());
+    win32::NewWindowLoopStart(window, onUpdate);
 }
