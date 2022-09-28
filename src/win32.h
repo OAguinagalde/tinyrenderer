@@ -1,11 +1,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <strsafe.h>
-#include <cassert>
-#include <cstdlib>
+#include <stdint.h>
 
 #pragma comment(lib, "User32")
 #pragma comment(lib, "gdi32")
+#pragma comment(lib, "Msimg32")
 
 namespace win32 {
     
@@ -41,13 +40,32 @@ namespace win32 {
     // Given a windowHandle, queries the width and height of the client size (The drawable area)
     void GetClientSize(HWND windowHandle, int* width, int* height);
 
-    // Also used for resizing the window
-    void MoveAWindow(HWND windowHandle, int x, int y, int w, int h);
+    void SetWindowPosition(HWND window, int x, int y);
 
     HDC GetDeviceContextHandle(HWND windowHandle);
 
     void SwapPixelBuffers(HDC deviceContextHandle);
-    
+
+    // return true if you handle a message, else return false and the internal code will handle it
+    typedef bool windowsCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2);
+
+    // Warning: Probably its a bad idea to call this more than once lol
+    // Warning: Uses GetModuleHandleA(NULL) as the hInstance, so might not work if used as a DLL
+    HWND NewWindow(const char* identifier, const char* windowTitle, int x, int y, int w, int h, windowsCallback* callback);
+
+    // Sets the client size (not the window size!)
+    void SetWindowClientSize(HWND window, int width, int height);
+
+    void SetWindowPosition(HWND window, int x, int y);
+
+    // Everytime this is called it resets the render target
+    // 0,0 is top left and w,h is bottom right
+    uint32_t* NewWindowRenderTarget(int w, int h);
+
+    // enters a blocking loop in which keeps on reading and dispatching the windows messages, until the running flag is set to false
+    void NewWindowLoopStart(bool* running);
+
+
     // 
     // ** windows timers and stuff **
     // 

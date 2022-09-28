@@ -1,11 +1,5 @@
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #include <strsafe.h>
-#include <cassert>
-#include <cstdlib>
-
-#pragma comment(lib, "User32")
-#pragma comment(lib, "gdi32")
+#include "win32.h"
 
 namespace win32 {
 
@@ -124,6 +118,7 @@ namespace win32 {
         return windowClass;
     }
 
+    // hInstance may be null if you dont know or care what it is
     HWND MakeWindow(const char* windowClassName, const char* title, HINSTANCE hInstance, int nCmdShow) {
         int windowPositionX = 100;
         int windowPositionY = 100;
@@ -145,8 +140,10 @@ namespace win32 {
         // Get client size
         GetClientSize(windowHandle, &clientWidth, &clientHeight);
         // Calculate difference between initial size of window and current size of drawable area, that should be the difference to make the window big enough to have our desired drawable area
-        int difference_w = abs(clientWidth - desiredClientWidth);
-        int difference_h = abs(clientHeight - desiredClientHeight);
+        int difference_w = clientWidth - desiredClientWidth;
+        if (difference_w < 0) difference_w *= -1;
+        int difference_h = clientHeight - desiredClientHeight;
+        if (difference_h < 0) difference_h *= -1;
         // Set the initially desired position and size now
         MoveWindow(windowHandle, windowPositionX, windowPositionY, windowWidth + difference_w, windowHeight + difference_h, 0);
         // It should have the right size about now
@@ -157,14 +154,176 @@ namespace win32 {
         return windowHandle;
     }
 
-    void MoveAWindow(HWND windowHandle, int x, int y, int w, int h) {
+    // return true if you handle a message, else return false and the internal code will handle it
+    typedef bool windowsCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2);
+    
+    static BITMAPINFO render_target;
+    static void* pixel_buffer = NULL;
+    static windowsCallback* user_callback = NULL;
+    static LRESULT CALLBACK DefaultWindowCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2) {
+
+        if (user_callback != NULL && user_callback(window, messageType, param1, param2)) {
+            return 0;
+        }
+        
+        switch (messageType) {
+
+            case WM_DESTROY: { /* fallthrough */ }
+            case WM_CLOSE: {
+                PostQuitMessage(0);
+                return 0;
+            } break;
+
+            case WM_SYSKEYDOWN: { /* fallthrough */ }
+            case WM_KEYDOWN: {
+                if (param1 == VK_ESCAPE) {
+                    PostQuitMessage(0);
+                }
+                return 0;
+            } break;
+
+            case WM_PAINT: {
+                
+                if (pixel_buffer != NULL) {
+                    int w, h;
+                    win32::GetClientSize(window, &w, &h);
+
+                    PAINTSTRUCT paint;
+                    HDC dc = BeginPaint(window, &paint);
+                    StretchDIBits(
+                        dc,
+                        0, 0, w, h,
+                        0, 0, w, h,
+                        pixel_buffer,
+                        &render_target,
+                        DIB_RGB_COLORS,
+                        SRCCOPY
+                    );
+                    EndPaint(window, &paint);
+                }
+
+            } break;
+
+            case WM_SIZE: {
+                
+                if (pixel_buffer != NULL) {
+                    int w, h;
+                    win32::GetClientSize(window, &w, &h);
+
+                    PAINTSTRUCT paint;
+                    HDC dc = BeginPaint(window, &paint);
+                    StretchDIBits(
+                        dc,
+                        0, 0, w, h,
+                        0, 0, w, h,
+                        pixel_buffer,
+                        &render_target,
+                        DIB_RGB_COLORS,
+                        SRCCOPY
+                    );
+                    EndPaint(window, &paint);
+                }
+
+            } break;
+        }
+        
+        return DefWindowProc(window, messageType, param1, param2);
+    }
+
+    // Warning: Probably its a bad idea to call this more than once lol
+    // Warning: Uses GetModuleHandleA(NULL) as the hInstance, so might not work if used as a DLL
+    HWND NewWindow(const char* identifier, const char* windowTitle, int x, int y, int w, int h, windowsCallback* callback) {
+        user_callback = callback;
+        HINSTANCE hinstance = GetModuleHandleA(NULL);
+        WNDCLASSA windowClass = {};
+        windowClass.lpfnWndProc = DefaultWindowCallback;
+        windowClass.hInstance = hinstance;
+        windowClass.lpszClassName = LPCSTR(identifier);
+        windowClass.hCursor = LoadCursor(NULL, IDC_ARROW);
+        RegisterClassA(&windowClass);
+        HWND windowHandle = CreateWindowExA(0, LPCSTR(identifier), LPCSTR(windowTitle), WS_POPUP | WS_OVERLAPPED | WS_THICKFRAME | WS_CAPTION | WS_SYSMENU  | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
+            x, y, w, h,
+            NULL, NULL, hinstance, NULL
+        );
+        ShowWindow(windowHandle, SW_SHOW);
+        return windowHandle;
+    }
+
+    // Sets the client size (not the window size!)
+    void SetWindowClientSize(HWND window, int width, int height) {
+        int w, h, cw, ch, x, y;
+        GetWindowSizeAndPosition(window, &w, &h, &x, &y);
+        MoveWindow(window, x, y, width, height, 0);
+        GetWindowSizeAndPosition(window, &w, &h, &x, &y);
+        GetClientSize(window, &cw, &ch);
+
+        int dw = cw - width;
+        if (dw < 0) dw *= -1;
+        int dh = ch - height;
+        if (dh < 0) dh *= -1;
+
+        MoveWindow(window, x, y, width + dw, height + dh, 0);
+        RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
+    }
+
+    void SetWindowPosition(HWND window, int x, int y) {
+        int w, h, ignore;
+        GetWindowSizeAndPosition(window, &w, &h, &ignore, &ignore);
+        
         // Moving the console doesn't redraw it, so parts of the window that were originally hidden won't be rendered.
-        MoveWindow(windowHandle, x, y, w, h, 0);
-        // So after moving the window, redraw it.
+        MoveWindow(window, x, y, w, h, 0);
+
         // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-redrawwindow
         // "If both the hrgnUpdate and lprcUpdate parameters are NULL, the entire client area is added to the update region."
-        RedrawWindow(windowHandle, NULL, NULL, RDW_INVALIDATE);
+        RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
     }
+
+    // Everytime this is called it resets the render target
+    // 0,0 is top left and w,h is bottom right
+    uint32_t* NewWindowRenderTarget(int w, int h) {
+        // setup the bitmap that will be rendered to the screen
+        render_target.bmiHeader.biSize = sizeof(render_target.bmiHeader);
+        render_target.bmiHeader.biWidth = w;
+        render_target.bmiHeader.biHeight = -h; // This is negative so that 0,0 is top left and w,h is bottom right
+
+        // "Must be one" -Microsoft
+        // Thanks Ms.
+        render_target.bmiHeader.biPlanes = 1;
+
+        render_target.bmiHeader.biBitCount = 32;
+        render_target.bmiHeader.biCompression = BI_RGB;
+
+        if (pixel_buffer != NULL) {
+            VirtualFree(pixel_buffer, 0, MEM_RELEASE);
+        }
+
+        int pixel_size = 4; // 4 bytes
+        int total_size = pixel_size * (w * h);
+        pixel_buffer = VirtualAlloc(0, total_size, MEM_COMMIT, PAGE_READWRITE);
+        return (uint32_t*) pixel_buffer;
+    }
+
+    // enters a blocking loop in which keeps on reading and dispatching the windows messages, until the running flag is set to false
+    void NewWindowLoopStart(bool* running) {
+        while (*running) {
+            MSG msg;
+            while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&msg); 
+                DispatchMessage(&msg);
+
+                if (user_callback != NULL && user_callback(msg.hwnd, msg.message, msg.wParam, msg.lParam)) {
+                    continue;
+                }
+
+                switch (msg.message) {
+                case WM_QUIT: {
+                        *running = false;
+                    } break;
+                }
+            }
+        }
+    }
+
     
     HDC GetDeviceContextHandle(HWND windowHandle) {
         HDC hdc = GetDC(windowHandle);

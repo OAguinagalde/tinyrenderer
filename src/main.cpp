@@ -782,23 +782,7 @@ void test_barycentric_2(const char* out_file) {
 
 #define rgb(r,g,b) (((uint8_t)r << 16) | ((uint8_t)g << 8) | (uint8_t)b)
 
-BITMAPINFO bitmap_info;
-void* pixel_data;
-
-void paint(IPixelBuffer& image) {
-    uint32_t* pixels = (uint32_t*) pixel_data;
-
-    // uint32_t* pixels = (uint32_t*) pixel_data;
-    // for (int i = 0; i < w * h; i++) {
-    //     pixels[i] = rgb(255,255,255);
-    // }
-
-    // // color the 4 corners of my window
-    // pixels[0] = rgb(255,0,0);
-    // pixels[w - 1] = rgb(0,255,0);
-    // pixels[w * (h - 1)] = rgb(0,0,255);
-    // pixels[(w * h) - 1] = rgb(255,0,0);
-
+void paint(uint32_t* pixels, IPixelBuffer& image) {
     for (int i = 0; i < image.get_width() * image.get_height(); i++) {
         pixels[i] = rgb(255,255,255);
     }
@@ -815,55 +799,8 @@ void paint(IPixelBuffer& image) {
     }
 }
 
-LRESULT CALLBACK BasicWindowProc(HWND window, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg) {
-
-        case WM_DESTROY: { /* fallthrough */ }
-        case WM_CLOSE: {
-            PostQuitMessage(0);
-            return 0;
-        } break;
-
-        case WM_SYSKEYDOWN: { /* fallthrough */ }
-        case WM_KEYDOWN: {
-
-            if (wParam == VK_ESCAPE) {
-                PostQuitMessage(0);
-            }
-            return 0;
-        } break;
-
-        case WM_PAINT: {
-            
-            if(pixel_data == NULL) return DefWindowProc(window, uMsg, wParam, lParam);
-
-            int w, h;
-            win32::GetClientSize(window, &w, &h);
-
-            PAINTSTRUCT paint;
-            HDC dc = BeginPaint(window, &paint);
-            StretchDIBits(
-                dc,
-                0, 0, w, h,
-                0, 0, w, h,
-                pixel_data,
-                &bitmap_info,
-                DIB_RGB_COLORS,
-                SRCCOPY
-            );
-            EndPaint(window, &paint);
-
-        } break;
-
-        case WM_SIZE: {
-            return DefWindowProc(window, uMsg, wParam, lParam);
-        } break;
-
-        case WM_SETCURSOR: {
-            return DefWindowProc(window, uMsg, wParam, lParam);
-        } break;
-    }
-    return DefWindowProc(window, uMsg, wParam, lParam);
+bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2) {
+    return false;
 }
 
 int main(int argc, char** argv) {
@@ -876,67 +813,20 @@ int main(int argc, char** argv) {
     test_textured_quad("quad.tga");
     test_barycentric_2("test_bar.tga");
 
-    const char* windowClassName = "MyWindowClass";
-    win32::MakeWindowClass(windowClassName, BasicWindowProc, GetModuleHandle(NULL));
-    HWND window = win32::MakeWindow(windowClassName, "window", GetModuleHandle(NULL), SW_SHOW);
-    
-    // TGAImage image_to_load("barycentric_test.tga");
-    TGAImage image_to_load("textured.tga");
-    // TGAImage image_to_load("wireframe.tga");
-    // TGAImage image_to_load("object.tga");
-    // TGAImage image_to_load("zbuffer.tga");
-    // TGAImage image_to_load("quad.tga");
-    // TGAImage image_to_load("test_bar.tga");
+    auto image_name = "barycentric_test.tga";
+    // auto image_name = "textured.tga";
+    // auto image_name = "wireframe.tga";
+    // auto image_name = "object.tga";
+    // auto image_name = "zbuffer.tga";
+    // auto image_name = "quad.tga";
+    // auto image_name = "test_bar.tga";
 
-    // make the window the same size as the image, or rather not the window, but the "client size"...
-    // this is the best method I could think of lol
-    int w, h, x, y;
-    int cw, ch;
-    win32::GetWindowSizeAndPosition(window, &w, &h, &x, &y);
-    win32::GetClientSize(window, &cw, &ch);
-    printf("p %d, %d ... s %d, %d ... cs %d, %d\n", x, y , w, h, cw, ch);
-    win32::MoveAWindow(window, x, y, image_to_load.get_width(), image_to_load.get_height());
-    win32::GetWindowSizeAndPosition(window, &w, &h, &x, &y);
-    win32::GetClientSize(window, &cw, &ch);
-    printf("p %d, %d ... s %d, %d ... cs %d, %d\n", x, y , w, h, cw, ch);
-    int dw = w - cw;
-    int dh = h - ch;
-    win32::MoveAWindow(window, x, y, image_to_load.get_width() + dw, image_to_load.get_height() + dh);
-    win32::GetWindowSizeAndPosition(window, &w, &h, &x, &y);
-    win32::GetClientSize(window, &cw, &ch);
-    printf("p %d, %d ... s %d, %d ... cs %d, %d\n", x, y , w, h, cw, ch);
-    if (cw != image_to_load.get_width() || ch != image_to_load.get_height()) {
-        printf("Couldn't make the window the size I wanted AAAAAAAH!");
-    }
-
-    // setup the bitmap that will be rendered to the screen
-    bitmap_info.bmiHeader.biSize = sizeof(bitmap_info.bmiHeader);
-    bitmap_info.bmiHeader.biWidth = image_to_load.get_width();
-    bitmap_info.bmiHeader.biHeight = -image_to_load.get_height(); // This is negative so that 0,0 is top left and w,h is bottom right
-    bitmap_info.bmiHeader.biPlanes = 1; // "Must be one" -Microsoft    Thanks Ms.
-    bitmap_info.bmiHeader.biBitCount = 32;
-    bitmap_info.bmiHeader.biCompression = BI_RGB;
+    TGAImage image_to_load(image_name);
     
-    int pixel_size = sizeof(uint32_t);
-    int total_size = pixel_size * (image_to_load.get_width() * image_to_load.get_height());
-    pixel_data = VirtualAlloc(0, total_size, MEM_COMMIT, PAGE_READWRITE);
-    // defer VirtualFree(pixel_data, 0, MEM_RELEASE);
-    
-    paint(image_to_load);
-
+    auto window = win32::NewWindow("myWindow", image_name, 100, 100, 10, 10, &window_callback);
+    win32::SetWindowClientSize(window, image_to_load.get_width(), image_to_load.get_height());
+    auto pixels = win32::NewWindowRenderTarget(image_to_load.get_width(), image_to_load.get_height());
+    paint(pixels, image_to_load);
     bool running = true;
-    while (running) {
-        MSG msg;
-        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&msg); 
-            DispatchMessage(&msg);
-            switch (msg.message) {
-                case WM_QUIT: {
-                    running = false;
-                } break;
-                case WM_SIZE: {
-                } break;
-            }
-        }
-    }
+    win32::NewWindowLoopStart(&running);
 }
