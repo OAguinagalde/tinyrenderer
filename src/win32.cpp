@@ -305,20 +305,39 @@ namespace win32 {
 
     // enters a blocking loop in which keeps on reading and dispatching the windows messages, until the running flag is set to false
     void NewWindowLoopStart(bool* running) {
+
+        win32::GetConsole();
+        
+        unsigned long long cpuFrequencySeconds;
+        unsigned long long cpuCounter;
+        unsigned long long fps;
+        double ms;
+        win32::GetCpuCounterAndFrequencySeconds(&cpuCounter, &cpuFrequencySeconds);
+
         while (*running) {
             MSG msg;
             while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-                TranslateMessage(&msg); 
+                
+                TranslateMessage(&msg);
                 DispatchMessage(&msg);
 
                 if (user_callback != NULL && user_callback(msg.hwnd, msg.message, msg.wParam, msg.lParam)) {
-                    continue;
+                    
+                }
+                else {
+                    switch (msg.message) {
+                        case WM_QUIT: {
+                            *running = false;
+                        } break;
+                    }
                 }
 
-                switch (msg.message) {
-                case WM_QUIT: {
-                        *running = false;
-                    } break;
+                cpuCounter = win32::GetTimeDifferenceMsAndFPS(cpuCounter, cpuFrequencySeconds, &ms, &fps);
+
+                short cursorx, cursory;
+                if (win32::GetConsoleCursorPosition(&cursorx, &cursory)) {
+                    win32::FormattedPrint("ms %f", ms);
+                    win32::SetConsoleCursorPosition(cursorx, cursory);
                 }
             }
         }
@@ -336,9 +355,19 @@ namespace win32 {
         SwapBuffers(deviceContextHandle);
     }
 
-    // unsigned long long cpuFrequencySeconds;
-    // unsigned long long cpuCounter;
-    // GetCpuCounterAndFrequencySeconds(&cpuCounter, &cpuFrequencySeconds);
+    // usage example:
+    // 
+    //     unsigned long long cpuFrequencySeconds, cpuCounter, fps;
+    //     double ms;
+    //     win32::GetCpuCounterAndFrequencySeconds(&cpuCounter, &cpuFrequencySeconds);
+    //     while (true) {
+    //         // input
+    //         // update
+    //         // render
+    //         cpuCounter = win32::GetTimeDifferenceMsAndFPS(cpuCounter, cpuFrequencySeconds, &ms, &fps);
+    //         win32::FormattedPrint("ms %f\n", ms);
+    //     }
+    // 
     void GetCpuCounterAndFrequencySeconds(unsigned long long* cpuCounter, unsigned long long* cpuFrequencySeconds) {
         LARGE_INTEGER counter;
         QueryPerformanceCounter(&counter);
@@ -359,6 +388,7 @@ namespace win32 {
 
     // Given the previous cpu counter to compare with, and the cpu frequency (Use GetCpuCounterAndFrequencySeconds)
     // Calculate timeDifferenceMs and fps. Returns the current value of cpuCounter.
+    // returns a newly calculated cpu counter
     unsigned long long GetTimeDifferenceMsAndFPS(unsigned long long cpuPreviousCounter, unsigned long long cpuFrequencySeconds, double* timeDifferenceMs, unsigned long long* fps) {
         // Internal Counter at this point
         LARGE_INTEGER cpuCounter;

@@ -70,13 +70,24 @@ namespace win32 {
     // ** windows timers and stuff **
     // 
 
-    // unsigned long long cpuFrequencySeconds;
-    // unsigned long long cpuCounter;
-    // GetCpuCounterAndFrequencySeconds(&cpuCounter, &cpuFrequencySeconds);
+    // usage example:
+    // 
+    //     unsigned long long cpuFrequencySeconds, cpuCounter, fps;
+    //     double ms;
+    //     win32::GetCpuCounterAndFrequencySeconds(&cpuCounter, &cpuFrequencySeconds);
+    //     while (true) {
+    //         // input
+    //         // update
+    //         // render
+    //         cpuCounter = win32::GetTimeDifferenceMsAndFPS(cpuCounter, cpuFrequencySeconds, &ms, &fps);
+    //         win32::FormattedPrint("ms %f\n", ms);
+    //     }
+    // 
     void GetCpuCounterAndFrequencySeconds(unsigned long long* cpuCounter, unsigned long long* cpuFrequencySeconds);
 
     // Given the previous cpu counter to compare with, and the cpu frequency (Use GetCpuCounterAndFrequencySeconds)
     // Calculate timeDifferenceMs and fps. Returns the current value of cpuCounter.
+    // returns a newly calculated cpu counter.
     unsigned long long GetTimeDifferenceMsAndFPS(unsigned long long cpuPreviousCounter, unsigned long long cpuFrequencySeconds, double* timeDifferenceMs, unsigned long long* fps);
 
 
