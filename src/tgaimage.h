@@ -69,9 +69,11 @@ struct TGAColor {
 };
 
 struct IPixelBuffer {
-    virtual bool set(int x, int y, TGAColor c) = 0;
+    virtual bool set(int x, int y, uint32_t c) = 0;
+	virtual uint32_t at(int x, int y) = 0;
+	virtual bool set(int x, int y, TGAColor c) = 0;
     virtual TGAColor get(int x, int y) = 0;
-    virtual int get_width() = 0;
+	virtual int get_width() = 0;
     virtual int get_height() = 0;
 };
 
@@ -99,7 +101,9 @@ public:
 	bool flip_vertically();
 	bool scale(int w, int h);
 	TGAColor get(int x, int y);
+	uint32_t at(int x, int y);
 	bool set(int x, int y, TGAColor c);
+	bool set(int x, int y, uint32_t c);
 	~TGAImage();
 	TGAImage & operator =(const TGAImage &img);
 	int get_width();

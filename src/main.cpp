@@ -802,8 +802,8 @@ public:
     }
     TGAColor get(int x, int y) {
         if (!data || x<0 || y<0 || x>=width || y>=height) {
-            int a = x / 0;
             printf("error");
+            int a = x / 0;
         }
 
         int idx = int(x + y * width);
@@ -811,11 +811,29 @@ public:
     }
     bool set(int x, int y, TGAColor c) {
         if (!data || x<0 || y<0 || x>=width || y>=height) {
-            int a = x / 0;
             printf("error");
+            int a = x / 0;
         }
         int idx = int(x + y * width);
         data[idx] = rgb(c.r, c.g, c.b);
+        return true;
+    }
+    uint32_t at(int x, int y) {
+        if (!data || x<0 || y<0 || x>=width || y>=height) {
+            printf("error");
+            int a = x / 0;
+        }
+
+        int idx = int(x + y * width);
+        return data[idx];
+    }
+    bool set(int x, int y, uint32_t c) {
+        if (!data || x<0 || y<0 || x>=width || y>=height) {
+            printf("error");
+            int a = x / 0;
+        }
+        int idx = int(x + y * width);
+        data[idx] = c;
         return true;
     }
     ~PixelBuffer() {
@@ -839,20 +857,12 @@ public:
     }
 };
 
-static PixelBuffer* screen;
+static IPixelBuffer* screen;
 
-void paint(uint32_t* pixels, IPixelBuffer& image) {
-    // clear
-    for (int i = 0; i < image.get_width() * image.get_height(); i++) {
-        pixels[i] = rgb(255,255,255);
-    }
-
-    // paint the image
-    for (int y = 0; y < image.get_height(); y++) {
-        for (int x =  0; x < image.get_width(); x++) {
-            TGAColor color = image.get(x, y);
-            int idx = int(x + y * image.get_width());
-            pixels[idx] = rgb(color.r, color.g, color.b);
+void paint(IPixelBuffer& dest, IPixelBuffer& source) {
+    for (int y = 0; y < dest.get_height(); y++) {
+        for (int x =  0; x < dest.get_width(); x++) {
+            dest.set(x, y, source.at(x, y));
         }
     }
 }
@@ -862,23 +872,22 @@ bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2
     return false;
 }
 
-bool onUpdate(uint32_t* pixels, double dt_ms) {
+bool onUpdate(double dt_ms, unsigned long long fps) {
 
     Vec2i t[3] = {
         Vec2i(10,10),
         Vec2i(20,10),
         Vec2i(15,20)
     };
-    triangle2(t, *screen, TGAColor(255 * (dt_ms * 100.0), 255, 255, 255));
+    
+    triangle2(t, *screen, TGAColor(dt_ms / 16.0, dt_ms / 32.0, dt_ms / 62.0, 255));
 
     short cursorx, cursory;
     if (win32::GetConsoleCursorPosition(&cursorx, &cursory)) {
-        win32::FormattedPrint("ms %f", (dt_ms / 16));
+        win32::FormattedPrint("fps %d, ms %f", fps, dt_ms);
         win32::SetConsoleCursorPosition(cursorx, cursory);
     }
-    
-    // on every frame, copy the image to the screen
-    paint(pixels, *screen);
+
     return true;
 }
 
@@ -899,16 +908,16 @@ int main(int argc, char** argv) {
     // auto image_name = "zbuffer.tga";
     // auto image_name = "quad.tga";
     // auto image_name = "test_bar.tga";
-
     TGAImage image(image_name);
-
-    win32::GetConsole();
     
+    win32::GetConsole();
     auto window = win32::NewWindow("myWindow", image_name, 100, 100, 10, 10, &window_callback);
     win32::SetWindowClientSize(window, image.get_width(), image.get_height());
     auto buffer = win32::NewWindowRenderTarget(image.get_width(), image.get_height());
+    
     PixelBuffer buffer_wrapper(image.get_width(), image.get_height(), buffer, rgb(255, 255, 255));
     buffer_wrapper.load(image);
     screen = &buffer_wrapper;
+    
     win32::NewWindowLoopStart(window, onUpdate);
 }
