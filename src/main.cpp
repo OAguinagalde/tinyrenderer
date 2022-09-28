@@ -780,9 +780,66 @@ void test_barycentric_2(const char* out_file) {
 #include "win32.h"
 #pragma comment(lib, "Msimg32")
 
-#define rgb(r,g,b) (((uint8_t)r << 16) | ((uint8_t)g << 8) | (uint8_t)b)
+#define rgb(r,g,b) ((uint32_t)(((uint8_t)r << 16) | ((uint8_t)g << 8) | (uint8_t)b))
 
-static TGAImage* screen;
+struct PixelBuffer: public IPixelBuffer {
+protected:
+    uint32_t* data;
+    int width;
+    int height;
+    bool managed;
+
+public:
+    PixelBuffer(int w, int h) : data(NULL), width(w), height(h), managed(true) {
+        data = (uint32_t*)malloc(width * height * sizeof(uint32_t));
+    }
+    PixelBuffer(int w, int h, uint32_t clear_color) : data(NULL), width(w), height(h), managed(true) {
+        data = (uint32_t*)malloc(width * height * sizeof(uint32_t));
+        clear(clear_color);
+    }
+    PixelBuffer(int w, int h, uint32_t* data, uint32_t clear_color) : data(data), width(w), height(h), managed(false) {
+        clear(clear_color);
+    }
+    TGAColor get(int x, int y) {
+        if (!data || x<0 || y<0 || x>=width || y>=height) {
+            int a = x / 0;
+            printf("error");
+        }
+
+        int idx = int(x + y * width);
+        return TGAColor((uint8_t)(data[idx] >> 16), (uint8_t)(data[idx] >> 8), (uint8_t)(data[idx]), 255);
+    }
+    bool set(int x, int y, TGAColor c) {
+        if (!data || x<0 || y<0 || x>=width || y>=height) {
+            int a = x / 0;
+            printf("error");
+        }
+        int idx = int(x + y * width);
+        data[idx] = rgb(c.r, c.g, c.b);
+        return true;
+    }
+    ~PixelBuffer() {
+        if (managed) free(data);
+    }
+    int get_width() { return width; }
+    int get_height() { return height; }
+    uint32_t *buffer() { return data; }
+    void clear(uint32_t c) {
+        for (int i = 0; i < width * height; i++) {
+            data[i] = c;
+        }
+    }
+    // assumes buffers are the same size
+    void load(IPixelBuffer& pixel_buffer) {
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                set(x, y, pixel_buffer.get(x, y));
+            }
+        }
+    }
+};
+
+static PixelBuffer* screen;
 
 void paint(uint32_t* pixels, IPixelBuffer& image) {
     // clear
@@ -844,12 +901,14 @@ int main(int argc, char** argv) {
     // auto image_name = "test_bar.tga";
 
     TGAImage image(image_name);
-    screen = &image;
 
     win32::GetConsole();
     
     auto window = win32::NewWindow("myWindow", image_name, 100, 100, 10, 10, &window_callback);
     win32::SetWindowClientSize(window, image.get_width(), image.get_height());
-    win32::NewWindowRenderTarget(image.get_width(), image.get_height());
+    auto buffer = win32::NewWindowRenderTarget(image.get_width(), image.get_height());
+    PixelBuffer buffer_wrapper(image.get_width(), image.get_height(), buffer, rgb(255, 255, 255));
+    buffer_wrapper.load(image);
+    screen = &buffer_wrapper;
     win32::NewWindowLoopStart(window, onUpdate);
 }
