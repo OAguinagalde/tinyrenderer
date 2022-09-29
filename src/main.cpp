@@ -849,8 +849,8 @@ public:
     }
     // assumes buffers are the same size
     void load(IPixelBuffer& pixel_buffer) {
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
+        for (int y = 0; y < pixel_buffer.get_height(); y++) {
+            for (int x = 0; x < pixel_buffer.get_width(); x++) {
                 set(x, y, pixel_buffer.get(x, y));
             }
         }
@@ -883,21 +883,18 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     triangle2(t, *screen, TGAColor(dt_ms / 16.0, dt_ms / 32.0, dt_ms / 62.0, 255));
 
     short cursorx, cursory;
-    if (win32::GetConsoleCursorPosition(&cursorx, &cursory)) {
+    if (win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
         win32::FormattedPrint("fps %d, ms %f", fps, dt_ms);
-        win32::SetConsoleCursorPosition(cursorx, cursory);
+        win32::ConsoleSetCursorPosition(cursorx, cursory);
     }
 
     return true;
 }
 
 DWORD WINAPI backgroundTask(LPVOID lpParam) {
-    printf("started\n");
-    Sleep(10000);
-    printf("finished\n");
+    // do something
     return 0;
 }
-
 
 int main(int argc, char** argv) {
     srand(time(NULL));
@@ -918,23 +915,43 @@ int main(int argc, char** argv) {
     // auto image_name = "test_bar.tga";
     TGAImage image(image_name);
 
-    void* someData;
+    void* someData = NULL;
     HANDLE handle = 0;
     handle = CreateThread(NULL, 0, backgroundTask, someData, 0, NULL);
     if (!handle) return 1;
+    defer _1([handle]() {
+        WaitForSingleObject(handle, INFINITE);
+        CloseHandle(handle);
+    });
 
-    win32::GetConsole();
-    auto window = win32::NewWindow("myWindow", image_name, 100, 100, 10, 10, &window_callback);
-    win32::SetWindowClientSize(window, image.get_width(), image.get_height());
-    auto buffer = win32::NewWindowRenderTarget(image.get_width(), image.get_height());
-    
-    PixelBuffer buffer_wrapper(image.get_width(), image.get_height(), buffer, rgb(255, 255, 255));
-    buffer_wrapper.load(image);
-    screen = &buffer_wrapper;
-    
-    win32::NewWindowLoopStart(window, onUpdate);
+    /* window scope */ {
+        auto window = win32::NewWindow("myWindow", image_name, 100, 100, 10, 10, &window_callback);
+        defer _2([window]() { win32::CleanWindow("myWindow", window); });
 
-    WaitForSingleObject(handle, INFINITE);
-    CloseHandle(handle);
-    printf("waited\n");
+        int w, h, x, y;
+        win32::SetWindowClientSize(window, image.get_width(), image.get_height());
+        win32::GetWindowSizeAndPosition(window, &w, &h, &x, &y);
+
+        bool haveConsole = true;
+        if (win32::ConsoleAttach() != win32::ConsoleAttachResult::SUCCESS) {
+            haveConsole = false;
+            if (win32::ConsoleCreate() == win32::ConsoleCreateResult::SUCCESS) {
+                auto consoleWindow = win32::ConsoleGetWindow();
+                win32::SetWindowPosition(consoleWindow, x+w, y);
+                haveConsole = true;
+            }
+        }
+        defer _3([haveConsole]() { if (haveConsole) win32::ConsoleFree(); });
+        
+
+        auto buffer = win32::NewWindowRenderTarget(image.get_width(), image.get_height());
+        defer _4([buffer]() { win32::CleanWindowRenderTarget(buffer); });
+        
+        PixelBuffer buffer_wrapper(image.get_width(), image.get_height(), buffer, rgb(255, 255, 255));
+        buffer_wrapper.load(image);
+        screen = &buffer_wrapper;
+        
+        win32::NewWindowLoopStart(window, onUpdate);
+        printf("Closing window...");
+    }
 }
