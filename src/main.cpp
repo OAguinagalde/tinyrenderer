@@ -802,8 +802,7 @@ public:
     }
     TGAColor get(int x, int y) {
         if (!data || x<0 || y<0 || x>=width || y>=height) {
-            printf("error");
-            int a = x / 0;
+            return TGAColor();
         }
 
         int idx = int(x + y * width);
@@ -811,8 +810,7 @@ public:
     }
     bool set(int x, int y, TGAColor c) {
         if (!data || x<0 || y<0 || x>=width || y>=height) {
-            printf("error");
-            int a = x / 0;
+            return false;
         }
         int idx = int(x + y * width);
         data[idx] = rgb(c.r, c.g, c.b);
@@ -820,8 +818,7 @@ public:
     }
     uint32_t at(int x, int y) {
         if (!data || x<0 || y<0 || x>=width || y>=height) {
-            printf("error");
-            int a = x / 0;
+            return 0;
         }
 
         int idx = int(x + y * width);
@@ -829,8 +826,7 @@ public:
     }
     bool set(int x, int y, uint32_t c) {
         if (!data || x<0 || y<0 || x>=width || y>=height) {
-            printf("error");
-            int a = x / 0;
+            return false;
         }
         int idx = int(x + y * width);
         data[idx] = c;
@@ -862,7 +858,7 @@ static IPixelBuffer* screen;
 void paint(IPixelBuffer& dest, IPixelBuffer& source) {
     for (int y = 0; y < dest.get_height(); y++) {
         for (int x =  0; x < dest.get_width(); x++) {
-            dest.set(x, y, source.at(x, y));
+            dest.set(x, y, source.get(x, y));
         }
     }
 }
@@ -874,13 +870,26 @@ bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2
 
 bool onUpdate(double dt_ms, unsigned long long fps) {
 
-    Vec2i t[3] = {
-        Vec2i(10,10),
-        Vec2i(20,10),
-        Vec2i(15,20)
-    };
-    
-    triangle2(t, *screen, TGAColor(dt_ms / 16.0, dt_ms / 32.0, dt_ms / 62.0, 255));
+    IPixelBuffer& s = *screen;
+
+    // clear
+    for (int y = 0; y < s.get_height(); y++) {
+        for (int x =  0; x < s.get_width(); x++) {
+            s.set(x, y, TGAColor(255,255,255,255));
+        }
+    }
+
+    // paint
+    static TGAImage image("quad.tga");
+    paint(s, image);
+
+    line(Vec2i(0,0), Vec2i( min((dt_ms / 16.0f) * s.get_width(), s.get_width()), 0), *screen, green);
+    line(Vec2i(0,1), Vec2i( min((dt_ms / 16.0f) * s.get_width(), s.get_width()), 1), *screen, green);
+
+    // mouse pos
+    POINT mouse;
+    GetCursorPos(&mouse);
+    fat_dot(Vec2i(mouse.x, mouse.y), s, TGAColor(255, 0, 0, 255));
 
     short cursorx, cursory;
     if (win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
