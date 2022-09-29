@@ -12,27 +12,56 @@ namespace win32 {
     // ** Console stuff **
     // 
     
-    // Try to get a console, for situations where there might not be one
-    // Return true when an external consolle (new window) has been allocated
-    bool GetConsole();
+    enum class ConsoleAttachResult {
+        // success
+        SUCCESS,
+        // Use FreeConsole() to detach from any console
+        ALREADY_ATTACHED,
+        // Parent process has no console attached to it so there is nothing to attach to
+        NO_CONSOLE_TO_ATTACH
+    };
+    
+    // Get the handles to this console with GetStdHandle(STD_INPUT_HANDLE/STD_OUTPUT_HANDLE/STD_ERROR_HANDLE)
+    ConsoleAttachResult ConsoleAttach();
+    
+    enum class ConsoleCreateResult {
+        SUCCESS,
+        // Use FreeConsole() to detach from any console
+        ALREADY_ATTACHED
+    };
+
+    // Get the handles to this console with GetStdHandle(STD_INPUT_HANDLE/STD_OUTPUT_HANDLE/STD_ERROR_HANDLE)
+    ConsoleCreateResult ConsoleCreate();
 
     // clears the console associated with the stdout
-    void ClearConsole();
+    void ConsoleClear();
 
-    bool GetConsoleCursorPosition(short *cursorX, short *cursorY);
+    bool ConsoleGetCursorPosition(short *x, short *y);
 
     // The handle must have the GENERIC_READ access right
-    bool SetConsoleCursorPosition(short posX, short posY);
+    bool ConsoleSetCursorPosition(short x, short y);
 
+    HWND ConsoleGetWindow();
+    
+    bool ConsoleFree();
 
     
     // 
     // ** Window stuff **
     // 
 
-    WNDCLASSA MakeWindowClass(const char* windowClassName, WNDPROC pfnWindowProc, HINSTANCE hInstance);
+    // return true if you handle a message, else return false and the internal code will handle it
+    typedef bool windowsCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2);
 
-    HWND MakeWindow(const char* windowClassName, const char* title, HINSTANCE hInstance, int nCmdShow);
+    // Warning: Probably its a bad idea to call this more than once lol
+    // Warning: Uses GetModuleHandleA(NULL) as the hInstance, so might not work if used as a DLL
+    HWND NewWindow(const char* identifier, const char* windowTitle, int x, int y, int w, int h, windowsCallback* callback);
+
+    // Use the same identifier used on NewWindow
+    bool CleanWindow(const char* identifier, HWND window);
+
+    // Sets the client size (not the window size!)
+    void SetWindowClientSize(HWND window, int width, int height);
 
     // Given a windowHandle, queries the width, height and position (x, y) of the window
     void GetWindowSizeAndPosition(HWND windowHandle, int* width, int* height, int* x, int* y);
@@ -46,21 +75,11 @@ namespace win32 {
 
     void SwapPixelBuffers(HDC deviceContextHandle);
 
-    // return true if you handle a message, else return false and the internal code will handle it
-    typedef bool windowsCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2);
-
-    // Warning: Probably its a bad idea to call this more than once lol
-    // Warning: Uses GetModuleHandleA(NULL) as the hInstance, so might not work if used as a DLL
-    HWND NewWindow(const char* identifier, const char* windowTitle, int x, int y, int w, int h, windowsCallback* callback);
-
-    // Sets the client size (not the window size!)
-    void SetWindowClientSize(HWND window, int width, int height);
-
-    void SetWindowPosition(HWND window, int x, int y);
-
     // Everytime this is called it resets the render target
     // 0,0 is top left and w,h is bottom right
     uint32_t* NewWindowRenderTarget(int w, int h);
+
+    void CleanWindowRenderTarget(uint32_t* buffer);
 
     // if returns false, loop will end
     typedef bool OnUpdate(double dt_ms, unsigned long long fps);

@@ -3,55 +3,46 @@
 
 namespace win32 {
 
-    // Try to get a console, for situations where there might not be one
-    // Return true when an external consolle (new window) has been allocated
-    bool GetConsole() {
-        bool consoleFound = false;
-        bool consoleIsExternal = false;
+    // Get the handles to this console with GetStdHandle(STD_INPUT_HANDLE/STD_OUTPUT_HANDLE/STD_ERROR_HANDLE)
+    ConsoleAttachResult ConsoleAttach() {
         if (AttachConsole(ATTACH_PARENT_PROCESS)) {
-            // Situation example:
-            // Opening a Windows Subsystem process from a cmd.exe process. It the process will attach to cmd.exe's console
-            consoleFound = true;
             Print("Console hijacked!\n");
+            return ConsoleAttachResult::SUCCESS;
+        }
+        DWORD error = GetLastError();
+        switch (error) {
+
+            case ERROR_ACCESS_DENIED: {
+                // If the calling process is already attached to a console, the error code returned is ERROR_ACCESS_DENIED.
+                return ConsoleAttachResult::ALREADY_ATTACHED;
+            } break;
+            
+            case ERROR_INVALID_HANDLE: {
+                // If the specified process does not have a console, the error code returned is ERROR_INVALID_HANDLE.
+                return ConsoleAttachResult::NO_CONSOLE_TO_ATTACH;
+            } break;
+            
+            case ERROR_INVALID_PARAMETER: {
+                // If the specified process does not exist, the error code returned is ERROR_INVALID_PARAMETER. 
+            } break;
+        }
+        DWORD break_this = error / 0;
+        // Unreachable
+        return ConsoleAttachResult::NO_CONSOLE_TO_ATTACH;
+    }
+    
+    // Get the handles to this console with GetStdHandle(STD_INPUT_HANDLE/STD_OUTPUT_HANDLE/STD_ERROR_HANDLE)
+    ConsoleCreateResult ConsoleCreate() {
+        if (AllocConsole()) {
+            return ConsoleCreateResult::SUCCESS;
         }
         else {
-            DWORD error = GetLastError();
-            switch (error) {
-                // If the calling process is already attached to a console, the error code returned is ERROR_ACCESS_DENIED.
-                case ERROR_ACCESS_DENIED: {
-                    // Already attached to a console so that's it
-                    consoleFound = true;
-                } break;
-                // If the specified process does not have a console, the error code returned is ERROR_INVALID_HANDLE.
-                case ERROR_INVALID_HANDLE: {
-                    
-                } break;
-                // If the specified process does not exist, the error code returned is ERROR_INVALID_PARAMETER. 
-                case ERROR_INVALID_PARAMETER: {
-                    FormattedPrint("Unreachable at %s, %s\n", __FUNCTIONW__, __FILE__);
-                } break;
-            }
-
+            return ConsoleCreateResult::ALREADY_ATTACHED;
         }
-
-        if (!consoleFound) {
-            // If we still don't have a console then create a new one
-            if (AllocConsole()) {
-                // Creates a new console
-                consoleFound = true;
-                consoleIsExternal = true;
-            }
-            else {
-                // AllocConsole function fails if the calling process already has a console
-                FormattedPrint("Unreachable at %s, %s\n", __FUNCTIONW__, __FILE__);
-            }
-        }
-        
-        return consoleIsExternal;
     }
 
     // clears the console associated with the stdout
-    void ClearConsole() {
+    void ConsoleClear() {
         HANDLE consoleStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
         // First we have to activate the virtual terminal processing for this to work
         // We might want to keep the original mode to restore it if necessary. For example when using with other command lines utilities...
@@ -63,16 +54,16 @@ namespace win32 {
         SetConsoleMode(consoleStdOut, mode);
         // 2J only clears the visible window and 3J only clears the scroll back.
         PCWSTR clearConsoleSequence = L"\x1b[2J";
-        WriteConsoleW(consoleStdOut, clearConsoleSequence, sizeof(clearConsoleSequence)/sizeof((clearConsoleSequence)[0]), NULL, NULL);
+        WriteConsoleA(consoleStdOut, clearConsoleSequence, sizeof(clearConsoleSequence)/sizeof((clearConsoleSequence)[0]), NULL, NULL);
         // Restore original mode
         SetConsoleMode(consoleStdOut, originalMode);
     }
 
-    bool GetConsoleCursorPosition(short *cursorX, short *cursorY) {
+    bool ConsoleGetCursorPosition(short *x, short *y) {
         CONSOLE_SCREEN_BUFFER_INFO cbsi;
         if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &cbsi)) {
-            *cursorX = cbsi.dwCursorPosition.X;
-            *cursorY = cbsi.dwCursorPosition.Y;
+            *x = cbsi.dwCursorPosition.X;
+            *y = cbsi.dwCursorPosition.Y;
             return true;
         }
         else {
@@ -81,13 +72,20 @@ namespace win32 {
     }
 
     // The handle must have the GENERIC_READ access right
-    bool SetConsoleCursorPosition(short posX, short posY) {
+    bool ConsoleSetCursorPosition(short x, short y) {
         COORD position;
-        position.X = posX;
-        position.Y = posY;
+        position.X = x;
+        position.Y = y;
         return SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), position);
     }
 
+    HWND ConsoleGetWindow() {
+        return GetConsoleWindow();
+    }
+
+    bool ConsoleFree() {
+        return FreeConsole();
+    }
 
     // Given a windowHandle, queries the width, height and position (x, y) of the window
     void GetWindowSizeAndPosition(HWND windowHandle, int* width, int* height, int* x, int* y) {
@@ -106,52 +104,6 @@ namespace win32 {
         GetClientRect(windowHandle, &rect);
         *width = rect.right - rect.left;
         *height = rect.bottom - rect.top;
-    }
-
-    WNDCLASSA MakeWindowClass(const char* windowClassName, WNDPROC pfnWindowProc, HINSTANCE hInstance) {
-        WNDCLASSA windowClass = {};
-        windowClass.lpfnWndProc = pfnWindowProc;
-        windowClass.hInstance = hInstance;
-        windowClass.lpszClassName = LPCSTR(windowClassName);
-        windowClass.hCursor = LoadCursor(NULL, IDC_ARROW);
-        RegisterClassA(&windowClass);
-        return windowClass;
-    }
-
-    // hInstance may be null if you dont know or care what it is
-    HWND MakeWindow(const char* windowClassName, const char* title, HINSTANCE hInstance, int nCmdShow) {
-        int windowPositionX = 100;
-        int windowPositionY = 100;
-        int windowWidth = 0;
-        int windowHeight = 0;
-        int clientWidth = 0;
-        int clientHeight = 0;
-        // The size for the window will be the whole window and not the drawing area, so we will have to adjust it later on and it doesn't matter much here
-        HWND windowHandle = CreateWindowExA(0, LPCSTR(windowClassName), LPCSTR(title), WS_POPUP | WS_OVERLAPPED | WS_THICKFRAME | WS_CAPTION | WS_SYSMENU  | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
-            windowPositionX, windowPositionY, 10, 10,
-            NULL, NULL, hInstance, NULL
-        );
-        Print("Window created\n");
-        GetWindowSizeAndPosition(windowHandle,&windowWidth,&windowHeight,&windowPositionX,&windowPositionY);
-        
-        // let's figure out the real size of the client area (drawable part of window) and adjust it
-        int desiredClientWidth = 500;
-        int desiredClientHeight = 600;
-        // Get client size
-        GetClientSize(windowHandle, &clientWidth, &clientHeight);
-        // Calculate difference between initial size of window and current size of drawable area, that should be the difference to make the window big enough to have our desired drawable area
-        int difference_w = clientWidth - desiredClientWidth;
-        if (difference_w < 0) difference_w *= -1;
-        int difference_h = clientHeight - desiredClientHeight;
-        if (difference_h < 0) difference_h *= -1;
-        // Set the initially desired position and size now
-        MoveWindow(windowHandle, windowPositionX, windowPositionY, windowWidth + difference_w, windowHeight + difference_h, 0);
-        // It should have the right size about now
-        Print("Window adjusted\n");
-        GetWindowSizeAndPosition(windowHandle, &windowWidth, &windowHeight, &windowPositionX, &windowPositionY);
-        GetClientSize(windowHandle, &clientWidth, &clientHeight);
-        ShowWindow(windowHandle, nCmdShow);
-        return windowHandle;
     }
 
     // return true if you handle a message, else return false and the internal code will handle it
@@ -225,13 +177,23 @@ namespace win32 {
         windowClass.hInstance = hinstance;
         windowClass.lpszClassName = LPCSTR(identifier);
         windowClass.hCursor = LoadCursor(NULL, IDC_ARROW);
-        RegisterClassA(&windowClass);
+        ATOM registeredClass = RegisterClassA(&windowClass);
+        // clean up with: UnregisterClassA(LPCSTR(identifier), hinstance);
         HWND windowHandle = CreateWindowExA(0, LPCSTR(identifier), LPCSTR(windowTitle), WS_POPUP | WS_OVERLAPPED | WS_THICKFRAME | WS_CAPTION | WS_SYSMENU  | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
             x, y, w, h,
             NULL, NULL, hinstance, NULL
         );
+        // clean up with: DestroyWindow(windowHandle);
         ShowWindow(windowHandle, SW_SHOW);
         return windowHandle;
+    }
+
+    // Use the same identifier used on NewWindow
+    bool CleanWindow(const char* identifier, HWND window) {
+        HINSTANCE hinstance = GetModuleHandleA(NULL);
+        bool windowDestroyed = DestroyWindow(window);
+        bool classUnregistered = UnregisterClassA(LPCSTR(identifier), hinstance);
+        return windowDestroyed && classUnregistered;
     }
 
     // Sets the client size (not the window size!)
@@ -287,6 +249,13 @@ namespace win32 {
         pixel_buffer = VirtualAlloc(0, total_size, MEM_COMMIT, PAGE_READWRITE);
         return (uint32_t*) pixel_buffer;
     }
+
+    void CleanWindowRenderTarget(uint32_t* buffer) {
+        if (buffer != NULL && buffer == pixel_buffer) {
+            VirtualFree(pixel_buffer, 0, MEM_RELEASE);
+        }
+    }
+
 
     // if returns false, loop will end
     typedef bool OnUpdate(double dt_ms, unsigned long long fps);
