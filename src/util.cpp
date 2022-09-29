@@ -1,14 +1,11 @@
 #include "util.h"
+#include <chrono>
 
 int absolute(int value) {
     if (value < 0) {
         return -value;
     }
     return value;
-}
-
-int maximum(int a, int b) {
-    return a > b ? a : b;
 }
 
 void swap(int& a, int& b) {
