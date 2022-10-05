@@ -3,6 +3,7 @@
 #include "tgaimage.h"
 #include <vector>
 #include <cmath>
+#include <iostream>
 
 #include "model.h"
 #include "geometry.h"
@@ -631,7 +632,37 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
 
         if (intensity > 0) {
             triangle2_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
-        } 
+        }
+
+        if (i == 2400) {
+            std::cerr << "screen:\n" << screen[0] << screen[1] << screen[2] << std::endl;
+            std::cerr << "world:\n" << world[0] << world[1] << world[2] << std::endl;
+            std::cerr << "texture:\n" << texture[0] << texture[1] << texture[2] << std::endl;
+            
+            // bar at a
+            Vec3f bara = barycentric(screen, screen[0]);
+            std::cerr << "bar screen at a:\n" << bara << std::endl;
+            Vec2f bara_ = barycentric_inverse(texture, bara);
+            std::cerr << "at texture:\n" << bara_ << std::endl;
+            Vec2i bara_text = Vec2i(bara_.x * texture_data.get_width(), bara_.y * texture_data.get_height());
+            std::cerr << "scaled: " << bara_text << std::endl;
+
+            Vec3f barb = barycentric(screen, screen[1]);
+            std::cerr << "bar screen at b:\n" << barb << std::endl;
+            Vec2f barb_ = barycentric_inverse(texture, barb);
+            std::cerr << "at texture:\n" << barb_ << std::endl;
+            Vec2i barb_text = Vec2i(barb_.x * texture_data.get_width(), barb_.y * texture_data.get_height());
+            std::cerr << "scaled: " << barb_text << std::endl;
+
+            Vec3f barc = barycentric(screen, screen[2]);
+            std::cerr << "bar screen at c:\n" << barc << std::endl;
+            Vec2f barc_ = barycentric_inverse(texture, barc);
+            std::cerr << "at texture:\n" << barc_ << std::endl;
+            Vec2i barc_text = Vec2i(barc_.x * texture_data.get_width(), barc_.y * texture_data.get_height());
+            std::cerr << "scaled: " << barc_text << std::endl;
+
+            triangle_outline(screen, pixel_buffer, TGAColor(0, 255, 0, 255));
+        }
     }
 
     measure_since(start);
@@ -800,6 +831,8 @@ public:
     PixelBuffer(int w, int h, uint32_t* data, uint32_t clear_color) : data(data), width(w), height(h), managed(false) {
         clear(clear_color);
     }
+    PixelBuffer(int w, int h, uint32_t* data) : data(data), width(w), height(h), managed(false) {
+    }
     TGAColor get(int x, int y) {
         if (!data || x<0 || y<0 || x>=width || y>=height) {
             return TGAColor();
@@ -853,8 +886,6 @@ public:
     }
 };
 
-static IPixelBuffer* screen;
-
 void paint(IPixelBuffer& dest, IPixelBuffer& source) {
     for (int y = 0; y < dest.get_height(); y++) {
         for (int x =  0; x < dest.get_width(); x++) {
@@ -870,7 +901,30 @@ bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2
 
 bool onUpdate(double dt_ms, unsigned long long fps) {
 
-    IPixelBuffer& s = *screen;
+    // static TGAImage image("barycentric_test.tga");
+    // static TGAImage image("res/african_head_diffuse.tga");
+    static TGAImage image("textured.tga");
+    // static TGAImage image("wireframe.tga");
+    // static TGAImage image("object.tga");
+    // static TGAImage image("zbuffer.tga");
+    // static TGAImage image("quad.tga");
+    // static TGAImage image("test_bar.tga");
+    
+    auto wc = win32::GetWindowContext();
+    if (!wc->IsActive()) {
+        win32::NewWindowRenderTarget(image.get_width(), image.get_height());
+        printf("init render\n");
+    }
+
+    PixelBuffer s(wc->width, wc->height, wc->pixels);
+
+    int cw, ch;
+    win32::GetClientSize(wc->window_handle, &cw, &ch);
+
+    if (cw != wc->width) {
+        win32::SetWindowClientSize(wc->window_handle, wc->width, wc->height);
+        printf("set size\n");
+    }
 
     // clear
     for (int y = 0; y < s.get_height(); y++) {
@@ -880,22 +934,29 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     }
 
     // paint
-    static TGAImage image("quad.tga");
+    
     paint(s, image);
 
-    line(Vec2i(0,0), Vec2i( min((dt_ms / 16.0f) * s.get_width(), s.get_width()), 0), *screen, green);
-    line(Vec2i(0,1), Vec2i( min((dt_ms / 16.0f) * s.get_width(), s.get_width()), 1), *screen, green);
+    line(Vec2i(0,0), Vec2i( min((dt_ms / 16.0f) * s.get_width(), s.get_width()), 0), s, green);
+    line(Vec2i(0,1), Vec2i( min((dt_ms / 16.0f) * s.get_width(), s.get_width()), 1), s, green);
+    
+    // Vec2i t[3] = {
+    //     Vec2i(517, 1021),
+    //     Vec2i(474, 960),
+    //     Vec2i(394, 585)
+    // };
+    // triangle_outline(t, image, green);
 
     // mouse pos
     POINT mouse;
     GetCursorPos(&mouse);
     fat_dot(Vec2i(mouse.x, mouse.y), s, TGAColor(255, 0, 0, 255));
 
-    short cursorx, cursory;
-    if (win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
-        win32::FormattedPrint("fps %d, ms %f", fps, dt_ms);
-        win32::ConsoleSetCursorPosition(cursorx, cursory);
-    }
+    // short cursorx, cursory;
+    // if (win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
+    //     win32::FormattedPrint("fps %d, ms %f", fps, dt_ms);
+    //     win32::ConsoleSetCursorPosition(cursorx, cursory);
+    // }
 
     return true;
 }
@@ -915,15 +976,6 @@ int main(int argc, char** argv) {
     test_textured_quad("quad.tga");
     test_barycentric_2("test_bar.tga");
 
-    // auto image_name = "barycentric_test.tga";
-    auto image_name = "textured.tga";
-    // auto image_name = "wireframe.tga";
-    // auto image_name = "object.tga";
-    // auto image_name = "zbuffer.tga";
-    // auto image_name = "quad.tga";
-    // auto image_name = "test_bar.tga";
-    TGAImage image(image_name);
-
     void* someData = NULL;
     HANDLE handle = 0;
     handle = CreateThread(NULL, 0, backgroundTask, someData, 0, NULL);
@@ -934,33 +986,27 @@ int main(int argc, char** argv) {
     });
 
     /* window scope */ {
-        auto window = win32::NewWindow("myWindow", image_name, 100, 100, 10, 10, &window_callback);
+        auto window = win32::NewWindow("myWindow", "title lol", 100, 100, 10, 10, &window_callback);
         defer _2([window]() { win32::CleanWindow("myWindow", window); });
 
-        int w, h, x, y;
-        win32::SetWindowClientSize(window, image.get_width(), image.get_height());
-        win32::GetWindowSizeAndPosition(window, &w, &h, &x, &y);
+        //int w, h, x, y;
+        //win32::SetWindowClientSize(window, image.get_width(), image.get_height());
+        //win32::GetWindowSizeAndPosition(window, &w, &h, &x, &y);
 
         bool haveConsole = true;
         if (win32::ConsoleAttach() != win32::ConsoleAttachResult::SUCCESS) {
             haveConsole = false;
             if (win32::ConsoleCreate() == win32::ConsoleCreateResult::SUCCESS) {
                 auto consoleWindow = win32::ConsoleGetWindow();
-                win32::SetWindowPosition(consoleWindow, x+w, y);
+                //win32::SetWindowPosition(consoleWindow, x+w, y);
                 haveConsole = true;
             }
         }
         defer _3([haveConsole]() { if (haveConsole) win32::ConsoleFree(); });
-        
 
-        auto buffer = win32::NewWindowRenderTarget(image.get_width(), image.get_height());
-        defer _4([buffer]() { win32::CleanWindowRenderTarget(buffer); });
-        
-        PixelBuffer buffer_wrapper(image.get_width(), image.get_height(), buffer, rgb(255, 255, 255));
-        buffer_wrapper.load(image);
-        screen = &buffer_wrapper;
-        
         win32::NewWindowLoopStart(window, onUpdate);
         printf("Closing window...");
+        
+        win32::CleanWindowRenderTarget();
     }
 }

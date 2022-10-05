@@ -108,14 +108,24 @@ namespace win32 {
 
     // return true if you handle a message, else return false and the internal code will handle it
     typedef bool windowsCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2);
-    typedef bool windowsCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2);
     
-    static BITMAPINFO render_target;
-    static void* pixel_buffer = NULL;
-    static windowsCallback* user_callback = NULL;
+    WindowContext::WindowContext() {
+        win32_user_callback = NULL;
+        pixels = NULL;
+        memset(&win32_render_target, 0, sizeof(BITMAPINFO));
+        memset(&window_handle, 0, sizeof(HWND));
+        width = 0;
+        height = 0;
+        printf("CONSTRUCTOR\n");
+    }
+    bool WindowContext::IsActive() { return pixels != NULL; }
+
+    static WindowContext window_context;
+    WindowContext* GetWindowContext() { return &window_context; }
+
     static LRESULT CALLBACK DefaultWindowCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2) {
 
-        if (user_callback != NULL && user_callback(window, messageType, param1, param2)) {
+        if (window_context.win32_user_callback != NULL && window_context.win32_user_callback(window, messageType, param1, param2)) {
             return 0;
         }
         
@@ -137,7 +147,7 @@ namespace win32 {
 
             case WM_PAINT: {
                 
-                if (pixel_buffer != NULL) {
+                if (window_context.pixels != NULL) {
                     int w, h;
                     win32::GetClientSize(window, &w, &h);
 
@@ -147,8 +157,8 @@ namespace win32 {
                         dc,
                         0, 0, w, h,
                         0, 0, w, h,
-                        pixel_buffer,
-                        &render_target,
+                        window_context.pixels,
+                        &window_context.win32_render_target,
                         DIB_RGB_COLORS,
                         SRCCOPY
                     );
@@ -170,7 +180,7 @@ namespace win32 {
     // Warning: Probably its a bad idea to call this more than once lol
     // Warning: Uses GetModuleHandleA(NULL) as the hInstance, so might not work if used as a DLL
     HWND NewWindow(const char* identifier, const char* windowTitle, int x, int y, int w, int h, windowsCallback* callback) {
-        user_callback = callback;
+        window_context.win32_user_callback = callback;
         HINSTANCE hinstance = GetModuleHandleA(NULL);
         WNDCLASSA windowClass = {};
         windowClass.lpfnWndProc = DefaultWindowCallback;
@@ -185,6 +195,7 @@ namespace win32 {
         );
         // clean up with: DestroyWindow(windowHandle);
         ShowWindow(windowHandle, SW_SHOW);
+        window_context.window_handle = windowHandle;
         return windowHandle;
     }
 
@@ -193,6 +204,7 @@ namespace win32 {
         HINSTANCE hinstance = GetModuleHandleA(NULL);
         bool windowDestroyed = DestroyWindow(window);
         bool classUnregistered = UnregisterClassA(LPCSTR(identifier), hinstance);
+        memset(&window_context.window_handle, 0, sizeof(HWND));
         return windowDestroyed && classUnregistered;
     }
 
@@ -227,35 +239,35 @@ namespace win32 {
 
     // Everytime this is called it resets the render target
     // 0,0 is top left and w,h is bottom right
-    uint32_t* NewWindowRenderTarget(int w, int h) {
+    void NewWindowRenderTarget(int w, int h) {
         // setup the bitmap that will be rendered to the screen
-        render_target.bmiHeader.biSize = sizeof(render_target.bmiHeader);
-        render_target.bmiHeader.biWidth = w;
-        render_target.bmiHeader.biHeight = -h; // This is negative so that 0,0 is top left and w,h is bottom right
+        window_context.win32_render_target.bmiHeader.biSize = sizeof(window_context.win32_render_target.bmiHeader);
+        window_context.win32_render_target.bmiHeader.biWidth = w;
+        window_context.win32_render_target.bmiHeader.biHeight = -h; // This is negative so that 0,0 is top left and w,h is bottom right
 
         // "Must be one" -Microsoft
         // Thanks Ms.
-        render_target.bmiHeader.biPlanes = 1;
+        window_context.win32_render_target.bmiHeader.biPlanes = 1;
 
-        render_target.bmiHeader.biBitCount = 32;
-        render_target.bmiHeader.biCompression = BI_RGB;
+        window_context.win32_render_target.bmiHeader.biBitCount = 32;
+        window_context.win32_render_target.bmiHeader.biCompression = BI_RGB;
 
-        if (pixel_buffer != NULL) {
-            VirtualFree(pixel_buffer, 0, MEM_RELEASE);
+        if (window_context.pixels != NULL) {
+            VirtualFree(window_context.pixels, 0, MEM_RELEASE);
         }
 
         int pixel_size = 4; // 4 bytes
         int total_size = pixel_size * (w * h);
-        pixel_buffer = VirtualAlloc(0, total_size, MEM_COMMIT, PAGE_READWRITE);
-        return (uint32_t*) pixel_buffer;
+        window_context.pixels = (uint32_t*) VirtualAlloc(0, total_size, MEM_COMMIT, PAGE_READWRITE);
+        window_context.width = w;
+        window_context.height = h;
     }
 
-    void CleanWindowRenderTarget(uint32_t* buffer) {
-        if (buffer != NULL && buffer == pixel_buffer) {
-            VirtualFree(pixel_buffer, 0, MEM_RELEASE);
+    void CleanWindowRenderTarget() {
+        if (window_context.pixels != NULL) {
+            VirtualFree(window_context.pixels, 0, MEM_RELEASE);
         }
     }
-
 
     // if returns false, loop will end
     typedef bool OnUpdate(double dt_ms, unsigned long long fps);
@@ -282,7 +294,7 @@ namespace win32 {
                     TranslateMessage(&msg);
                     DispatchMessage(&msg);
 
-                    if (user_callback != NULL && user_callback(msg.hwnd, msg.message, msg.wParam, msg.lParam)) {
+                    if (window_context.win32_user_callback != NULL && window_context.win32_user_callback(msg.hwnd, msg.message, msg.wParam, msg.lParam)) {
                         continue;
                     }
                     else {
@@ -299,7 +311,7 @@ namespace win32 {
             if (!running) continue;
             
             // render
-            if (pixel_buffer != NULL) {
+            if (window_context.pixels != NULL) {
                 int cw, ch;
                 win32::GetClientSize(window, &cw, &ch);
                 HDC dc = GetDC(window);
@@ -307,8 +319,8 @@ namespace win32 {
                     dc,
                     0, 0, cw, ch,
                     0, 0, cw, ch,
-                    pixel_buffer,
-                    &render_target,
+                    window_context.pixels,
+                    &window_context.win32_render_target,
                     DIB_RGB_COLORS,
                     SRCCOPY
                 );

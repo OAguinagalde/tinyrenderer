@@ -53,6 +53,16 @@ namespace win32 {
     // return true if you handle a message, else return false and the internal code will handle it
     typedef bool windowsCallback(HWND window, UINT messageType, WPARAM param1, LPARAM param2);
 
+    struct WindowContext {
+        windowsCallback* win32_user_callback;
+        uint32_t* pixels;
+        BITMAPINFO win32_render_target;
+        HWND window_handle;
+        int width, height;
+        WindowContext();
+        bool IsActive();
+    };
+
     // Warning: Probably its a bad idea to call this more than once lol
     // Warning: Uses GetModuleHandleA(NULL) as the hInstance, so might not work if used as a DLL
     HWND NewWindow(const char* identifier, const char* windowTitle, int x, int y, int w, int h, windowsCallback* callback);
@@ -77,9 +87,11 @@ namespace win32 {
 
     // Everytime this is called it resets the render target
     // 0,0 is top left and w,h is bottom right
-    uint32_t* NewWindowRenderTarget(int w, int h);
+    void NewWindowRenderTarget(int w, int h);
 
-    void CleanWindowRenderTarget(uint32_t* buffer);
+    WindowContext* GetWindowContext();
+
+    void CleanWindowRenderTarget();
 
     // if returns false, loop will end
     typedef bool OnUpdate(double dt_ms, unsigned long long fps);
