@@ -612,6 +612,7 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
             texture[j] = model.text(face[j]);
             Vec3f v = model.vert(face[j]);
             world[j] = v;
+            // TODO apply matrix transformation to world coords, then calcualte screen coords
 
             screen[j] = Vec2i(
                 (v.x + 1.0) * pixel_buffer.get_width() / 2.0,
@@ -619,6 +620,7 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
             );
         
         }
+
 
         // the intensity of illumination is equal to the scalar product of the light vector and the triangle normal normal.
         // the normal to the triangle can be calculated simply as the cross product of its two sides.
@@ -633,35 +635,40 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
             triangle2_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
         }
 
-        // if (i == 2400) {
-        //     std::cerr << "screen:\n" << screen[0] << screen[1] << screen[2] << std::endl;
-        //     std::cerr << "world:\n" << world[0] << world[1] << world[2] << std::endl;
-        //     std::cerr << "texture:\n" << texture[0] << texture[1] << texture[2] << std::endl;
+        if (i == 2400) {
             
-        //     // bar at a
-        //     Vec3f bara = barycentric(screen, screen[0]);
-        //     std::cerr << "bar screen at a:\n" << bara << std::endl;
-        //     Vec2f bara_ = barycentric_inverse(texture, bara);
-        //     std::cerr << "at texture:\n" << bara_ << std::endl;
-        //     Vec2i bara_text = Vec2i(bara_.x * texture_data.get_width(), bara_.y * texture_data.get_height());
-        //     std::cerr << "scaled: " << bara_text << std::endl;
+            static bool once = true;
+            if (once) {
+                once = false;
+                std::cerr << "texture:\n" << texture[0] << texture[1] << texture[2] << std::endl;
+                std::cerr << "world:\n" << world[0] << world[1] << world[2] << std::endl;
+                std::cerr << "screen:\n" << screen[0] << screen[1] << screen[2] << std::endl;
+                
+                // bar at a
+                Vec3f bara = barycentric(screen, screen[0]);
+                std::cerr << "bar screen at a:\n" << bara << std::endl;
+                Vec2f bara_ = barycentric_inverse(texture, bara);
+                std::cerr << "at texture:\n" << bara_ << std::endl;
+                Vec2i bara_text = Vec2i(bara_.x * texture_data.get_width(), bara_.y * texture_data.get_height());
+                std::cerr << "scaled: " << bara_text << std::endl;
 
-        //     Vec3f barb = barycentric(screen, screen[1]);
-        //     std::cerr << "bar screen at b:\n" << barb << std::endl;
-        //     Vec2f barb_ = barycentric_inverse(texture, barb);
-        //     std::cerr << "at texture:\n" << barb_ << std::endl;
-        //     Vec2i barb_text = Vec2i(barb_.x * texture_data.get_width(), barb_.y * texture_data.get_height());
-        //     std::cerr << "scaled: " << barb_text << std::endl;
+                Vec3f barb = barycentric(screen, screen[1]);
+                std::cerr << "bar screen at b:\n" << barb << std::endl;
+                Vec2f barb_ = barycentric_inverse(texture, barb);
+                std::cerr << "at texture:\n" << barb_ << std::endl;
+                Vec2i barb_text = Vec2i(barb_.x * texture_data.get_width(), barb_.y * texture_data.get_height());
+                std::cerr << "scaled: " << barb_text << std::endl;
 
-        //     Vec3f barc = barycentric(screen, screen[2]);
-        //     std::cerr << "bar screen at c:\n" << barc << std::endl;
-        //     Vec2f barc_ = barycentric_inverse(texture, barc);
-        //     std::cerr << "at texture:\n" << barc_ << std::endl;
-        //     Vec2i barc_text = Vec2i(barc_.x * texture_data.get_width(), barc_.y * texture_data.get_height());
-        //     std::cerr << "scaled: " << barc_text << std::endl;
+                Vec3f barc = barycentric(screen, screen[2]);
+                std::cerr << "bar screen at c:\n" << barc << std::endl;
+                Vec2f barc_ = barycentric_inverse(texture, barc);
+                std::cerr << "at texture:\n" << barc_ << std::endl;
+                Vec2i barc_text = Vec2i(barc_.x * texture_data.get_width(), barc_.y * texture_data.get_height());
+                std::cerr << "scaled: " << barc_text << std::endl;
+            }
 
-        //     triangle_outline(screen, pixel_buffer, TGAColor(0, 255, 0, 255));
-        // }
+            triangle_outline(screen, pixel_buffer, TGAColor(0, 255, 0, 255));
+        }
     }
 
 }
@@ -947,7 +954,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         static TGAImage texture("res/african_head_diffuse.tga");
 
         if (firstFrame) {
-            texture.flip_vertically();
+            // texture.flip_vertically();
         }
 
         obj_to_tga_illuminated_zbuffer_textured(model, texture, s);
