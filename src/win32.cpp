@@ -116,7 +116,6 @@ namespace win32 {
         memset(&window_handle, 0, sizeof(HWND));
         width = 0;
         height = 0;
-        printf("CONSTRUCTOR\n");
     }
     bool WindowContext::IsActive() { return pixels != NULL; }
 

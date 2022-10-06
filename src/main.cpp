@@ -586,10 +586,9 @@ void obj_to_tga_illuminated_zbuffer(Model& model, IPixelBuffer& pixel_buffer) {
 // Also uses texture sampling, using the given texture path.
 // warning: this is using `triangle2`, not `triangle`
 void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture_data, IPixelBuffer& pixel_buffer) {
-    auto start = measure_time();
 
     // Initialize the zbuffer
-    float* z_buffer = (float*)malloc(sizeof(float) * pixel_buffer.get_width() * pixel_buffer.get_height());
+    static float* z_buffer = (float*)malloc(sizeof(float) * pixel_buffer.get_width() * pixel_buffer.get_height());
     for (int i = 0; i < pixel_buffer.get_width() * pixel_buffer.get_height(); i++) {
         z_buffer[i] = -std::numeric_limits<float>::max();
     }
@@ -634,38 +633,37 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
             triangle2_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
         }
 
-        if (i == 2400) {
-            std::cerr << "screen:\n" << screen[0] << screen[1] << screen[2] << std::endl;
-            std::cerr << "world:\n" << world[0] << world[1] << world[2] << std::endl;
-            std::cerr << "texture:\n" << texture[0] << texture[1] << texture[2] << std::endl;
+        // if (i == 2400) {
+        //     std::cerr << "screen:\n" << screen[0] << screen[1] << screen[2] << std::endl;
+        //     std::cerr << "world:\n" << world[0] << world[1] << world[2] << std::endl;
+        //     std::cerr << "texture:\n" << texture[0] << texture[1] << texture[2] << std::endl;
             
-            // bar at a
-            Vec3f bara = barycentric(screen, screen[0]);
-            std::cerr << "bar screen at a:\n" << bara << std::endl;
-            Vec2f bara_ = barycentric_inverse(texture, bara);
-            std::cerr << "at texture:\n" << bara_ << std::endl;
-            Vec2i bara_text = Vec2i(bara_.x * texture_data.get_width(), bara_.y * texture_data.get_height());
-            std::cerr << "scaled: " << bara_text << std::endl;
+        //     // bar at a
+        //     Vec3f bara = barycentric(screen, screen[0]);
+        //     std::cerr << "bar screen at a:\n" << bara << std::endl;
+        //     Vec2f bara_ = barycentric_inverse(texture, bara);
+        //     std::cerr << "at texture:\n" << bara_ << std::endl;
+        //     Vec2i bara_text = Vec2i(bara_.x * texture_data.get_width(), bara_.y * texture_data.get_height());
+        //     std::cerr << "scaled: " << bara_text << std::endl;
 
-            Vec3f barb = barycentric(screen, screen[1]);
-            std::cerr << "bar screen at b:\n" << barb << std::endl;
-            Vec2f barb_ = barycentric_inverse(texture, barb);
-            std::cerr << "at texture:\n" << barb_ << std::endl;
-            Vec2i barb_text = Vec2i(barb_.x * texture_data.get_width(), barb_.y * texture_data.get_height());
-            std::cerr << "scaled: " << barb_text << std::endl;
+        //     Vec3f barb = barycentric(screen, screen[1]);
+        //     std::cerr << "bar screen at b:\n" << barb << std::endl;
+        //     Vec2f barb_ = barycentric_inverse(texture, barb);
+        //     std::cerr << "at texture:\n" << barb_ << std::endl;
+        //     Vec2i barb_text = Vec2i(barb_.x * texture_data.get_width(), barb_.y * texture_data.get_height());
+        //     std::cerr << "scaled: " << barb_text << std::endl;
 
-            Vec3f barc = barycentric(screen, screen[2]);
-            std::cerr << "bar screen at c:\n" << barc << std::endl;
-            Vec2f barc_ = barycentric_inverse(texture, barc);
-            std::cerr << "at texture:\n" << barc_ << std::endl;
-            Vec2i barc_text = Vec2i(barc_.x * texture_data.get_width(), barc_.y * texture_data.get_height());
-            std::cerr << "scaled: " << barc_text << std::endl;
+        //     Vec3f barc = barycentric(screen, screen[2]);
+        //     std::cerr << "bar screen at c:\n" << barc << std::endl;
+        //     Vec2f barc_ = barycentric_inverse(texture, barc);
+        //     std::cerr << "at texture:\n" << barc_ << std::endl;
+        //     Vec2i barc_text = Vec2i(barc_.x * texture_data.get_width(), barc_.y * texture_data.get_height());
+        //     std::cerr << "scaled: " << barc_text << std::endl;
 
-            triangle_outline(screen, pixel_buffer, TGAColor(0, 255, 0, 255));
-        }
+        //     triangle_outline(screen, pixel_buffer, TGAColor(0, 255, 0, 255));
+        // }
     }
 
-    measure_since(start);
 }
 
 //////////////////////////////////////////////////////////////
@@ -903,7 +901,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
 
     // static TGAImage image("barycentric_test.tga");
     // static TGAImage image("res/african_head_diffuse.tga");
-    static TGAImage image("textured.tga");
+    // static TGAImage image("textured.tga");
     // static TGAImage image("wireframe.tga");
     // static TGAImage image("object.tga");
     // static TGAImage image("zbuffer.tga");
@@ -911,52 +909,90 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     // static TGAImage image("test_bar.tga");
     
     auto wc = win32::GetWindowContext();
-    if (!wc->IsActive()) {
-        win32::NewWindowRenderTarget(image.get_width(), image.get_height());
-        printf("init render\n");
-    }
+    static int render_width = 400;
+    static int render_height = 400;
+    static const char* render_name = "textured";
+    
+    /* setup the window */ {
 
+        // Initialize the pixel buffer of the window
+        if (!wc->IsActive()) {
+            win32::NewWindowRenderTarget(render_width, render_height);
+        }
+
+        // Make sure the size of the window is correct
+        int cw, ch;
+        win32::GetClientSize(wc->window_handle, &cw, &ch);
+        if (cw != wc->width) {
+            win32::SetWindowClientSize(wc->window_handle, wc->width, wc->height);
+        }
+    }
+    
     PixelBuffer s(wc->width, wc->height, wc->pixels);
 
-    int cw, ch;
-    win32::GetClientSize(wc->window_handle, &cw, &ch);
-
-    if (cw != wc->width) {
-        win32::SetWindowClientSize(wc->window_handle, wc->width, wc->height);
-        printf("set size\n");
-    }
-
-    // clear
-    for (int y = 0; y < s.get_height(); y++) {
-        for (int x =  0; x < s.get_width(); x++) {
-            s.set(x, y, TGAColor(255,255,255,255));
+    /* clear the buffer */ {
+        for (int y = 0; y < s.get_height(); y++) {
+            for (int x =  0; x < s.get_width(); x++) {
+                s.set(x, y, TGAColor(255,255,255,255));
+            }
         }
     }
 
-    // paint
+    /* render to pixel buffer */ {
+        
+        static bool firstFrame = true;
+
+        // Load the resources
+        static Model model("res/african_head.obj");
+        static TGAImage texture("res/african_head_diffuse.tga");
+
+        if (firstFrame) {
+            texture.flip_vertically();
+        }
+
+        obj_to_tga_illuminated_zbuffer_textured(model, texture, s);
+
+        if (firstFrame) {
+            // We want to keep the output of the render in a TGA file, but only needs to happen once
+            TGAImage output(render_width, render_height, TGAImage::RGB);
+            // copy the pixel buffer to my output image file
+            paint(output, s);
+            output.flip_vertically();
+            output.write_tga_file(render_name);
+        }
+
+        // Vec2i t[3] = {
+        //     Vec2i(517, 1021),
+        //     Vec2i(474, 960),
+        //     Vec2i(394, 585)
+        // };
+        // triangle_outline(t, image, green);
+
+        firstFrame = false;
+    }
+
+    /* stats and debugging stuff */ {
     
-    paint(s, image);
+        // Some kind of performance visualizer
+        TGAColor performance_color = TGAColor(255, 0, 0, 255);
+        float performance_base = 128.0f;
+        if (dt_ms < 64.0f) { performance_base = 64.0f; performance_color = TGAColor(255, 150, 0, 255); }
+        if (dt_ms < 32.0f) { performance_base = 32.0f; performance_color = TGAColor(240, 204, 0, 255); }
+        if (dt_ms < 16.0f) { performance_base = 16.0f; performance_color = TGAColor(174, 255, 0, 255); }
+        line(Vec2i(0,0), Vec2i( min((dt_ms / performance_base) * s.get_width(), s.get_width()), 0), s, performance_color);
+        line(Vec2i(0,1), Vec2i( min((dt_ms / performance_base) * s.get_width(), s.get_width()), 1), s, performance_color);
 
-    line(Vec2i(0,0), Vec2i( min((dt_ms / 16.0f) * s.get_width(), s.get_width()), 0), s, green);
-    line(Vec2i(0,1), Vec2i( min((dt_ms / 16.0f) * s.get_width(), s.get_width()), 1), s, green);
-    
-    // Vec2i t[3] = {
-    //     Vec2i(517, 1021),
-    //     Vec2i(474, 960),
-    //     Vec2i(394, 585)
-    // };
-    // triangle_outline(t, image, green);
-
-    // mouse pos
-    POINT mouse;
-    GetCursorPos(&mouse);
-    fat_dot(Vec2i(mouse.x, mouse.y), s, TGAColor(255, 0, 0, 255));
-
-    // short cursorx, cursory;
-    // if (win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
-    //     win32::FormattedPrint("fps %d, ms %f", fps, dt_ms);
-    //     win32::ConsoleSetCursorPosition(cursorx, cursory);
-    // }
+        // mouse pos
+        POINT mouse;
+        GetCursorPos(&mouse);
+        fat_dot(Vec2i(mouse.x, mouse.y), s, TGAColor(255, 0, 0, 255));
+        
+        static short cursorx, cursory;
+        if (false && win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
+            win32::FormattedPrint("fps %d, ms %f", fps, dt_ms);
+            win32::ConsoleSetCursorPosition(cursorx, cursory);
+        }
+    }
 
     return true;
 }
@@ -968,13 +1004,17 @@ DWORD WINAPI backgroundTask(LPVOID lpParam) {
 
 int main(int argc, char** argv) {
     srand(time(NULL));
-    test_barycentric("barycentric_test.tga");
-    test_textured_object("textured.tga");
-    test_wireframe("wireframe.tga");
-    test_object("object.tga");
-    test_zbuffer_object("zbuffer.tga");
-    test_textured_quad("quad.tga");
-    test_barycentric_2("test_bar.tga");
+    
+    /* old render to TGAImage methods */
+    if (false) {
+        test_barycentric("barycentric_test.tga");
+        test_textured_object("textured.tga");
+        test_wireframe("wireframe.tga");
+        test_object("object.tga");
+        test_zbuffer_object("zbuffer.tga");
+        test_textured_quad("quad.tga");
+        test_barycentric_2("test_bar.tga");
+    }
 
     void* someData = NULL;
     HANDLE handle = 0;
@@ -986,7 +1026,7 @@ int main(int argc, char** argv) {
     });
 
     /* window scope */ {
-        auto window = win32::NewWindow("myWindow", "title lol", 100, 100, 10, 10, &window_callback);
+        auto window = win32::NewWindow("myWindow", "tinyrenderer", 100, 100, 10, 10, &window_callback);
         defer _2([window]() { win32::CleanWindow("myWindow", window); });
 
         //int w, h, x, y;
