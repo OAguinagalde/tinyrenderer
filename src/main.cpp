@@ -635,7 +635,8 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
             triangle2_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
         }
 
-        if (i == 2400) {
+        // Left over code from back when I was debugging why my texture wasn't being shown properly... Never forgeti
+        if (false && i == 0) {
             
             static bool once = true;
             if (once) {
@@ -940,7 +941,8 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     /* clear the buffer */ {
         for (int y = 0; y < s.get_height(); y++) {
             for (int x =  0; x < s.get_width(); x++) {
-                s.set(x, y, TGAColor(255,255,255,255));
+                // s.set(x, y, TGAColor(255, 255, 255, 255));
+                s.set(x, y, TGAColor(0, 0, 0, 255));
             }
         }
     }

@@ -242,7 +242,7 @@ namespace win32 {
         // setup the bitmap that will be rendered to the screen
         window_context.win32_render_target.bmiHeader.biSize = sizeof(window_context.win32_render_target.bmiHeader);
         window_context.win32_render_target.bmiHeader.biWidth = w;
-        window_context.win32_render_target.bmiHeader.biHeight = -h; // This is negative so that 0,0 is top left and w,h is bottom right
+        window_context.win32_render_target.bmiHeader.biHeight = h; // make this negative so that 0,0 is top left and w,h is bottom right
 
         // "Must be one" -Microsoft
         // Thanks Ms.
