@@ -1,0 +1,46 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.2.32630.192
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "main", "bin\main.exe", "{E7C456EE-85C8-4CBB-86B7-E66D895946EF}"
+	ProjectSection(DebuggerProjectSystem) = preProject
+		PortSupplier = 00000000-0000-0000-0000-000000000000
+		Executable = .\bin\main.exe
+		StartingDirectory = .\bin
+		Environment = Default
+		LaunchingEngine = 00000000-0000-0000-0000-000000000000
+		UseLegacyDebugEngines = No
+		LaunchSQLEngine = No
+		AttachLaunchAction = No
+		IORedirection = Auto
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{FEE8F04D-29AA-4E1F-A1F1-D61D327240B2}"
+	ProjectSection(SolutionItems) = preProject
+		src\geometry.h = src\geometry.h
+		src\main.cpp = src\main.cpp
+		src\model.cpp = src\model.cpp
+		src\model.h = src\model.h
+		src\tgaimage.cpp = src\tgaimage.cpp
+		src\tgaimage.h = src\tgaimage.h
+		src\util.cpp = src\util.cpp
+		src\util.h = src\util.h
+		src\win32.cpp = src\win32.cpp
+		src\win32.h = src\win32.h
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E7C456EE-85C8-4CBB-86B7-E66D895946EF}.Release|x64.ActiveCfg = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {4B735212-CC72-415A-9569-A89EB8BBA90C}
+	EndGlobalSection
+EndGlobal
