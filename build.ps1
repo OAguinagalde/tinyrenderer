@@ -26,6 +26,21 @@ else {
 }
 
 if ($?) {
+
+    # setup the resources that the binary requires.
+    # its required that .\bin and .\res exist
+    if ((test-path ".\bin") -and ( Test-Path ".\res")) {
+        
+        # Create a symbolic link to the res folder in the binary output folder
+        if (!(Test-Path ".\bin\res")) {
+            New-Item -Path ".\bin\res" -ItemType Junction -Value ".\res"
+            # delete safely Remove-Item .\bin\res -Recurse -Force
+        }
+    }
+    else {
+        throw [Exception]::new("Couldn't find the .\bin or .\res folder!")
+    }
+
     Write-Host "OK" -ForeGroundColor Green
     if ($Run) {
         .\bin\main.exe
