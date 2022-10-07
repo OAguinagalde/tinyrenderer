@@ -609,7 +609,7 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
         // For each vertex in this triangle
         for (int j = 0; j < 3; j++) {
 
-            texture[j] = model.text(face[j]);
+            texture[j] = model.text(text[j]);
             Vec3f v = model.vert(face[j]);
             world[j] = v;
             // TODO apply matrix transformation to world coords, then calcualte screen coords
