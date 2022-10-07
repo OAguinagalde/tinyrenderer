@@ -22,7 +22,7 @@ Model::Model(const char *filename) : verts_(), text_verts_(), faces_() {
             verts_.push_back(v);
         }
         // If the line is a "texture vertex" save its values
-        if (!line.compare(0, 3, "vt ")) {
+        else if (!line.compare(0, 3, "vt ")) {
             iss >> trash >> trash;
             Vec2f vt;
             for (int i=0;i<2;i++) iss >> vt.raw[i];

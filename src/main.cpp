@@ -954,7 +954,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         static TGAImage texture("res/african_head_diffuse.tga");
 
         if (firstFrame) {
-            // texture.flip_vertically();
+            texture.flip_vertically();
         }
 
         obj_to_tga_illuminated_zbuffer_textured(model, texture, s);
@@ -1052,7 +1052,6 @@ int main(int argc, char** argv) {
         defer _3([haveConsole]() { if (haveConsole) win32::ConsoleFree(); });
 
         win32::NewWindowLoopStart(window, onUpdate);
-        printf("Closing window...");
         
         win32::CleanWindowRenderTarget();
     }
