@@ -151,6 +151,7 @@ Vec2f barycentric_inverse(Vec2f t[3], Vec3f barycentric) {
     return point;
 }
 
+// sample a texture using barycentric interpolation
 TGAColor sample(IPixelBuffer& sampled_data, Vec2f t[3], Vec3f barycentric) {
 
     Vec2f point = barycentric_inverse(t, barycentric);
@@ -439,52 +440,46 @@ void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3]
 
     // 1. find the highest vertex and the lowest vertex
 
-    // Aparently this works too, but I'll leave it as I have it and that's another thing I can do without relying on the Standard library lol
-    // 
-    //     // sort the vertices, t0, t1, t2 lower−to−upper (bubblesort yay!) 
-    //     if (t0.y>t1.y) std::swap(t0, t1); 
-    //     if (t0.y>t2.y) std::swap(t0, t2); 
-    //     if (t1.y>t2.y) std::swap(t1, t2);
+    Vec3f bar = barycentric(screen, Vec2i(387, 606));
+    if (barycentric_inside(bar)) {
+        triangle2(screen, image, red);
+    }
 
-    Vec2i* top;
-    Vec2i* mid;
-    Vec2i* bot;
-    if (screen[0].y > screen[1].y) {
-        if (screen[0].y > screen[2].y) {
-            top = &screen[0];
-            if (screen[1].y > screen[2].y) {
-                mid = &screen[1];
-                bot = &screen[2];
-            }
-            else {
-                mid = &screen[2];
-                bot = &screen[1];
-            }
-        }
-        else {
-            top = &screen[2];
-            mid = &screen[0];
-            bot = &screen[1];
-        }
+    bar = barycentric(screen, Vec2i(413, 614));
+    if (barycentric_inside(bar)) {
+        triangle2(screen, image, green);
     }
-    else {
-        if (screen[1].y > screen[2].y) {
-            top = &screen[1];
-            if (screen[0].y > screen[2].y) {
-                mid = &screen[0];
-                bot = &screen[2];
-            }
-            else {
-                mid = &screen[2];
-                bot = &screen[0];
-            }
-        }
-        else {
-            top = &screen[2];
-            mid = &screen[1];
-            bot = &screen[0];
-        }
+    
+    // TODO THE ERROR HAPPENS WHEN Y COORDINATE OF 2 POINTS IS THE SAME
+
+    Vec2i* top = &screen[0];
+    Vec2i* mid = &screen[1];
+    Vec2i* bot = &screen[2];
+    Vec2i* aux;
+    
+    if (bot->y > mid->y) {
+        // swapity swap
+        aux = mid;
+        mid = bot;
+        bot = aux;
     }
+
+    if (bot->y > top->y) {
+        aux = top;
+        top = bot;
+        bot = aux;
+    }
+
+    if (mid->y > top->y) {
+        aux = top;
+        top = mid;
+        mid = aux;
+    }
+
+    // The poor mans assert lol
+    if (!(top->y >= mid->y && top->y >= bot->y)) { int a=1;a=a/0; }
+    if (!(mid->y <= top->y && mid->y >= bot->y)) { int a=1;a=a/0; }
+    if (!(bot->y <= top->y && bot->y <= mid->y)) { int a=1;a=a/0; }
 
     // 2. calculate dy between them
     int dyTopMid = top->y - mid->y;
@@ -503,7 +498,6 @@ void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3]
     float incrementShortLine1 = dxTopMid / (float)dyTopMid;
     float incrementShortLine2 = dxMidBot / (float)dyMidBot;
 
-
     // 3. loop though each "horizontal line" between top and bottom
     // Starting position is the top so both side's x position will be tops's x position
     float side1 = top->x;
@@ -511,254 +505,68 @@ void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3]
 
     int image_witdth = image.get_width();
 
-    // Frist draw the triangle that forms the top part of the triangle
-    for (int y = top->y; y > mid->y; y--) {
+    bool aaa = false;
+    
+    // first, draw the top half of the triangle
+    for (int y = top->y; y > bot->y; y--) {
 
-        /* draw a line now that we know both the xand the y of both extremes
-        line(Vec2i(side1, y), Vec2i(side2, y), image, color); + zbuffer + texture */ {
-
-            Vec2i a(side1, y);
-            Vec2i b(side2, y);
-            int differenceX = b.x - a.x;
-            int differenceXAbs = absolute(differenceX);
-
-            int differenceY = b.y - a.y;
-            int differenceYAbs = absolute(differenceY);
-
-            if (differenceXAbs > differenceYAbs) {
-                // draw horizontally
-
-                if (differenceX < 0) {
-                    swap(a.x, b.x);
-                    swap(a.y, b.y);
-                }
-
-                float percentageOfLineDone = 0.0;
-                float increment = 1.0 / (float)differenceXAbs;
-                for (int x = a.x; x <= b.x; x++) {
-                    int y = a.y + (b.y - a.y) * percentageOfLineDone;
-
-                    /* zbuffer and texture sampling for pixel x, y */ {
-
-                        Vec3f bar = barycentric(screen, Vec2i(x, y));
-
-                        // > the idea is to take the barycentric coordinates version of triangle rasterization,
-                        // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
-                        // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
-                        float z = 0;
-                        z += (float)world[0].z * bar.u;
-                        z += (float)world[1].z * bar.v;
-                        z += (float)world[2].z * bar.w;
-
-                        // calculate z-buffer value's index
-                        int idx = int(x + y * image_witdth);
-
-                        if (z_buffer[idx] < z) {
-                            z_buffer[idx] = z;
-
-                            // printf("x %d, y %d with bar %f, %f, %f\n", x, y, bar.u, bar.v, bar.w);
-                            // barycentric interpolation... I think
-                            // TODO so it doesnt work yet and I think the reason is that the uvw were taken respective to the screen while the texture coordinates
-                            // are in the context fo world coordinates. If that is correct, that means that I just need to get the u v w from the world perspective.
-                            // The only stopper is that I dont quite understand how to get the baricenter coordinates with a 3rd coordinate, last time I barely managed
-                            // and it was in 2D... I need to refresh my math fr
-                            TGAColor texture_sample = sample(texture_data, texture, bar);
-
-                            // TODO take into account input color
-                            image.set(x, y, TGAColor(
-                                color.r / 255.0f * texture_sample.r,
-                                color.g / 255.0f * texture_sample.g,
-                                color.b / 255.0f * texture_sample.b,
-                                color.a
-                            ));
-                        }
-                    }
-
-                    percentageOfLineDone += increment;
-                }
+        // TODO I probably dont need to check this in each line
+        int left = side1;
+        int right = side2;
+        if (left > right) {
+            swap(left, right);
+        }
+        
+        // draw a horizontal line (left, y) to (right, y)
+        for (int x = left; x <= right; x++) {
+            
+            aaa = true;
+            if (x == 387 && y == 606) {
+                // This condition is never met... somehow
+                bool breakpoint = true;
             }
-            else {
-                // draw vertically
 
-                if (differenceY < 0) {
-                    swap(a.x, b.x);
-                    swap(a.y, b.y);
-                }
+            // barycentric coordinates for `z-buffer` and `texture sampling`
+            Vec3f bar = barycentric(screen, Vec2i(x, y));
 
-                float percentageOfLineDone = 0.0;
-                float increment = 1.0 / (float)differenceYAbs;
-                for (int y = a.y; y <= b.y; y++) {
-                    int x = a.x + (b.x - a.x) * percentageOfLineDone;
-                    
-                    /* zbuffer and texture sampling for pixel x, y */ {
+            // > the idea is to take the barycentric coordinates version of triangle rasterization,
+            // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
+            // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
+            float z = 0;
+            z += (float)world[0].z * bar.u;
+            z += (float)world[1].z * bar.v;
+            z += (float)world[2].z * bar.w;
 
-                        Vec3f bar = barycentric(screen, Vec2i(x, y));
+            // calculate z-buffer value's index
+            int idx = int(x + y * image_witdth);
 
-                        // > the idea is to take the barycentric coordinates version of triangle rasterization,
-                        // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
-                        // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
-                        float z = 0;
-                        z += (float)world[0].z * bar.u;
-                        z += (float)world[1].z * bar.v;
-                        z += (float)world[2].z * bar.w;
+            if (z_buffer[idx] < z) {
+                z_buffer[idx] = z;
 
-                        // calculate z-buffer value's index
-                        int idx = int(x + y * image_witdth);
+                TGAColor texture_sample = sample(texture_data, texture, bar);
 
-                        if (z_buffer[idx] < z) {
-                            z_buffer[idx] = z;
-
-                            // printf("x %d, y %d with bar %f, %f, %f\n", x, y, bar.u, bar.v, bar.w);
-                            // barycentric interpolation... I think
-                            // TODO so it doesnt work yet and I think the reason is that the uvw were taken respective to the screen while the texture coordinates
-                            // are in the context fo world coordinates. If that is correct, that means that I just need to get the u v w from the world perspective.
-                            // The only stopper is that I dont quite understand how to get the baricenter coordinates with a 3rd coordinate, last time I barely managed
-                            // and it was in 2D... I need to refresh my math fr
-                            TGAColor texture_sample = sample(texture_data, texture, bar);
-
-                            // TODO take into account input color
-                            image.set(x, y, TGAColor(
-                                color.r / 255.0f * texture_sample.r,
-                                color.g / 255.0f * texture_sample.g,
-                                color.b / 255.0f * texture_sample.b,
-                                color.a
-                            ));
-                        }
-                    }
-
-                    percentageOfLineDone += increment;
-                }
+                image.set(x, y, TGAColor(
+                    color.r / 255.0f * texture_sample.r,
+                    color.g / 255.0f * texture_sample.g,
+                    color.b / 255.0f * texture_sample.b,
+                    color.a
+                ));
             }
         }
 
         // We don't really need to know which side will be in the "left" or "right", since the increments are already signed
         // Just get the current "horizontal line"'s positions and add the increments (substract* since we are drawing the triangle top to bottom)
         side1 -= incrementLongLine;
-        side2 -= incrementShortLine1;
+        if (y > mid->y) {
+            side2 -= incrementShortLine1;
+        }
+        else {
+            side2 -= incrementShortLine2;
+        }
     }
 
-    // 4. Repeat for lines between mid and bot
-    for (int y = mid->y; y >= bot->y; y--) {
-
-        /* draw a line now that we know both the xand the y of both extremes
-        line(Vec2i(side1, y), Vec2i(side2, y), image, color); + zbuffer + texture */ {
-
-            Vec2i a(side1, y);
-            Vec2i b(side2, y);
-            int differenceX = b.x - a.x;
-            int differenceXAbs = absolute(differenceX);
-
-            int differenceY = b.y - a.y;
-            int differenceYAbs = absolute(differenceY);
-
-            if (differenceXAbs > differenceYAbs) {
-                // draw horizontally
-
-                if (differenceX < 0) {
-                    swap(a.x, b.x);
-                    swap(a.y, b.y);
-                }
-
-                float percentageOfLineDone = 0.0;
-                float increment = 1.0 / (float)differenceXAbs;
-                for (int x = a.x; x <= b.x; x++) {
-                    int y = a.y + (b.y - a.y) * percentageOfLineDone;
-
-                    /* zbuffer and texture sampling for pixel x, y */ {
-
-                        Vec3f bar = barycentric(screen, Vec2i(x, y));
-
-                        // > the idea is to take the barycentric coordinates version of triangle rasterization,
-                        // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
-                        // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
-                        float z = 0;
-                        z += (float)world[0].z * bar.u;
-                        z += (float)world[1].z * bar.v;
-                        z += (float)world[2].z * bar.w;
-
-                        // calculate z-buffer value's index
-                        int idx = int(x + y * image_witdth);
-
-                        if (z_buffer[idx] < z) {
-                            z_buffer[idx] = z;
-
-                            // printf("x %d, y %d with bar %f, %f, %f\n", x, y, bar.u, bar.v, bar.w);
-                            // barycentric interpolation... I think
-                            // TODO so it doesnt work yet and I think the reason is that the uvw were taken respective to the screen while the texture coordinates
-                            // are in the context fo world coordinates. If that is correct, that means that I just need to get the u v w from the world perspective.
-                            // The only stopper is that I dont quite understand how to get the baricenter coordinates with a 3rd coordinate, last time I barely managed
-                            // and it was in 2D... I need to refresh my math fr
-                            TGAColor texture_sample = sample(texture_data, texture, bar);
-
-                            // TODO take into account input color
-                            image.set(x, y, TGAColor(
-                                color.r / 255.0f * texture_sample.r,
-                                color.g / 255.0f * texture_sample.g,
-                                color.b / 255.0f * texture_sample.b,
-                                color.a
-                            ));
-                        }
-                    }
-
-                    percentageOfLineDone += increment;
-                }
-            }
-            else {
-                // draw vertically
-
-                if (differenceY < 0) {
-                    swap(a.x, b.x);
-                    swap(a.y, b.y);
-                }
-
-                float percentageOfLineDone = 0.0;
-                float increment = 1.0 / (float)differenceYAbs;
-                for (int y = a.y; y <= b.y; y++) {
-                    int x = a.x + (b.x - a.x) * percentageOfLineDone;
-
-                    /* zbuffer and texture sampling for pixel x, y */ {
-
-                        Vec3f bar = barycentric(screen, Vec2i(x, y));
-
-                        // > the idea is to take the barycentric coordinates version of triangle rasterization,
-                        // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
-                        // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
-                        float z = 0;
-                        z += (float)world[0].z * bar.u;
-                        z += (float)world[1].z * bar.v;
-                        z += (float)world[2].z * bar.w;
-
-                        // calculate z-buffer value's index
-                        int idx = int(x + y * image_witdth);
-
-                        if (z_buffer[idx] < z) {
-                            z_buffer[idx] = z;
-
-                            // printf("x %d, y %d with bar %f, %f, %f\n", x, y, bar.u, bar.v, bar.w);
-                            // barycentric interpolation... I think
-                            // TODO so it doesnt work yet and I think the reason is that the uvw were taken respective to the screen while the texture coordinates
-                            // are in the context fo world coordinates. If that is correct, that means that I just need to get the u v w from the world perspective.
-                            // The only stopper is that I dont quite understand how to get the baricenter coordinates with a 3rd coordinate, last time I barely managed
-                            // and it was in 2D... I need to refresh my math fr
-                            TGAColor texture_sample = sample(texture_data, texture, bar);
-
-                            // TODO take into account input color
-                            image.set(x, y, TGAColor(
-                                color.r / 255.0f * texture_sample.r,
-                                color.g / 255.0f * texture_sample.g,
-                                color.b / 255.0f * texture_sample.b,
-                                color.a
-                            ));
-                        }
-                    }
-
-                    percentageOfLineDone += increment;
-                }
-            }
-        }
-
-        side1 -= incrementLongLine;
-        side2 -= incrementShortLine2;
+    if (!aaa) {
+        int ignore = 0;
     }
 }
 
@@ -962,7 +770,7 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
             // using single threaded optimized version
             triangle_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity * 255, intensity * 255, intensity * 255, 255));
             // using brute force version lol
-            // triangle2_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
+            //triangle2_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
         }
 
         // Left over code from back when I was debugging why my texture wasn't being shown properly... Never forgeti
@@ -1247,8 +1055,8 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     // static TGAImage image("test_bar.tga");
     
     auto wc = win32::GetWindowContext();
-    static int render_width = 400;
-    static int render_height = 400;
+    static int render_width = 800;
+    static int render_height = 800;
     static const char* render_name = "textured";
     
     /* setup the window */ {
@@ -1325,6 +1133,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         POINT mouse;
         GetCursorPos(&mouse);
         fat_dot(Vec2i(mouse.x, mouse.y), s, TGAColor(255, 0, 0, 255));
+        printf("%d, %d\n", mouse.x, mouse.y);
         
         static short cursorx, cursory;
         if (false && win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
