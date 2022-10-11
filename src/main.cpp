@@ -1114,10 +1114,9 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         POINT mouse;
         GetCursorPos(&mouse);
         fat_dot(Vec2i(mouse.x, mouse.y), s, TGAColor(255, 0, 0, 255));
-        printf("%d, %d\n", mouse.x, mouse.y);
         
         static short cursorx, cursory;
-        if (false && win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
+        if (win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
             win32::FormattedPrint("fps %d, ms %f", fps, dt_ms);
             win32::ConsoleSetCursorPosition(cursorx, cursory);
         }
