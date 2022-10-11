@@ -439,26 +439,12 @@ void triangle2_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3
 void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3], IPixelBuffer& image, IPixelBuffer& texture_data, float z_buffer[], const TGAColor& color) {
 
     // 1. find the highest vertex and the lowest vertex
-
-    Vec3f bar = barycentric(screen, Vec2i(387, 606));
-    if (barycentric_inside(bar)) {
-        triangle2(screen, image, red);
-    }
-
-    bar = barycentric(screen, Vec2i(413, 614));
-    if (barycentric_inside(bar)) {
-        triangle2(screen, image, green);
-    }
-    
-    // TODO THE ERROR HAPPENS WHEN Y COORDINATE OF 2 POINTS IS THE SAME
-
     Vec2i* top = &screen[0];
     Vec2i* mid = &screen[1];
     Vec2i* bot = &screen[2];
     Vec2i* aux;
     
     if (bot->y > mid->y) {
-        // swapity swap
         aux = mid;
         mid = bot;
         bot = aux;
@@ -497,16 +483,20 @@ void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3]
     float incrementLongLine = dxTopBot / (float)dyTopBot;
     float incrementShortLine1 = dxTopMid / (float)dyTopMid;
     float incrementShortLine2 = dxMidBot / (float)dyMidBot;
-
+    
     // 3. loop though each "horizontal line" between top and bottom
     // Starting position is the top so both side's x position will be tops's x position
     float side1 = top->x;
     float side2 = top->x;
 
+    // If the first half of the triangle "does't exist" then draw only the second part
+    if (dyTopMid == 0) {
+        incrementShortLine1 = dxTopMid;
+        side2 -= incrementShortLine1;
+    }
+
     int image_witdth = image.get_width();
 
-    bool aaa = false;
-    
     // first, draw the top half of the triangle
     for (int y = top->y; y > bot->y; y--) {
 
@@ -520,18 +510,13 @@ void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3]
         // draw a horizontal line (left, y) to (right, y)
         for (int x = left; x <= right; x++) {
             
-            aaa = true;
-            if (x == 387 && y == 606) {
-                // This condition is never met... somehow
-                bool breakpoint = true;
-            }
-
             // barycentric coordinates for `z-buffer` and `texture sampling`
             Vec3f bar = barycentric(screen, Vec2i(x, y));
 
             // > the idea is to take the barycentric coordinates version of triangle rasterization,
             // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
             // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
+            // TODO I still dont get the logic of this...
             float z = 0;
             z += (float)world[0].z * bar.u;
             z += (float)world[1].z * bar.v;
@@ -563,10 +548,6 @@ void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3]
         else {
             side2 -= incrementShortLine2;
         }
-    }
-
-    if (!aaa) {
-        int ignore = 0;
     }
 }
 
