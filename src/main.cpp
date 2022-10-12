@@ -151,6 +151,22 @@ Vec2f barycentric_inverse(Vec2f t[3], Vec3f barycentric) {
     return point;
 }
 
+Vec3f barycentric_inverse(Vec3f t[3], Vec3f barycentric) {
+
+    float u = barycentric.u;
+    float v = barycentric.v;
+    float w = barycentric.w;
+
+    Vec3f a = t[0];
+    Vec3f b = t[1];
+    Vec3f c = t[2];
+
+    // P=wA+uB+vC
+    Vec3f point = (a * w) + (b * u) + (c * v);
+
+    return point;
+}
+
 // sample a texture using barycentric interpolation
 TGAColor sample(IPixelBuffer& sampled_data, Vec2f t[3], Vec3f barycentric) {
 
@@ -516,11 +532,20 @@ void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3]
             // > the idea is to take the barycentric coordinates version of triangle rasterization,
             // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
             // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
-            // TODO I still dont get the logic of this...
+            // This is basically finding the z value of an specific pixel in a triangle by interpolating the 3 values of z that we know.
+            // The same as how we sample the texture, except in this case we only care about the z components.
             float z = 0;
-            z += (float)world[0].z * bar.u;
-            z += (float)world[1].z * bar.v;
-            z += (float)world[2].z * bar.w;
+            z += world[0].z * bar.u;
+            z += world[1].z * bar.v;
+            z += world[2].z * bar.w;
+
+            // This is equivalent to this but without the extra uneeded calculations
+            //
+            //     Vec3f point_in_world_space = barycentric_inverse(world, bar);
+            //     z = point_in_world_space.z;
+            //     float z = 0;
+            //
+
 
             // calculate z-buffer value's index
             int idx = int(x + y * image_witdth);
@@ -751,7 +776,7 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
             // using single threaded optimized version
             triangle_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity * 255, intensity * 255, intensity * 255, 255));
             // using brute force version lol
-            //triangle2_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
+            // triangle2_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
         }
 
         // Left over code from back when I was debugging why my texture wasn't being shown properly... Never forgeti
@@ -1038,7 +1063,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     auto wc = win32::GetWindowContext();
     static int render_width = 800;
     static int render_height = 800;
-    static const char* render_name = "textured";
+    static const char* render_name = "textured.tga";
     
     /* setup the window */ {
 
@@ -1088,13 +1113,6 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
             output.flip_vertically();
             output.write_tga_file(render_name);
         }
-
-        // Vec2i t[3] = {
-        //     Vec2i(517, 1021),
-        //     Vec2i(474, 960),
-        //     Vec2i(394, 585)
-        // };
-        // triangle_outline(t, image, green);
 
         firstFrame = false;
     }
