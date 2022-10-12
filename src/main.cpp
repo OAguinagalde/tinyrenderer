@@ -818,6 +818,83 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
 
 }
 
+// Lesson 4. Now with perspective projection (and other 3d space transformations and stuff)
+void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuffer& texture_data, IPixelBuffer& pixel_buffer, Vec3f camera) {
+
+    // Initialize the zbuffer
+    static float* z_buffer = (float*)malloc(sizeof(float) * pixel_buffer.get_width() * pixel_buffer.get_height());
+    for (int i = 0; i < pixel_buffer.get_width() * pixel_buffer.get_height(); i++) {
+        z_buffer[i] = -std::numeric_limits<float>::max();
+    }
+
+    // Where the light is "coming from"
+    Vec3f light_dir(0, 0, -1);
+
+    // Notes on how to project a point into a plane for a perspective projection
+    if (false) {
+        // Transform a point from 3d object space to our 2d screen using a perspective projection
+        // That means that we get a point p(x, y, z) and we have a "camera" at some other point.
+        // So we calculate, if we were to project that point p in a specific plane (maybe z = 0) as seen from our camera, what would it be?
+
+        // 1. The "projection plane" (I'm not sure if thats a correct name for this?) will be at z = 0 (meaning the 3d model will be both behind the plane and in front of it)
+        // 2. Our camera at (0, 0, 1), will have a distance of 1 from the plane
+        Vec3f camera(0, 0, 1);
+        float distance_to_projection_plane = 1.0;
+
+        // 3. Calculate the projection of any point p(x,y,z) in our plane (z=0) as seen from our camera like this
+        // 
+        //     (x, y, z) -> (x/(1-z/c), y/(1-z/c), z/(1-z/c)) 
+        // 
+        // Out point p being...
+        Vec3f p(0.2, 0.4, -0.3);
+        // calculate the coeficient for our point p...
+        float coeficient = 1.0 / (1.0 - (p.z / distance_to_projection_plane));
+        // get our projected point
+        Vec3f projected_p = p * coeficient;
+    }
+
+    // For each triangle that froms the object...
+    for (int i = 0; i < model.nfaces(); i++) {
+
+        std::vector<int> face = model.face(i).location;
+        std::vector<int> text = model.face(i).texture;
+        
+        Vec2i screen[3]; // the 3 points in our screen (2D) that form the triangle
+        Vec3f world[3]; // the 3 points in the world (3D) that form the triangle
+        Vec2f texture[3]; // the 3 points in the texture (2d) that form triangle that will be used to "paint" the triangle in the "world"
+
+        // For each vertex in this triangle
+        for (int j = 0; j < 3; j++) {
+
+            texture[j] = model.text(text[j]);
+            Vec3f v = model.vert(face[j]);
+            world[j] = v;
+            // TODO apply matrix transformation to world coords, then calcualte screen coords
+
+            screen[j] = Vec2i(
+                (v.x + 1.0) * pixel_buffer.get_width() / 2.0,
+                (v.y + 1.0) * pixel_buffer.get_height() / 2.0
+            );
+        
+        }
+
+        // the intensity of illumination is equal to the scalar product of the light vector and the triangle normal normal.
+        // the normal to the triangle can be calculated simply as the cross product of its two sides.
+        // 
+        //     v3 normal = cross_product(AC, BC)
+        //     float intensity = normal * light_direction
+        // 
+        Vec3f normal = ((world[2] - world[0]) ^ (world[1] - world[0])).normalized();
+        float intensity = normal * light_dir;
+
+        if (intensity > 0) {
+            triangle_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity * 255, intensity * 255, intensity * 255, 255));
+        }
+
+    }
+
+}
+
 //////////////////////////////////////////////////////////////
 
 void test_wireframe(const char* out_file) {
