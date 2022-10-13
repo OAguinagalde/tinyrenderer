@@ -860,6 +860,7 @@ void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuf
         std::vector<int> text = model.face(i).texture;
         
         Vec2i screen[3]; // the 3 points in our screen (2D) that form the triangle
+        Vec3f perspective[3]; // the 3 points in our screen (2D) that form the triangle
         Vec3f world[3]; // the 3 points in the world (3D) that form the triangle
         Vec2f texture[3]; // the 3 points in the texture (2d) that form triangle that will be used to "paint" the triangle in the "world"
 
@@ -869,13 +870,20 @@ void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuf
             texture[j] = model.text(text[j]);
             Vec3f v = model.vert(face[j]);
             world[j] = v;
-            // TODO apply matrix transformation to world coords, then calcualte screen coords
 
             screen[j] = Vec2i(
-                (v.x + 1.0) * pixel_buffer.get_width() / 2.0,
-                (v.y + 1.0) * pixel_buffer.get_height() / 2.0
+                v.x, v.y
             );
-        
+
+            // transform screen[j] to perspective
+            // static Vec3f camera(0, 0, 1);
+            static float distance_to_projection_plane = 3.0;
+            float coeficient = 1.0 / (1.0 - (v.z / distance_to_projection_plane));
+            perspective[j] = v * coeficient;
+
+            screen[j] = Vec2i(
+                perspective[j].x, perspective[j].y
+            );
         }
 
         // the intensity of illumination is equal to the scalar product of the light vector and the triangle normal normal.
@@ -1180,7 +1188,8 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
             texture.flip_vertically();
         }
 
-        obj_to_tga_illuminated_zbuffer_textured(model, texture, s);
+        // obj_to_tga_illuminated_zbuffer_textured(model, texture, s);
+        obj_to_tga_illuminated_zbuffer_textured_perspective(model, texture, s, Vec3f(0,0,1));
 
         if (firstFrame) {
             // We want to keep the output of the render in a TGA file, but only needs to happen once
