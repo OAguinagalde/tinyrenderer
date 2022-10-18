@@ -381,6 +381,8 @@ namespace win32 {
         QueryPerformanceCounter(&cpuCounter);
         // Difference since last update to this new update
         unsigned long long counterDifference = cpuCounter.QuadPart - cpuPreviousCounter;
+        // TODO Not sure why but this is sometimes 0???? for now just idk return with anything, this is not important
+        if (counterDifference == 0) counterDifference++;
         // Since we know the frequency we can calculate some times
         *timeDifferenceMs = 1000.0 * (double)counterDifference / (double)cpuFrequencySeconds;
         *fps = cpuFrequencySeconds / counterDifference;

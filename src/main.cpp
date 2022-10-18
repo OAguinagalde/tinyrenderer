@@ -512,6 +512,7 @@ void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3]
     }
 
     int image_witdth = image.get_width();
+    int image_height = image.get_height();
 
     // first, draw the top half of the triangle
     for (int y = top->y; y > bot->y; y--) {
@@ -549,6 +550,9 @@ void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3]
 
             // calculate z-buffer value's index
             int idx = int(x + y * image_witdth);
+
+            // if (x < 0 || x >= image_witdth) continue;
+            // if (y < 0 || y >= image_height) continue;
 
             if (z_buffer[idx] < z) {
                 z_buffer[idx] = z;
@@ -818,6 +822,108 @@ void obj_to_tga_illuminated_zbuffer_textured(Model& model, IPixelBuffer& texture
 
 }
 
+// Retro-project a point in "4d" back into "3d"
+//     
+//     | x |    | x/w |
+//     | y | => | y/w |
+//     | z |    | z/w |
+//     | w |         
+//
+Vec3f retro_project_back_into_3d(Matrix m) {
+    if (m.ncols() != 1) {int a=1;a=a/0;}
+    if (m.nrows() != 4) {int a=1;a=a/0;}
+    return Vec3f(
+        // x / w
+        m[0][0]/m[3][0],
+        // y / w
+        m[1][0]/m[3][0],
+        // z / w
+        m[2][0]/m[3][0]
+    );
+}
+
+// Embed the point into "4D" by augmenting it with 1, so that we can work with it
+//     
+//     | x |    | x |
+//     | y | => | y |
+//     | z |    | z |
+//              | 1 |
+//     
+Matrix embed_in_4d(Vec3f p) {
+    Matrix m(4, 1);
+    m[0][0] = p.x;
+    m[1][0] = p.y;
+    m[2][0] = p.z;
+    m[3][0] = 1.f;
+    return m;
+}
+
+Matrix get_projection_on_plane_xy_and_camera_on_axis_z(float distance_from_origin) {
+    
+    // the camera will be in the axis z
+    Vec3f camera(0.f, 0.f, distance_from_origin);
+    
+    // https://github.com/ssloy/tinyrenderer/wiki/Lesson-4:-Perspective-projection
+    // > So to compute a central projection with a camera located on the z-axis with distance c from the origin,
+    // > (A) we embed the point into 4D by augmenting it with 1,
+    // > (B) then we multiply it with the following matrix,
+    // > (C) and retro-project it into 3D.
+    // > 
+    // >      (B)      (A)                    (C)
+    // > |1 0   0  0|  |x|    |   x   |    |   x / (1-z/c)   |
+    // > |0 1   0  0|  |y| => |   y   | => |   y / (1-z/c)   |
+    // > |0 0   1  0|  |z|    |   z   |    |   z / (1-z/c)   |
+    // > |0 0 -1/c 1|  |1|    | 1-z/c |
+    // > 
+    // > We deformed our object in a way, that simply forgetting its z-coordinate we will get a drawing in a perspective.
+
+    float c = camera.z;
+
+    Matrix projection = Matrix::identity(4);
+    projection[3][2] = -1/c;
+
+    return projection;
+}
+
+// So, a viewport is just a matrix that will translate every point and scale it
+// basically, x and y are the location of bottom left corner of our screen and w and h the dimensions
+// (imagine a physical square in the world, which is a window through which we look lol)
+Matrix viewport(int x, int y, int w, int h) {
+    
+    // TODO not sure what exactly this is
+    static int depth = 255;
+
+    Matrix m = Matrix::identity(4);
+    
+    //  1 0 0 translation_x
+    //  0 1 0 translation_y
+    //  0 0 1 translation_z
+    //  0 0 0 1
+
+    float translation_x = x + (w / 2.f);
+    float translation_y = y + (h / 2.f);
+    float translation_z = depth / 2.f;
+
+    m[0][3] = translation_x;
+    m[1][3] = translation_y;
+    m[2][3] = translation_z;
+
+    //  scale_x 0       0       0
+    //  0       scale_y 0       0
+    //  0       0       scale_z 0
+    //  0       0       0       1
+    
+    float scale_x = w / 2.f;
+    float scale_y = h / 2.f;
+    float scale_z = depth / 2.f;
+
+    m[0][0] = scale_x;
+    m[1][1] = scale_y;
+    m[2][2] = scale_z;
+
+    return m;
+}
+
 // Lesson 4. Now with perspective projection (and other 3d space transformations and stuff)
 void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuffer& texture_data, IPixelBuffer& pixel_buffer, Vec3f camera) {
 
@@ -834,7 +940,7 @@ void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuf
     if (false) {
         // Transform a point from 3d object space to our 2d screen using a perspective projection
         // That means that we get a point p(x, y, z) and we have a "camera" at some other point.
-        // So we calculate, if we were to project that point p in a specific plane (maybe z = 0) as seen from our camera, what would it be?
+        // So we calculate, if we were to project that point p in a specific plane (maybe the plane z = 0) as seen from our camera, what would it be?
 
         // 1. The "projection plane" (I'm not sure if thats a correct name for this?) will be at z = 0 (meaning the 3d model will be both behind the plane and in front of it)
         // 2. Our camera at (0, 0, 1), will have a distance of 1 from the plane
@@ -845,13 +951,22 @@ void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuf
         // 
         //     (x, y, z) -> (x/(1-z/c), y/(1-z/c), z/(1-z/c)) 
         // 
-        // Out point p being...
+        // Our point p being...
         Vec3f p(0.2, 0.4, -0.3);
         // calculate the coeficient for our point p...
         float coeficient = 1.0 / (1.0 - (p.z / distance_to_projection_plane));
         // get our projected point
         Vec3f projected_p = p * coeficient;
+
+        // down below there is this same thing but using a full projection matrix
     }
+
+    Matrix projection = get_projection_on_plane_xy_and_camera_on_axis_z(2.0f);
+    // TODO So, if I understand correctly, the reason we are doing this is because the renderer is not yet ready to deal with pixels outside of our screen boundaries, so we just
+    // make the viewport ridiculosuly small so that everything will be small enough that nothing will go out of bounds and crash the program???
+    // I gotta figure if I'm right cause ther is no mention of this anywhere
+    Matrix viewPort = viewport(pixel_buffer.get_width()/8, pixel_buffer.get_height()/8, pixel_buffer.get_width()*3/4, pixel_buffer.get_height()*3/4);
+    Matrix premultiplied = viewPort * projection;
 
     // For each triangle that froms the object...
     for (int i = 0; i < model.nfaces(); i++) {
@@ -872,18 +987,25 @@ void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuf
             world[j] = v;
 
             screen[j] = Vec2i(
-                v.x, v.y
+                (v.x + 1.0) * pixel_buffer.get_width() / 2.0,
+                (v.y + 1.0) * pixel_buffer.get_height() / 2.0
             );
 
             // transform screen[j] to perspective
-            // static Vec3f camera(0, 0, 1);
-            static float distance_to_projection_plane = 3.0;
-            float coeficient = 1.0 / (1.0 - (v.z / distance_to_projection_plane));
-            perspective[j] = v * coeficient;
+            // static float distance_to_projection_plane = 2.0;
+            // float coeficient = 1.0 / (1.0 - (v.z / distance_to_projection_plane));
+            // perspective[j] = v * coeficient;
 
-            screen[j] = Vec2i(
-                perspective[j].x, perspective[j].y
+            perspective[j] = retro_project_back_into_3d(
+                premultiplied * embed_in_4d(v)
             );
+            
+            if ((int)perspective[j].x < 0 || (int)perspective[j].x >= pixel_buffer.get_width() ) { int a=1;a=a/0; }
+            if ((int)perspective[j].y < 0 || (int)perspective[j].y >= pixel_buffer.get_height() ) { int a=1;a=a/0; }
+
+            screen[j] = Vec2i(perspective[j].x, perspective[j].y);
+            // screen[j].x = perspective[j].x;
+            // screen[j].y = perspective[j].y;
         }
 
         // the intensity of illumination is equal to the scalar product of the light vector and the triangle normal normal.
