@@ -842,8 +842,8 @@ Vec3f retro_project_back_into_3d(Matrix m) {
     );
 }
 
-// Embed the point into "4D" by augmenting it with 1, so that we can work with it
-//     
+// Embed the point into "4D" by augmenting it with 1, so that we can work with it.
+// 
 //     | x |    | x |
 //     | y | => | y |
 //     | z |    | z |
@@ -924,6 +924,60 @@ Matrix viewport(int x, int y, int w, int h) {
     return m;
 }
 
+// Builds a "view matrix".
+// param `camera_location` commonly referred to as `eye`.
+// param `point_looked_at` commonly referred to as `center`.
+// 
+//     http://www.songho.ca/opengl/gl_transform.html
+//     > Note that there is no separate camera (view) matrix in OpenGL.
+//     > Therefore, in order to simulate transforming the camera or view, the scene(3D objects and lights) must be transformed with the inverse
+//     > of the view transformation.In other words, OpenGL defines that the camera is always located at(0, 0, 0) and
+//     > facing to - Z axis in the eye space coordinates, and cannot be transformed
+// 
+//     > View Matrix defines the position (location and orientation) of the camera
+// 
+//     > The reason for two separate matrices, instead of one, is that lighting is applied after the modelview view matrix (i.e. on eye coordinates) and before the projection matrix
+// 
+Matrix lookat(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
+
+    // We are basically calculating the 3 axis centered on `center`, where:
+    //     
+    //      A (up)               A (+y)
+    //      |                    |
+    //     eye    (+z) <----- center
+    //                            \  (+x)
+    //                             V
+    // 
+    Vec3f z = (camera_location - point_looked_at).normalize();
+    Vec3f x = (up ^ z).normalize();
+    Vec3f y = (z ^ x).normalize();
+
+    // I think Tr stands for Translation
+    Matrix Tr = Matrix::identity();
+    Tr[0][3] = -camera_location.x;
+    Tr[1][3] = -camera_location.y;
+    Tr[2][3] = -camera_location.z;
+
+    // I think Minv stands for Matrix inversed
+    // TODO Why exactly do we need this?
+    Matrix Minv = Matrix::identity();
+    Minv[0][0] = x.x;
+    Minv[1][0] = y.x;
+    Minv[2][0] = z.x;
+
+    Minv[0][1] = x.y;
+    Minv[1][1] = y.y;
+    Minv[2][1] = z.y;
+
+    Minv[0][2] = x.z;
+    Minv[1][2] = y.z;
+    Minv[2][2] = z.z;
+    
+    // Not sure why Minv and this mutiplication of matrices is necessary or what its doing
+    return Minv * Tr;
+}
+
+
 // Lesson 4. Now with perspective projection (and other 3d space transformations and stuff)
 void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuffer& texture_data, IPixelBuffer& pixel_buffer, Vec3f camera) {
 
@@ -936,37 +990,67 @@ void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuf
     // Where the light is "coming from"
     Vec3f light_dir(0, 0, -1);
 
-    // Notes on how to project a point into a plane for a perspective projection
-    if (false) {
-        // Transform a point from 3d object space to our 2d screen using a perspective projection
-        // That means that we get a point p(x, y, z) and we have a "camera" at some other point.
-        // So we calculate, if we were to project that point p in a specific plane (maybe the plane z = 0) as seen from our camera, what would it be?
+    Vec3f camera_location(0.f, 0.f, 1.f);
+    
+    Matrix model_matrix = Matrix::identity();
+    // 
+    //     > Model maps from an object's local coordinate space into world space
+    // 
+    // The Model matrix describes how we are placing the Model in the world.
+    // Since we want the model to be in the same place as it is in the object coordinates, we just set it to the Identity matrix.
+    // That means that a point in object coordinates (0.31, 0.47, 0.32) will be in the point (0.31, 0.47, 0.32) in the world coordinates.
+    
+    
+    Matrix view_matrix = Matrix::identity();
+    // 
+    //     http://www.songho.ca/opengl/gl_transform.html
+    //     > Note that there is no separate camera (view) matrix in OpenGL.
+    //     > Therefore, in order to simulate transforming the camera or view, the scene(3D objects and lights) must be transformed with the inverse
+    //     > of the view transformation.In other words, OpenGL defines that the camera is always located at(0, 0, 0) and
+    //     > facing to - Z axis in the eye space coordinates, and cannot be transformed
+    // 
+    //     > View Matrix defines the position (location and orientation) of the camera
+    // 
+    //     > The reason for two separate matrices, instead of one, is that lighting is applied after the modelview view matrix (i.e. on eye coordinates) and before the projection matrix
+    // 
+    // Imagine the camera is at (0, 0, 2), so we have to move the world so that every point moves -2 units in z.
+    // We are basically applying a translation of the inverse of our camera.
+    // (And as we know, the elements m[0][3], m[1][3] and m[2][3] are the elements that control translations, so...)
+    view_matrix[0][3] = -camera_location.x;
+    view_matrix[1][3] = -camera_location.y;
+    view_matrix[2][3] = -camera_location.z;
 
-        // 1. The "projection plane" (I'm not sure if thats a correct name for this?) will be at z = 0 (meaning the 3d model will be both behind the plane and in front of it)
-        // 2. Our camera at (0, 0, 1), will have a distance of 1 from the plane
-        Vec3f camera(0, 0, 1);
-        float distance_to_projection_plane = 1.0;
-
-        // 3. Calculate the projection of any point p(x,y,z) in our plane (z=0) as seen from our camera like this
-        // 
-        //     (x, y, z) -> (x/(1-z/c), y/(1-z/c), z/(1-z/c)) 
-        // 
-        // Our point p being...
-        Vec3f p(0.2, 0.4, -0.3);
-        // calculate the coeficient for our point p...
-        float coeficient = 1.0 / (1.0 - (p.z / distance_to_projection_plane));
-        // get our projected point
-        Vec3f projected_p = p * coeficient;
-
-        // down below there is this same thing but using a full projection matrix
+    Matrix projection_matrix = Matrix::identity();
+    // > projection from camera to screen
+    // https://github.com/ssloy/tinyrenderer/wiki/Lesson-4:-Perspective-projection
+    // The Projection matrix deforms the scene to create a sense of perspective.
+    // This projection matrix assumes that the camera is on z-axis, meaning that the distance to the origin will be the z element.
+    // TODO projections for arbitrary camera position
+    float c = camera_location.z;
+    if (c != 0) {
+        projection_matrix[3][2] = -1 / c;
     }
 
-    Matrix projection = get_projection_on_plane_xy_and_camera_on_axis_z(2.0f);
-    // TODO So, if I understand correctly, the reason we are doing this is because the renderer is not yet ready to deal with pixels outside of our screen boundaries, so we just
-    // make the viewport ridiculosuly small so that everything will be small enough that nothing will go out of bounds and crash the program???
-    // I gotta figure if I'm right cause ther is no mention of this anywhere
-    Matrix viewPort = viewport(pixel_buffer.get_width()/8, pixel_buffer.get_height()/8, pixel_buffer.get_width()*3/4, pixel_buffer.get_height()*3/4);
-    Matrix premultiplied = viewPort * projection;
+    Matrix viewport_matrix = Matrix::identity();
+    // The viewport is basically a square/window in the projection plane. Then if we were to place our eye at the camera, and look towards the viewport, everything inside the square will be
+    // visible on our screen (as if the screen was that window), and everything else woudln't.
+    // So first, lets define the dimensions and location of this square or window.
+    int x = 0;
+    int y = 0;
+    int w = pixel_buffer.get_width();
+    int h = pixel_buffer.get_height();
+    // We can also choose to disregard anything that is further than some distance from the "window" by defining a depth
+    static int depth = 255;
+    // Now that we defined our viewport, lets build the matrix
+    // We can define this matrix as a mixture of translations and scaling coeficients
+    // As before, the elements m[0][3], m[1][3] and m[2][3] are the elements that control translations...
+    viewport_matrix[0][3] = x + (w / 2.f); // since we want our "window" to be centered, center it, duh
+    viewport_matrix[1][3] = y + (h / 2.f);
+    viewport_matrix[2][3] = depth / 2.f;
+    // and the elements m[0][0], m[1][1] and m[2][2] are the scaling coeficients
+    viewport_matrix[0][0] = w / 2.f;
+    viewport_matrix[1][1] = h / 2.f;
+    viewport_matrix[2][2] = depth / 2.f;
 
     // For each triangle that froms the object...
     for (int i = 0; i < model.nfaces(); i++) {
@@ -975,38 +1059,34 @@ void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuf
         std::vector<int> text = model.face(i).texture;
         
         Vec2i screen[3]; // the 3 points in our screen (2D) that form the triangle
-        Vec3f perspective[3]; // the 3 points in our screen (2D) that form the triangle
         Vec3f world[3]; // the 3 points in the world (3D) that form the triangle
         Vec2f texture[3]; // the 3 points in the texture (2d) that form triangle that will be used to "paint" the triangle in the "world"
 
+        bool skip = false;
+        
         // For each vertex in this triangle
         for (int j = 0; j < 3; j++) {
 
             texture[j] = model.text(text[j]);
-            Vec3f v = model.vert(face[j]);
-            world[j] = v;
+            world[j] = model.vert(face[j]);
+            
+            Matrix point_object_coords = embed_in_4d(world[j]);
+            Matrix point_world_coords = model_matrix * point_object_coords;
+            Matrix point_camera_coords = view_matrix * point_world_coords;
+            Matrix point_clip_coords = projection_matrix * point_camera_coords;
+            Matrix point_screen_coords = viewport_matrix * point_clip_coords;
+            Vec3f final_point = retro_project_back_into_3d(point_screen_coords);
 
             screen[j] = Vec2i(
-                (v.x + 1.0) * pixel_buffer.get_width() / 2.0,
-                (v.y + 1.0) * pixel_buffer.get_height() / 2.0
+                final_point.x, final_point.y
             );
 
-            // transform screen[j] to perspective
-            // static float distance_to_projection_plane = 2.0;
-            // float coeficient = 1.0 / (1.0 - (v.z / distance_to_projection_plane));
-            // perspective[j] = v * coeficient;
-
-            perspective[j] = retro_project_back_into_3d(
-                premultiplied * embed_in_4d(v)
-            );
-            
-            if ((int)perspective[j].x < 0 || (int)perspective[j].x >= pixel_buffer.get_width() ) { int a=1;a=a/0; }
-            if ((int)perspective[j].y < 0 || (int)perspective[j].y >= pixel_buffer.get_height() ) { int a=1;a=a/0; }
-
-            screen[j] = Vec2i(perspective[j].x, perspective[j].y);
-            // screen[j].x = perspective[j].x;
-            // screen[j].y = perspective[j].y;
+            if ((int)final_point.x < 0 || (int)final_point.x >= pixel_buffer.get_width()) { skip = true; continue; }
+            if ((int)final_point.y < 0 || (int)final_point.y >= pixel_buffer.get_height()) { skip = true; continue; }
         }
+
+        // any face which contains a vertex outside the screen, skip it
+        if (skip) continue;
 
         // the intensity of illumination is equal to the scalar product of the light vector and the triangle normal normal.
         // the normal to the triangle can be calculated simply as the cross product of its two sides.
@@ -1016,11 +1096,9 @@ void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuf
         // 
         Vec3f normal = ((world[2] - world[0]) ^ (world[1] - world[0])).normalized();
         float intensity = normal * light_dir;
+        if (intensity <= 0) continue;
 
-        if (intensity > 0) {
-            triangle_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity * 255, intensity * 255, intensity * 255, 255));
-        }
-
+        triangle_zbuffer_textured(screen, world, texture, pixel_buffer, texture_data, z_buffer, TGAColor(intensity * 255, intensity * 255, intensity * 255, 255));
     }
 
 }
