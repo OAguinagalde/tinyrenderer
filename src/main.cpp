@@ -885,20 +885,19 @@ Matrix get_projection_on_plane_xy_and_camera_on_axis_z(float distance_from_origi
     return projection;
 }
 
-// So, a viewport is just a matrix that will translate every point and scale it
-// basically, x and y are the location of bottom left corner of our screen and w and h the dimensions
-// (imagine a physical square in the world, which is a window through which we look lol)
-Matrix viewport(int x, int y, int w, int h) {
-    
-    // TODO not sure what exactly this is
-    static int depth = 255;
+// Builds a "viewport matrix".
+// So, a viewport is just a matrix that will translate and map every point,
+// mapping every point in the original 3 dimensional cube with ranges[-1, 1] * [-1, 1] * [-1, 1]
+// onto the screen cube [x, x + w] * [y, y + h] * [0, d], where d is the depth (and resolution) of the z-buffer and of value 255.
+// opengl calls this the viewport matrix
+Matrix viewport(int x, int y, int w, int h, int depth = 255) {
 
     Matrix m = Matrix::identity(4);
     
-    //  1 0 0 translation_x
-    //  0 1 0 translation_y
-    //  0 0 1 translation_z
-    //  0 0 0 1
+    // 1 0 0 translation_x
+    // 0 1 0 translation_y
+    // 0 0 1 translation_z
+    // 0 0 0 1
 
     float translation_x = x + (w / 2.f);
     float translation_y = y + (h / 2.f);
@@ -908,10 +907,10 @@ Matrix viewport(int x, int y, int w, int h) {
     m[1][3] = translation_y;
     m[2][3] = translation_z;
 
-    //  scale_x 0       0       0
-    //  0       scale_y 0       0
-    //  0       0       scale_z 0
-    //  0       0       0       1
+    // scale_x 0       0       0
+    // 0       scale_y 0       0
+    // 0       0       scale_z 0
+    // 0       0       0       1
     
     float scale_x = w / 2.f;
     float scale_y = h / 2.f;
@@ -920,6 +919,12 @@ Matrix viewport(int x, int y, int w, int h) {
     m[0][0] = scale_x;
     m[1][1] = scale_y;
     m[2][2] = scale_z;
+
+    // resulting in matrix m...
+    // w/2     0       0       x+w/2
+    // 0       h/2     0       y+h/w
+    // 0       0       d/2     d/2
+    // 0       0       0       1
 
     return m;
 }
@@ -989,68 +994,30 @@ void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuf
 
     // Where the light is "coming from"
     Vec3f light_dir(0, 0, -1);
-
-    Vec3f camera_location(0.f, 0.f, 1.f);
     
-    Matrix model_matrix = Matrix::identity();
+    // The Model matrix describes how we are placing the Model in the world.
     // 
     //     > Model maps from an object's local coordinate space into world space
     // 
-    // The Model matrix describes how we are placing the Model in the world.
     // Since we want the model to be in the same place as it is in the object coordinates, we just set it to the Identity matrix.
     // That means that a point in object coordinates (0.31, 0.47, 0.32) will be in the point (0.31, 0.47, 0.32) in the world coordinates.
-    
-    
-    Matrix view_matrix = Matrix::identity();
-    // 
-    //     http://www.songho.ca/opengl/gl_transform.html
-    //     > Note that there is no separate camera (view) matrix in OpenGL.
-    //     > Therefore, in order to simulate transforming the camera or view, the scene(3D objects and lights) must be transformed with the inverse
-    //     > of the view transformation.In other words, OpenGL defines that the camera is always located at(0, 0, 0) and
-    //     > facing to - Z axis in the eye space coordinates, and cannot be transformed
-    // 
-    //     > View Matrix defines the position (location and orientation) of the camera
-    // 
-    //     > The reason for two separate matrices, instead of one, is that lighting is applied after the modelview view matrix (i.e. on eye coordinates) and before the projection matrix
-    // 
-    // Imagine the camera is at (0, 0, 2), so we have to move the world so that every point moves -2 units in z.
-    // We are basically applying a translation of the inverse of our camera.
-    // (And as we know, the elements m[0][3], m[1][3] and m[2][3] are the elements that control translations, so...)
-    view_matrix[0][3] = -camera_location.x;
-    view_matrix[1][3] = -camera_location.y;
-    view_matrix[2][3] = -camera_location.z;
+    // If we were to want to apply transformations, rotations, scaling... to the model, we would do so here.
+    Matrix model_matrix = Matrix::identity();
+
+    Vec3f camera_location(0.f, 0.f, 1.f);
+    Matrix view_matrix = lookat(camera_location, camera_location + Vec3f(0.f, 0.f, -1.f), Vec3f(0.f, 1.f, 0.f));
 
     Matrix projection_matrix = Matrix::identity();
-    // > projection from camera to screen
     // https://github.com/ssloy/tinyrenderer/wiki/Lesson-4:-Perspective-projection
     // The Projection matrix deforms the scene to create a sense of perspective.
     // This projection matrix assumes that the camera is on z-axis, meaning that the distance to the origin will be the z element.
-    // TODO projections for arbitrary camera position
+    // TODO projections for arbitrary camera position, how? what does it mean that this assumes camera on z axis?
     float c = camera_location.z;
     if (c != 0) {
         projection_matrix[3][2] = -1 / c;
     }
 
-    Matrix viewport_matrix = Matrix::identity();
-    // The viewport is basically a square/window in the projection plane. Then if we were to place our eye at the camera, and look towards the viewport, everything inside the square will be
-    // visible on our screen (as if the screen was that window), and everything else woudln't.
-    // So first, lets define the dimensions and location of this square or window.
-    int x = 0;
-    int y = 0;
-    int w = pixel_buffer.get_width();
-    int h = pixel_buffer.get_height();
-    // We can also choose to disregard anything that is further than some distance from the "window" by defining a depth
-    static int depth = 255;
-    // Now that we defined our viewport, lets build the matrix
-    // We can define this matrix as a mixture of translations and scaling coeficients
-    // As before, the elements m[0][3], m[1][3] and m[2][3] are the elements that control translations...
-    viewport_matrix[0][3] = x + (w / 2.f); // since we want our "window" to be centered, center it, duh
-    viewport_matrix[1][3] = y + (h / 2.f);
-    viewport_matrix[2][3] = depth / 2.f;
-    // and the elements m[0][0], m[1][1] and m[2][2] are the scaling coeficients
-    viewport_matrix[0][0] = w / 2.f;
-    viewport_matrix[1][1] = h / 2.f;
-    viewport_matrix[2][2] = depth / 2.f;
+    Matrix viewport_matrix = viewport(0, 0, pixel_buffer.get_width(), pixel_buffer.get_height());
 
     // For each triangle that froms the object...
     for (int i = 0; i < model.nfaces(); i++) {
