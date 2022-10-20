@@ -1,4 +1,6 @@
-// Note: I'm using http://schmittl.github.io/tgajs/ to visualize the tga images generated
+#include "../../cr/cr.h"
+
+#include <stdio.h>
 
 #include "tgaimage.h"
 #include <vector>
@@ -1210,9 +1212,7 @@ void test_barycentric_2(const char* out_file) {
     image.write_tga_file(out_file);
 }
 
-#include "win32.h"
 
-#define rgb(r,g,b) ((uint32_t)(((uint8_t)r << 16) | ((uint8_t)g << 8) | (uint8_t)b))
 
 struct PixelBuffer: public IPixelBuffer {
 protected:
@@ -1287,6 +1287,9 @@ public:
     }
 };
 
+#define WIN32_EXTERNALDLL
+#include "win32.h"
+
 void paint(IPixelBuffer& dest, IPixelBuffer& source) {
     for (int y = 0; y < dest.get_height(); y++) {
         for (int x =  0; x < dest.get_width(); x++) {
@@ -1295,22 +1298,8 @@ void paint(IPixelBuffer& dest, IPixelBuffer& source) {
     }
 }
 
-bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2) {
-    // nothing is explicitly handled
-    return false;
-}
+int on_update() {
 
-bool onUpdate(double dt_ms, unsigned long long fps) {
-
-    // static TGAImage image("barycentric_test.tga");
-    // static TGAImage image("res/african_head_diffuse.tga");
-    // static TGAImage image("textured.tga");
-    // static TGAImage image("wireframe.tga");
-    // static TGAImage image("object.tga");
-    // static TGAImage image("zbuffer.tga");
-    // static TGAImage image("quad.tga");
-    // static TGAImage image("test_bar.tga");
-    
     auto wc = win32::GetWindowContext();
     static int render_width = 800;
     static int render_height = 800;
@@ -1366,84 +1355,51 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
             output.write_tga_file(render_name);
         }
 
+
         firstFrame = false;
     }
-
-    /* stats and debugging stuff */ {
-    
-        // Some kind of performance visualizer
-        TGAColor performance_color = TGAColor(255, 0, 0, 255);
-        float performance_base = 128.0f;
-        if (dt_ms < 64.0f) { performance_base = 64.0f; performance_color = TGAColor(255, 150, 0, 255); }
-        if (dt_ms < 32.0f) { performance_base = 32.0f; performance_color = TGAColor(240, 204, 0, 255); }
-        if (dt_ms < 16.0f) { performance_base = 16.0f; performance_color = TGAColor(174, 255, 0, 255); }
-        line(Vec2i(0,0), Vec2i( min((dt_ms / performance_base) * s.get_width(), s.get_width()), 0), s, performance_color);
-        line(Vec2i(0,1), Vec2i( min((dt_ms / performance_base) * s.get_width(), s.get_width()), 1), s, performance_color);
-
-        // mouse pos
-        POINT mouse;
-        GetCursorPos(&mouse);
-        fat_dot(Vec2i(mouse.x, mouse.y), s, TGAColor(255, 0, 0, 255));
-        
-        static short cursorx, cursory;
-        if (win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
-            win32::FormattedPrint("fps %d, ms %f", fps, dt_ms);
-            win32::ConsoleSetCursorPosition(cursorx, cursory);
-        }
-    }
+        fat_dot(Vec2i(100,100), s, red);
 
     return true;
 }
 
-DWORD WINAPI backgroundTask(LPVOID lpParam) {
-    // do something
-    return 0;
+int on_load() {
+    printf("on_load\n");
+    return true;
+}
+int on_unload() {
+    printf("on_unload\n");
+    return true;
+}
+int on_close() {
+    printf("on_close\n");
+    return true;
 }
 
-int main(int argc, char** argv) {
-    srand(time(NULL));
-    
-    /* old render to TGAImage methods */
-    if (false) {
-        test_barycentric("barycentric_test.tga");
-        test_textured_object("textured.tga");
-        test_wireframe("wireframe.tga");
-        test_object("object.tga");
-        test_zbuffer_object("zbuffer.tga");
-        test_textured_quad("quad.tga");
-        test_barycentric_2("test_bar.tga");
-    }
+CR_EXPORT int cr_main(cr_plugin* ctx, cr_op operation) {
 
-    void* someData = NULL;
-    HANDLE handle = 0;
-    handle = CreateThread(NULL, 0, backgroundTask, someData, 0, NULL);
-    if (!handle) return 1;
-    defer _1([handle]() {
-        WaitForSingleObject(handle, INFINITE);
-        CloseHandle(handle);
-    });
+    assert(ctx);
 
-    /* window scope */ {
-        auto window = win32::NewWindow("myWindow", "tinyrenderer", 100, 100, 10, 10, &window_callback);
-        defer _2([window]() { win32::CleanWindow("myWindow", window); });
+    switch (operation) {
 
-        //int w, h, x, y;
-        //win32::SetWindowClientSize(window, image.get_width(), image.get_height());
-        //win32::GetWindowSizeAndPosition(window, &w, &h, &x, &y);
+        case CR_LOAD: { // loading back from a reload
+            return on_load();
 
-        bool haveConsole = true;
-        if (win32::ConsoleAttach() != win32::ConsoleAttachResult::SUCCESS) {
-            haveConsole = false;
-            if (win32::ConsoleCreate() == win32::ConsoleCreateResult::SUCCESS) {
-                auto consoleWindow = win32::ConsoleGetWindow();
-                //win32::SetWindowPosition(consoleWindow, x+w, y);
-                haveConsole = true;
-            }
-        }
-        defer _3([haveConsole]() { if (haveConsole) win32::ConsoleFree(); });
+        } break;
 
-        win32::NewWindowLoopStart(window, onUpdate);
-        
-        win32::CleanWindowRenderTarget();
-    }
+        case CR_UNLOAD: { // preparing to a new reload
+            return on_unload();
+
+        } break;
+
+        case CR_CLOSE: { // the plugin will close and not reload anymore
+            return on_close();
+
+        } break;
+
+    };
+
+    // CR_STEP
+    return on_update();
 }
+

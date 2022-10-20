@@ -19,6 +19,8 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{FEE8F04D-29AA-4E1F-A1F1-D61D327240B2}"
 	ProjectSection(SolutionItems) = preProject
 		src\geometry.h = src\geometry.h
+		src\hr_app.cpp = src\hr_app.cpp
+		src\hr_host.cpp = src\hr_host.cpp
 		src\main.cpp = src\main.cpp
 		src\model.cpp = src\model.cpp
 		src\model.h = src\model.h

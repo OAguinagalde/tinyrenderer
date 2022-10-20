@@ -9,10 +9,11 @@ void measure_since(std::chrono::steady_clock::time_point start);
 
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
+#define rgb(r,g,b) ((uint32_t)(((uint8_t)r << 16) | ((uint8_t)g << 8) | (uint8_t)b))
 
 // usage example:
 // 
-//     defer  ([](){ printf("Dont use unnamed deffer instances! this will run straight away! Bad!");
+//     defer  ([](){ printf("Dont use unnamed defer instances! this will run straight away! Bad!");
 //     defer d([](){ printf("Hello from the end of the scope!"); });
 // 
 class defer {

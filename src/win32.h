@@ -2,9 +2,26 @@
 #include <windows.h>
 #include <stdint.h>
 
-#pragma comment(lib, "User32")
-#pragma comment(lib, "gdi32")
-#pragma comment(lib, "Msimg32")
+// If building a win32.dll define WIN32_COMPILEDLL
+// If building an application that uses an already compiled win32.dll define WIN32_EXTERNALDLL
+// If building an application that links this statically, just compile win32.cpp together with your app
+
+#ifdef WIN32_COMPILEDLL
+# define APITYPE _declspec(dllexport)
+# pragma comment(lib, "User32")
+# pragma comment(lib, "gdi32")
+# pragma comment(lib, "Msimg32")
+#else
+# ifdef WIN32_EXTERNALDLL
+#  define APITYPE _declspec(dllimport)
+#  pragma comment(lib, "win32") // If this fails, it means you haven told the compiler where to find it, /link /LIBPATH:.\bin
+# else
+#  define APITYPE
+#  pragma comment(lib, "User32")
+#  pragma comment(lib, "gdi32")
+#  pragma comment(lib, "Msimg32")
+# endif /*WIN32EXTERNAL*/
+#endif /*MAKEDLL*/
 
 namespace win32 {
     
@@ -22,7 +39,7 @@ namespace win32 {
     };
     
     // Get the handles to this console with GetStdHandle(STD_INPUT_HANDLE/STD_OUTPUT_HANDLE/STD_ERROR_HANDLE)
-    ConsoleAttachResult ConsoleAttach();
+    APITYPE ConsoleAttachResult ConsoleAttach();
     
     enum class ConsoleCreateResult {
         SUCCESS,
@@ -31,19 +48,19 @@ namespace win32 {
     };
 
     // Get the handles to this console with GetStdHandle(STD_INPUT_HANDLE/STD_OUTPUT_HANDLE/STD_ERROR_HANDLE)
-    ConsoleCreateResult ConsoleCreate();
+    APITYPE ConsoleCreateResult ConsoleCreate();
 
     // clears the console associated with the stdout
-    void ConsoleClear();
+    APITYPE void ConsoleClear();
 
-    bool ConsoleGetCursorPosition(short *x, short *y);
+    APITYPE bool ConsoleGetCursorPosition(short *x, short *y);
 
     // The handle must have the GENERIC_READ access right
-    bool ConsoleSetCursorPosition(short x, short y);
+    APITYPE bool ConsoleSetCursorPosition(short x, short y);
 
-    HWND ConsoleGetWindow();
+    APITYPE HWND ConsoleGetWindow();
     
-    bool ConsoleFree();
+    APITYPE bool ConsoleFree();
 
     
     // 
@@ -59,45 +76,45 @@ namespace win32 {
         BITMAPINFO win32_render_target;
         HWND window_handle;
         int width, height;
-        WindowContext();
-        bool IsActive();
+        APITYPE WindowContext();
+        APITYPE bool IsActive();
     };
 
     // Warning: Probably its a bad idea to call this more than once lol
     // Warning: Uses GetModuleHandleA(NULL) as the hInstance, so might not work if used as a DLL
-    HWND NewWindow(const char* identifier, const char* windowTitle, int x, int y, int w, int h, windowsCallback* callback);
+    APITYPE HWND NewWindow(const char* identifier, const char* windowTitle, int x, int y, int w, int h, windowsCallback* callback);
 
     // Use the same identifier used on NewWindow
-    bool CleanWindow(const char* identifier, HWND window);
+    APITYPE bool CleanWindow(const char* identifier, HWND window);
 
     // Sets the client size (not the window size!)
-    void SetWindowClientSize(HWND window, int width, int height);
+    APITYPE void SetWindowClientSize(HWND window, int width, int height);
 
     // Given a windowHandle, queries the width, height and position (x, y) of the window
-    void GetWindowSizeAndPosition(HWND windowHandle, int* width, int* height, int* x, int* y);
+    APITYPE void GetWindowSizeAndPosition(HWND windowHandle, int* width, int* height, int* x, int* y);
 
     // Given a windowHandle, queries the width and height of the client size (The drawable area)
-    void GetClientSize(HWND windowHandle, int* width, int* height);
+    APITYPE void GetClientSize(HWND windowHandle, int* width, int* height);
 
-    void SetWindowPosition(HWND window, int x, int y);
+    APITYPE void SetWindowPosition(HWND window, int x, int y);
 
-    HDC GetDeviceContextHandle(HWND windowHandle);
+    APITYPE HDC GetDeviceContextHandle(HWND windowHandle);
 
-    void SwapPixelBuffers(HDC deviceContextHandle);
+    APITYPE void SwapPixelBuffers(HDC deviceContextHandle);
 
     // Everytime this is called it resets the render target
     // 0,0 is top left and w,h is bottom right
-    void NewWindowRenderTarget(int w, int h);
+    APITYPE void NewWindowRenderTarget(int w, int h);
 
-    WindowContext* GetWindowContext();
+    APITYPE WindowContext* GetWindowContext();
 
-    void CleanWindowRenderTarget();
+    APITYPE void CleanWindowRenderTarget();
 
     // if returns false, loop will end
     typedef bool OnUpdate(double dt_ms, unsigned long long fps);
 
     // enters a blocking loop in which keeps on reading and dispatching the windows messages, until the running flag is set to false
-    void NewWindowLoopStart(HWND window, OnUpdate* onUpdate);
+    APITYPE void NewWindowLoopStart(HWND window, OnUpdate* onUpdate);
 
 
     // 
@@ -117,12 +134,12 @@ namespace win32 {
     //         win32::FormattedPrint("ms %f\n", ms);
     //     }
     // 
-    void GetCpuCounterAndFrequencySeconds(unsigned long long* cpuCounter, unsigned long long* cpuFrequencySeconds);
+    APITYPE void GetCpuCounterAndFrequencySeconds(unsigned long long* cpuCounter, unsigned long long* cpuFrequencySeconds);
 
     // Given the previous cpu counter to compare with, and the cpu frequency (Use GetCpuCounterAndFrequencySeconds)
     // Calculate timeDifferenceMs and fps. Returns the current value of cpuCounter.
     // returns a newly calculated cpu counter.
-    unsigned long long GetTimeDifferenceMsAndFPS(unsigned long long cpuPreviousCounter, unsigned long long cpuFrequencySeconds, double* timeDifferenceMs, unsigned long long* fps);
+    APITYPE unsigned long long GetTimeDifferenceMsAndFPS(unsigned long long cpuPreviousCounter, unsigned long long cpuFrequencySeconds, double* timeDifferenceMs, unsigned long long* fps);
 
 
     // 
@@ -130,12 +147,12 @@ namespace win32 {
     // 
     
     // Prints a string to stdout
-    void Print(const char* str);
+    APITYPE void Print(const char* str);
 
     // printf but wrong lol
     // Max output is 1024 bytes long!
-    void FormattedPrint(const char* format, ...);
+    APITYPE void FormattedPrint(const char* format, ...);
 
     // Given a char buffer, and a format str, puts the resulting str in the buffer
-    void FormatBuffer(char* buffer, const char* format, ...);
+    APITYPE void FormatBuffer(char* buffer, const char* format, ...);
 }
