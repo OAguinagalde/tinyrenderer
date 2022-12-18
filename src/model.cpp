@@ -5,7 +5,7 @@
 #include <vector>
 #include "model.h"
 
-Model::Model(const char *filename) : verts_(), text_verts_(), faces_() {
+Model::Model(const char *filename) : verts_(), text_verts_(), text_vert_normals_(), faces_() {
     std::ifstream in;
     in.open (filename, std::ifstream::in);
     if (in.fail()) return;
@@ -28,11 +28,19 @@ Model::Model(const char *filename) : verts_(), text_verts_(), faces_() {
             for (int i=0;i<2;i++) iss >> vt.raw[i];
             text_verts_.push_back(vt);
         }
+        // If the line is a "vertex normal" save its values
+        else if (!line.compare(0, 3, "vn ")) {
+            iss >> trash >> trash;
+            Vec3f vn;
+            for (int i=0;i<3;i++) iss >> vn.raw[i];
+            text_vert_normals_.push_back(vn);
+        }
         // If the line is a "face" save the index (the first int), we don't care about the rest
         else if (!line.compare(0, 2, "f ")) {
             std::vector<int> location_vertex_indices;
             std::vector<int> texture_vertex_indices;
-            int location_idx, text_idx, itrash;
+            std::vector<int> vertex_normal_indices;
+            int location_idx, text_idx, normal_idx;
             iss >> trash;
             // This is basically:
             // While this set of operations work ...{
@@ -44,20 +52,23 @@ Model::Model(const char *filename) : verts_(), text_verts_(), faces_() {
             // }
 
             // Notes Oscar: If you check the obj file, they come in trios, because 1 facet is made out of 3 vertices. example:
-            // f loc_idx/text_idx/??? loc_idx/text_idx/??? loc_idx/text_idx/???
+            // f loc_idx/text_idx/normal_idx loc_idx/text_idx/normal_idx loc_idx/text_idx/normal_idx
             // so this while will (should) iterate 3 times per facet
-            while (iss >> location_idx >> trash >> text_idx >> trash >> itrash) {
+            while (iss >> location_idx >> trash >> text_idx >> trash >> normal_idx) {
                 // in wavefront obj all indices start at 1, not zero
                 location_idx--;
                 text_idx--;
+                normal_idx--;
                 location_vertex_indices.push_back(location_idx);
                 texture_vertex_indices.push_back(text_idx);
+                vertex_normal_indices.push_back(normal_idx);
             }
 
             // Vertex contains both location and texture data
             Vertex vertex;
             vertex.location = location_vertex_indices;
             vertex.texture = texture_vertex_indices;
+            vertex.normals = vertex_normal_indices;
             
             faces_.push_back(vertex);
         }
@@ -139,3 +150,6 @@ Vec2f Model::text(int i) {
     return text_verts_[i];
 }
 
+Vec3f Model::normal(int i) {
+    return text_vert_normals_[i];
+}

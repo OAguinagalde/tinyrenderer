@@ -580,6 +580,146 @@ void triangle_zbuffer_textured(Vec2i screen[3], Vec3f world[3], Vec2f texture[3]
     }
 }
 
+void triangle_zbuffer_textured_gouraud(Vec2i screen[3], Vec3f world[3], Vec2f texture[3], Vec3f normals[3], IPixelBuffer& image, IPixelBuffer& texture_data, float z_buffer[]) {
+
+    // 1. find the highest vertex and the lowest vertex
+    Vec2i* top = &screen[0];
+    Vec2i* mid = &screen[1];
+    Vec2i* bot = &screen[2];
+    Vec2i* aux;
+    
+    if (bot->y > mid->y) {
+        aux = mid;
+        mid = bot;
+        bot = aux;
+    }
+
+    if (bot->y > top->y) {
+        aux = top;
+        top = bot;
+        bot = aux;
+    }
+
+    if (mid->y > top->y) {
+        aux = top;
+        top = mid;
+        mid = aux;
+    }
+
+    // The poor mans assert lol
+    if (!(top->y >= mid->y && top->y >= bot->y)) { int a=1;a=a/0; }
+    if (!(mid->y <= top->y && mid->y >= bot->y)) { int a=1;a=a/0; }
+    if (!(bot->y <= top->y && bot->y <= mid->y)) { int a=1;a=a/0; }
+
+    // 2. calculate dy between them
+    int dyTopMid = top->y - mid->y;
+    int dyMidBot = mid->y - bot->y;
+    int dyTopBot = top->y - bot->y;
+
+    int dxTopMid = top->x - mid->x;
+    int dxTopBot = top->x - bot->x;
+    int dxMidBot = mid->x - bot->x;
+
+    // So we know that line(T-B) is going to be longer than line(T-M) or (M-B)
+    // So we can split the triangle in 2 triangles, divided by the horizontal line where y == mid.y
+
+    // Calculate the increments (the steepness?) of the segments of the triangle as we progress with the filling
+    float incrementLongLine = dxTopBot / (float)dyTopBot;
+    float incrementShortLine1 = dxTopMid / (float)dyTopMid;
+    float incrementShortLine2 = dxMidBot / (float)dyMidBot;
+    
+    // 3. loop though each "horizontal line" between top and bottom
+    // Starting position is the top so both side's x position will be tops's x position
+    float side1 = top->x;
+    float side2 = top->x;
+
+    // If the first half of the triangle "does't exist" then draw only the second part
+    if (dyTopMid == 0) {
+        incrementShortLine1 = dxTopMid;
+        side2 -= incrementShortLine1;
+    }
+
+    int image_witdth = image.get_width();
+    int image_height = image.get_height();
+
+    // first, draw the top half of the triangle
+    for (int y = top->y; y > bot->y; y--) {
+
+        // TODO I probably dont need to check this in each line
+        int left = side1;
+        int right = side2;
+        if (left > right) {
+            swap(left, right);
+        }
+        
+        // draw a horizontal line (left, y) to (right, y)
+        for (int x = left; x <= right; x++) {
+            
+            // barycentric coordinates for `z-buffer` and `texture sampling`
+            Vec3f bar = barycentric(screen, Vec2i(x, y));
+
+            // the intensity of illumination is equal to the scalar product of the light vector and the triangle normal normal.
+            // the normal is taken from the precomputed vertex normal this time, however we want to interpolate between the normals in each of the vertex of the triangle
+            // which means that instead of calculating it once per triangle here, like before, we need to do it once per fragment
+            
+            
+            static Vec3f light_dir(0, 0, -1);
+            Vec3f normal = /*interpolated normal*/ barycentric_inverse(normals, bar);
+            float intensity = normal * light_dir;
+            // I'm not sure why I used to make this check inversed previously...
+            if (intensity > 0) continue;
+            TGAColor color(intensity * 255, intensity * 255, intensity * 255, 255);
+
+            // > the idea is to take the barycentric coordinates version of triangle rasterization,
+            // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
+            // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
+            // This is basically finding the z value of an specific pixel in a triangle by interpolating the 3 values of z that we know.
+            // The same as how we sample the texture, except in this case we only care about the z components.
+            float z = 0;
+            z += world[0].z * bar.u;
+            z += world[1].z * bar.v;
+            z += world[2].z * bar.w;
+
+            // This is equivalent to this but without the extra uneeded calculations
+            //
+            //     Vec3f point_in_world_space = barycentric_inverse(world, bar);
+            //     z = point_in_world_space.z;
+            //     float z = 0;
+            //
+
+            // calculate z-buffer value's index
+            int idx = int(x + y * image_witdth);
+
+            // if (x < 0 || x >= image_witdth) continue;
+            // if (y < 0 || y >= image_height) continue;
+
+            if (z_buffer[idx] < z) {
+                z_buffer[idx] = z;
+
+                TGAColor texture_sample = sample(texture_data, texture, bar);
+
+                image.set(x, y, TGAColor(
+                    color.r / 255.0f * texture_sample.r,
+                    color.g / 255.0f * texture_sample.g,
+                    color.b / 255.0f * texture_sample.b,
+                    color.a
+                ));
+
+            }
+        }
+
+        // We don't really need to know which side will be in the "left" or "right", since the increments are already signed
+        // Just get the current "horizontal line"'s positions and add the increments (substract* since we are drawing the triangle top to bottom)
+        side1 -= incrementLongLine;
+        if (y > mid->y) {
+            side2 -= incrementShortLine1;
+        }
+        else {
+            side2 -= incrementShortLine2;
+        }
+    }
+}
+
 //////////////////////////////////////////////////////////////
 
 // Lesson 1 exercise. Given an input .obj file, output an image .tga of every triangle (wireframe only) in the object. 
@@ -1070,6 +1210,87 @@ void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuf
 
 }
 
+// Lesson 5. Now the same but applying gouraud lightning, using the vertex normals in Model
+void obj_to_tga_illuminated_gouraud_zbuffer_textured_perspective(Model& model, IPixelBuffer& texture_data, IPixelBuffer& pixel_buffer, Vec3f camera) {
+
+    // Initialize the zbuffer
+    static float* z_buffer = (float*)malloc(sizeof(float) * pixel_buffer.get_width() * pixel_buffer.get_height());
+    for (int i = 0; i < pixel_buffer.get_width() * pixel_buffer.get_height(); i++) {
+        z_buffer[i] = -std::numeric_limits<float>::max();
+    }
+
+    // Where the light is "coming from"
+    Vec3f light_dir(0, 0, -1);
+    
+    // The Model matrix describes how we are placing the Model in the world.
+    // 
+    //     > Model maps from an object's local coordinate space into world space
+    // 
+    // Since we want the model to be in the same place as it is in the object coordinates, we just set it to the Identity matrix.
+    // That means that a point in object coordinates (0.31, 0.47, 0.32) will be in the point (0.31, 0.47, 0.32) in the world coordinates.
+    // If we were to want to apply transformations, rotations, scaling... to the model, we would do so here.
+    Matrix model_matrix = Matrix::identity();
+
+    Vec3f camera_location(0.f, 0.f, 1.f);
+    Matrix view_matrix = lookat(camera_location, camera_location + Vec3f(0.f, 0.f, -1.f), Vec3f(0.f, 1.f, 0.f));
+
+    Matrix projection_matrix = Matrix::identity();
+    // https://github.com/ssloy/tinyrenderer/wiki/Lesson-4:-Perspective-projection
+    // The Projection matrix deforms the scene to create a sense of perspective.
+    // This projection matrix assumes that the camera is on z-axis, meaning that the distance to the origin will be the z element.
+    // TODO projections for arbitrary camera position, how? what does it mean that this assumes camera on z axis?
+    float c = camera_location.z;
+    if (c != 0) {
+        projection_matrix[3][2] = -1 / c;
+    }
+
+    Matrix viewport_matrix = viewport(0, 0, pixel_buffer.get_width(), pixel_buffer.get_height());
+
+    // For each triangle that froms the object...
+    for (int i = 0; i < model.nfaces(); i++) {
+
+        std::vector<int> face = model.face(i).location;
+        std::vector<int> text = model.face(i).texture;
+        std::vector<int> norm = model.face(i).normals;
+        
+        Vec2i screen[3]; // the 3 points in our screen (2D) that form the triangle
+        Vec3f world[3]; // the 3 points in the world (3D) that form the triangle
+        Vec2f texture[3]; // the 3 points in the texture (2d) that form triangle that will be used to "paint" the triangle in the "world"
+        Vec3f normals[3]; // the 3 precomputed normals of each vertex of this triangle
+
+        bool skip = false;
+        
+        // For each vertex in this triangle
+        for (int j = 0; j < 3; j++) {
+
+            texture[j] = model.text(text[j]);
+            world[j] = model.vert(face[j]);
+            normals[j] = model.normal(norm[j]);
+            
+            Matrix point_object_coords = embed_in_4d(world[j]);
+            Matrix point_world_coords = model_matrix * point_object_coords;
+            Matrix point_camera_coords = view_matrix * point_world_coords;
+            Matrix point_clip_coords = projection_matrix * point_camera_coords;
+            Matrix point_screen_coords = viewport_matrix * point_clip_coords;
+            Vec3f final_point = retro_project_back_into_3d(point_screen_coords);
+
+            screen[j] = Vec2i(
+                final_point.x, final_point.y
+            );
+
+            if ((int)final_point.x < 0 || (int)final_point.x >= pixel_buffer.get_width()) { skip = true; continue; }
+            if ((int)final_point.y < 0 || (int)final_point.y >= pixel_buffer.get_height()) { skip = true; continue; }
+        }
+
+        // any face which contains a vertex outside the screen, skip it
+        if (skip) continue;
+
+        triangle_zbuffer_textured_gouraud(screen, world, texture, normals, pixel_buffer, texture_data, z_buffer);
+    }
+
+}
+
+
 //////////////////////////////////////////////////////////////
 
 void test_wireframe(const char* out_file) {
@@ -1355,7 +1576,8 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         }
 
         // obj_to_tga_illuminated_zbuffer_textured(model, texture, s);
-        obj_to_tga_illuminated_zbuffer_textured_perspective(model, texture, s, Vec3f(0,0,1));
+        // obj_to_tga_illuminated_zbuffer_textured_perspective(model, texture, s, Vec3f(0,0,1));
+        obj_to_tga_illuminated_gouraud_zbuffer_textured_perspective(model, texture, s, Vec3f(0,0,1));
 
         if (firstFrame) {
             // We want to keep the output of the render in a TGA file, but only needs to happen once

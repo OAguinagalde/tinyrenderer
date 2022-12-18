@@ -7,6 +7,7 @@
 struct Vertex {
 	std::vector<int> location; // 3 locations indices
 	std::vector<int> texture; // 3 texture indices
+	std::vector<int> normals; // 3 normal indices
 };
 
 class Model {
@@ -15,6 +16,8 @@ private:
 	std::vector<Vec3f> verts_;
 	// the texture data of each vertex in the model
 	std::vector<Vec2f> text_verts_;
+	// the vertex normal data of each vertex in the model
+	std::vector<Vec3f> text_vert_normals_;
 	// each facet represents a group of 3 vertices (aka triangle)
 	std::vector<Vertex> faces_;
 public:
@@ -26,6 +29,7 @@ public:
 	int nfaces();
 	Vec3f vert(int i);
 	Vec2f text(int i);
+	Vec3f normal(int i);
 	Vertex face(int idx);
 };
 
