@@ -1343,6 +1343,14 @@ struct GouraudShader : public gl::IShader {
         // interpolate intensity for the current pixel
         Vec3f interpolated_normal = barycentric_inverse(normals, bar);
         float intensity = std::max(0.f, interpolated_normal * light_dir);
+
+        if (intensity>.85) intensity = 1;
+        else if (intensity>.60) intensity = .80;
+        else if (intensity>.45) intensity = .60;
+        else if (intensity>.30) intensity = .45;
+        else if (intensity>.15) intensity = .30;
+        else intensity = 0;
+
         // interpolate texture coords and sample texture
         TGAColor sampled_color = sample(*texture, texture_coords, bar);
         *out_color = (sampled_color * intensity);
@@ -1685,11 +1693,13 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         // obj_to_tga_illuminated_gouraud_zbuffer_textured_perspective(model, texture, s, Vec3f(0,0,1));
 
         camera c;
-        c.position = Vec3f(0.5f,0.5f,1);
+        c.position = Vec3f(0.2f,0.3f,2);
         c.looking_at = Vec3f(0,0,0);
         c.up = Vec3f(0, 1, 0);
 
-        render_with_gouraud_shader(&model, &texture, &s, c, Vec3f(0,1,1) - c.looking_at);
+        Vec3f light_direction = Vec3f(0,1,0.25);
+
+        render_with_gouraud_shader(&model, &texture, &s, c, light_direction);
 
         if (firstFrame) {
             // We want to keep the output of the render in a TGA file, but only needs to happen once
