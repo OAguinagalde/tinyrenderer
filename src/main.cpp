@@ -1344,6 +1344,7 @@ struct GouraudShader : public gl::IShader {
         Vec3f interpolated_normal = barycentric_inverse(normals, bar);
         float intensity = std::max(0.f, interpolated_normal * light_dir);
 
+        // cool shader to make the light have 6 intensities
         if (intensity>.85) intensity = 1;
         else if (intensity>.60) intensity = .80;
         else if (intensity>.45) intensity = .60;
@@ -1697,7 +1698,9 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         c.looking_at = Vec3f(0,0,0);
         c.up = Vec3f(0, 1, 0);
 
-        Vec3f light_direction = Vec3f(0,1,0.25);
+        static float var = 0.0f;
+        var += dt_ms;
+        Vec3f light_direction = Vec3f(sin(var/300),sin(var/600),sin(var/900));
 
         render_with_gouraud_shader(&model, &texture, &s, c, light_direction);
 
