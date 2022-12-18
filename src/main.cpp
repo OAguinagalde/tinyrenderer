@@ -749,7 +749,10 @@ void obj_wireframe_to_tga(Model& model, IPixelBuffer& pixel_buffer) {
 
             // convert the vertices from "world space" (obj format, normalized) to our "image space"
             Vec2i a(
-                // TODO: I still dont know why we need the `+ 1.0`...
+                // https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera#viewport
+                // So v0.x is a number from [-1, 1]. Instead we want to map it to [0, 1], which
+                // can map directly to our "image". So we do `(v0.x + 1.0f) / 2.0f` and now we have mapped
+                // the origin [-1, 1] to a [0, 1] space!
                 (v0.x + 1.0f)* pixel_buffer.get_width() / 2.0f,
                 (v0.y + 1.0f) * pixel_buffer.get_height() / 2.0f
             );
@@ -1061,10 +1064,14 @@ Matrix viewport(int x, int y, int w, int h, int depth = 255) {
     m[2][2] = scale_z;
 
     // resulting in matrix m...
-    // w/2     0       0       x+w/2
-    // 0       h/2     0       y+h/w
+    // w/2     0       0       x+(w/2)
+    // 0       h/2     0       y+(h/w)
     // 0       0       d/2     d/2
     // 0       0       0       1
+
+    // https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera#viewport
+    // In this function, we are basically mapping a cube [-1,1]*[-1,1]*[-1,1] onto the screen cube [x,x+w]*[y,y+h]*[0,d]
+    // Its a cube (and not a rectangle) since there is a `d`epth variable to it, which acts as the resolution of the z-buffer.
 
     return m;
 }
