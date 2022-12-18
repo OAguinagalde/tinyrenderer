@@ -8,6 +8,7 @@
 #include "model.h"
 #include "geometry.h"
 #include "util.h"
+#include "my_gl.h"
 
 const TGAColor whiteTransparent = TGAColor(255, 255, 255, 50);
 const TGAColor white = TGAColor(255, 255, 255, 255);
@@ -1306,7 +1307,95 @@ void obj_to_tga_illuminated_gouraud_zbuffer_textured_perspective(Model& model, I
 
 }
 
+struct GouraudShader : public gl::IShader {
 
+    // vertex shader params
+    // precomputed: viewport_matrix * projection_matrix * view_matrix * model_matrix
+    Matrix transformations_matrix;
+    
+    // fragment shader params (written by vertex shader, read by fragment shader)
+    Vec3f normals[3];
+    Vec2f texture_coords[3];
+
+    // resources used during vertex shader
+    Model* model;
+
+    // resources used during fragment shader
+    Vec3f light_dir;
+    IPixelBuffer* texture;
+
+    virtual Vec3f vertex(int iface, int nthvert) {
+        Vertex vertex_data = model->face(iface);
+        
+        // set the nth vertex of the texture
+        texture_coords[nthvert] = model->text(vertex_data.texture[nthvert]);
+        normals[nthvert] = model->normal(vertex_data.normals[nthvert]);
+        
+        Vec3f vertex_position = model->vert(vertex_data.location[nthvert]);
+        Matrix position = embed_in_4d(vertex_position);
+        Vec3f final_point = retro_project_back_into_3d(transformations_matrix * position);
+        
+        // return *gl_Vertex; // transform it to screen coordinates
+        return final_point;
+    }
+
+    virtual bool fragment(Vec3f bar, TGAColor* out_color) {
+        // interpolate intensity for the current pixel
+        Vec3f interpolated_normal = barycentric_inverse(normals, bar);
+        float intensity = std::max(0.f, interpolated_normal * light_dir);
+        // interpolate texture coords and sample texture
+        TGAColor sampled_color = sample(*texture, texture_coords, bar);
+        *out_color = (sampled_color * intensity);
+        // no, we do not discard this pixel
+        return false;
+    }
+};
+
+struct camera {
+    Vec3f position;
+    Vec3f looking_at;
+    Vec3f up;
+};
+
+void render_with_gouraud_shader(Model* model, IPixelBuffer* texture_data, IPixelBuffer* pixel_buffer, camera camera, Vec3f light_dir) {
+    
+    int w = pixel_buffer->get_width();
+    int h = pixel_buffer->get_height();
+
+    // Initialize the zbuffer
+    static FloatBuffer z_buffer(w, h);
+    z_buffer.clear(-std::numeric_limits<float>::max());
+
+    // Where the light is "coming from"
+    Matrix model_matrix = Matrix::identity();
+    Matrix view_matrix = lookat(camera.position, camera.looking_at, camera.up);
+    Matrix viewport_matrix = viewport(0, 0, w, h);
+    Matrix projection_matrix = Matrix::identity();
+    float c = camera.position.z;
+    if (c != 0) projection_matrix[3][2] = -1 / c;
+
+    Matrix point_camera_coords = view_matrix * model_matrix;
+    Matrix point_clip_coords = projection_matrix * point_camera_coords;
+    Matrix transformations_matrix = viewport_matrix * point_clip_coords;
+
+    GouraudShader shader;
+    shader.transformations_matrix = transformations_matrix;
+    shader.light_dir = light_dir;
+    shader.model = model;
+    shader.texture = texture_data;
+
+    for (int i = 0; i < model->nfaces(); i++) {
+
+        Vec3f screen_coords[3];
+
+        for (int j=0; j<3; j++) {
+            screen_coords[j] = shader.vertex(i, j);
+        }
+
+        gl::triangle(screen_coords, &shader, pixel_buffer, &z_buffer);
+    }
+
+}
 //////////////////////////////////////////////////////////////
 
 void test_wireframe(const char* out_file) {
@@ -1593,7 +1682,14 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
 
         // obj_to_tga_illuminated_zbuffer_textured(model, texture, s);
         // obj_to_tga_illuminated_zbuffer_textured_perspective(model, texture, s, Vec3f(0,0,1));
-        obj_to_tga_illuminated_gouraud_zbuffer_textured_perspective(model, texture, s, Vec3f(0,0,1));
+        // obj_to_tga_illuminated_gouraud_zbuffer_textured_perspective(model, texture, s, Vec3f(0,0,1));
+
+        camera c;
+        c.position = Vec3f(0.5f,0.5f,1);
+        c.looking_at = Vec3f(0,0,0);
+        c.up = Vec3f(0, 1, 0);
+
+        render_with_gouraud_shader(&model, &texture, &s, c, Vec3f(0,1,1) - c.looking_at);
 
         if (firstFrame) {
             // We want to keep the output of the render in a TGA file, but only needs to happen once

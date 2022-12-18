@@ -62,6 +62,10 @@ struct TGAColor {
 		return TGAColor(r * c.r, g * c.g, b * c.b, a);
 	}
 
+	TGAColor operator *(const float f) {
+		return TGAColor(r * f, g * f, b * f, a);
+	}
+
 	friend std::ostream& operator<<(std::ostream& s, TGAColor& c) {
 		s << "(" << (int)c.r << ", " << (int)c.g << ", " << (int)c.b << ", " << (int)c.a << ")\n";
 		return s;

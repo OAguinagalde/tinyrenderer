@@ -78,6 +78,7 @@ else {
         src\model.cpp `
         src\win32.cpp `
         src\tgaimage.cpp `
+        src\my_gl.cpp `
         /Zi /Fe".\bin\main.exe" /Fo".\obj\" /Fd".\obj\" /nologo /O2 /EHsc
         if (!$?) {throw [Exception]::new("cl.exe failed!")}
     }
@@ -88,6 +89,7 @@ else {
         src\model.cpp `
         src\win32.cpp `
         src\tgaimage.cpp `
+        src\my_gl.cpp `
         /Zi /Fe".\bin\main.exe" /Fo".\obj\" /Fd".\obj\" /nologo /Od /EHsc
         if (!$?) {throw [Exception]::new("cl.exe failed!")}
     }
