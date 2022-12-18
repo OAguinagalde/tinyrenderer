@@ -1069,20 +1069,28 @@ Matrix viewport(int x, int y, int w, int h, int depth = 255) {
     return m;
 }
 
-// Builds a "view matrix".
+// Builds a lookat matrix. More infor below.
 // param `camera_location` commonly referred to as `eye`.
 // param `point_looked_at` commonly referred to as `center`.
 // 
 //     http://www.songho.ca/opengl/gl_transform.html
 //     > Note that there is no separate camera (view) matrix in OpenGL.
 //     > Therefore, in order to simulate transforming the camera or view, the scene(3D objects and lights) must be transformed with the inverse
-//     > of the view transformation.In other words, OpenGL defines that the camera is always located at(0, 0, 0) and
+//     > of the view transformation. In other words, OpenGL defines that the camera is always located at(0, 0, 0) and
 //     > facing to - Z axis in the eye space coordinates, and cannot be transformed
+// 
+// As that says, OpenGl and this renderer are able to draw scenes only with the camera located on the z-axis.
+// TODO I dont quite understand why that is...???
+// So a lookat Matrix is basically a Matrix that moves a point simulating that we do have a camera.
+// And once that Matrix is obtained, if you transform every single point in the world with it, we have basially moved the world to simulated our camera.
+// 
+// Some other notes from random sources:
 // 
 //     > View Matrix defines the position (location and orientation) of the camera
 // 
 //     > The reason for two separate matrices, instead of one, is that lighting is applied after the modelview view matrix (i.e. on eye coordinates) and before the projection matrix
 // 
+// https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera
 Matrix lookat(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
 
     // We are basically calculating the 3 axis centered on `center`, where:
@@ -1117,11 +1125,12 @@ Matrix lookat(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
     Minv[0][2] = x.z;
     Minv[1][2] = y.z;
     Minv[2][2] = z.z;
-    
-    // Not sure why Minv and this mutiplication of matrices is necessary or what its doing
-    return Minv * Tr;
-}
 
+    // Not sure why Minv and this mutiplication of matrices is necessary or what its doing
+    // > The last step is a translation of the origin to the point of viewer e and our transformation matrix is ready
+    Matrix model_view = Minv * Tr;
+    return model_view;
+}
 
 // Lesson 4. Now with perspective projection (and other 3d space transformations and stuff)
 void obj_to_tga_illuminated_zbuffer_textured_perspective(Model& model, IPixelBuffer& texture_data, IPixelBuffer& pixel_buffer, Vec3f camera) {
