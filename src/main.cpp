@@ -1309,53 +1309,62 @@ void obj_to_tga_illuminated_gouraud_zbuffer_textured_perspective(Model& model, I
 
 struct GouraudShader : public gl::IShader {
 
+    // Expected data:
+    // { location_x, location_y, location_z, text_u, text_v, normal_x, normal_y, normal_z } * 3 * tirangle_count
+    float* vertex_buffer;
+    
+    // Invariants (written by vertex shader, read by fragment shader)
+    Vec3f normals[3];
+    Vec2f text_uv[3];
+
     // vertex shader params
     // precomputed: viewport_matrix * projection_matrix * view_matrix * model_matrix
     Matrix transformations_matrix;
-    
-    // fragment shader params (written by vertex shader, read by fragment shader)
-    Vec3f normals[3];
-    Vec2f texture_coords[3];
-
-    // resources used during vertex shader
-    Model* model;
 
     // resources used during fragment shader
     Vec3f light_dir;
     IPixelBuffer* texture;
 
     virtual Vec3f vertex(int iface, int nthvert) {
-        Vertex vertex_data = model->face(iface);
+
+        int offset = (iface * 3 * 8) + (8 * nthvert);
+        // Get current vertex's data from vertex_buffer
+        Vec3f vertex_position;
+        vertex_position.raw[0] = vertex_buffer[offset + 0];
+        vertex_position.raw[1] = vertex_buffer[offset + 1];
+        vertex_position.raw[2] = vertex_buffer[offset + 2];
+        text_uv[nthvert].raw[0] = vertex_buffer[offset + 3] /* * texture->get_width() */;
+        text_uv[nthvert].raw[1] = vertex_buffer[offset + 4] /* * texture->get_height() */;
+        normals[nthvert].raw[0] = vertex_buffer[offset + 5];
+        normals[nthvert].raw[1] = vertex_buffer[offset + 6];
+        normals[nthvert].raw[2] = vertex_buffer[offset + 7];
         
-        // set the nth vertex of the texture
-        texture_coords[nthvert] = model->text(vertex_data.texture[nthvert]);
-        normals[nthvert] = model->normal(vertex_data.normals[nthvert]);
-        
-        Vec3f vertex_position = model->vert(vertex_data.location[nthvert]);
         Matrix position = embed_in_4d(vertex_position);
         Vec3f final_point = retro_project_back_into_3d(transformations_matrix * position);
-        
-        // return *gl_Vertex; // transform it to screen coordinates
         return final_point;
     }
 
     virtual bool fragment(Vec3f bar, TGAColor* out_color) {
+
         // interpolate intensity for the current pixel
         Vec3f interpolated_normal = barycentric_inverse(normals, bar);
+        // calculate the intensity of the light
         float intensity = std::max(0.f, interpolated_normal * light_dir);
+        // // cool shader to make the light have 6 intensities
+        // if (intensity>.85) intensity = 1;
+        // else if (intensity>.60) intensity = .80;
+        // else if (intensity>.45) intensity = .60;
+        // else if (intensity>.30) intensity = .45;
+        // else if (intensity>.15) intensity = .30;
+        // else intensity = 0;
 
-        // cool shader to make the light have 6 intensities
-        if (intensity>.85) intensity = 1;
-        else if (intensity>.60) intensity = .80;
-        else if (intensity>.45) intensity = .60;
-        else if (intensity>.30) intensity = .45;
-        else if (intensity>.15) intensity = .30;
-        else intensity = 0;
+        // interpolate texture_uv for the current pixel        
+        Vec2f interpolated_text_uv = barycentric_inverse(text_uv, bar);
+        // sample texture
+        TGAColor texture_sample = texture->get(interpolated_text_uv.x, interpolated_text_uv.y);
+        *out_color = (texture_sample * intensity);
 
-        // interpolate texture coords and sample texture
-        TGAColor sampled_color = sample(*texture, texture_coords, bar);
-        *out_color = (sampled_color * intensity);
-        // no, we do not discard this pixel
+        // Do not discard the pixel
         return false;
     }
 };
@@ -1366,7 +1375,7 @@ struct camera {
     Vec3f up;
 };
 
-void render_with_gouraud_shader(Model* model, IPixelBuffer* texture_data, IPixelBuffer* pixel_buffer, camera camera, Vec3f light_dir) {
+void render(IPixelBuffer* pixel_buffer, float* vertex_buffer, int faces, IPixelBuffer* texture_data, camera camera, Vec3f light_dir) {
     
     int w = pixel_buffer->get_width();
     int h = pixel_buffer->get_height();
@@ -1388,12 +1397,12 @@ void render_with_gouraud_shader(Model* model, IPixelBuffer* texture_data, IPixel
     Matrix transformations_matrix = viewport_matrix * point_clip_coords;
 
     GouraudShader shader;
+    shader.vertex_buffer = vertex_buffer;
     shader.transformations_matrix = transformations_matrix;
     shader.light_dir = light_dir;
-    shader.model = model;
     shader.texture = texture_data;
 
-    for (int i = 0; i < model->nfaces(); i++) {
+    for (int i = 0; i < faces; i++) {
 
         Vec3f screen_coords[3];
 
@@ -1680,29 +1689,35 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     /* render to pixel buffer */ {
         
         static bool firstFrame = true;
-
-        // Load the resources
-        static Model model("res/african_head.obj");
         static TGAImage texture("res/african_head_diffuse.tga");
-
+        static int triangles;
+        static float* vertex_buffer;
+        static camera cam;
+        static float time = 0.0f;
+        static Vec3f light_direction = Vec3f(sin(time / 300), cos(time / 600), tan(time / 900));
         if (firstFrame) {
+            Model model("res/african_head.obj");
+            triangles = model.nfaces();
+            int required_size = model.get_vertex_buffer_size();
+            vertex_buffer = (float*)malloc(required_size);
+            model.load_vertex_buffer(vertex_buffer);
+            // Aparently in obj the coordinates seem to be normalized so everything is between 0 and 1
+            // So, for the texture coords, gotta scale them with the textures size
+            for (int i = 0; i < triangles; i++) {
+                for (int j = 0; j < 3; j++) {
+                    vertex_buffer[(i*3*8)+(j*8)+3] *= texture.get_width();
+                    vertex_buffer[(i*3*8)+(j*8)+4] *= texture.get_height();
+                }
+            }
             texture.flip_vertically();
         }
+        time += dt_ms;
+        cam.position = Vec3f(0.2f, 0.3f, 2);
+        cam.looking_at = Vec3f(0,0,0);
+        cam.up = Vec3f(0, 1, 0);
+        light_direction = Vec3f(sin(time / 300), cos(time / 600), tan(time / 900));
 
-        // obj_to_tga_illuminated_zbuffer_textured(model, texture, s);
-        // obj_to_tga_illuminated_zbuffer_textured_perspective(model, texture, s, Vec3f(0,0,1));
-        // obj_to_tga_illuminated_gouraud_zbuffer_textured_perspective(model, texture, s, Vec3f(0,0,1));
-
-        camera c;
-        c.position = Vec3f(0.2f,0.3f,2);
-        c.looking_at = Vec3f(0,0,0);
-        c.up = Vec3f(0, 1, 0);
-
-        static float var = 0.0f;
-        var += dt_ms;
-        Vec3f light_direction = Vec3f(sin(var/300),sin(var/600),sin(var/900));
-
-        render_with_gouraud_shader(&model, &texture, &s, c, light_direction);
+        render(&s, vertex_buffer, triangles, &texture, cam, light_direction);
 
         if (firstFrame) {
             // We want to keep the output of the render in a TGA file, but only needs to happen once
