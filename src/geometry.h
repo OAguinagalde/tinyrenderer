@@ -137,12 +137,39 @@ public:
 		return result;
 	}
 
+	Matrix operator+(const Matrix& a) {
+		assert(cols == a.rows);
+		Matrix result(rows, a.cols);
+		for (int i = 0; i < rows; i++) {
+			for (int j = 0; j < a.cols; j++) {
+				result.m[i][j] = m[i][j] + a.m[i][j];
+			}
+		}
+		return result;
+	}
+
 	Matrix transpose() {
 		Matrix result(cols, rows);
 		for (int i = 0; i < rows; i++)
 			for (int j = 0; j < cols; j++)
 				result[j][i] = m[i][j];
 		return result;
+	}
+
+	static Matrix s(float scale_factor) {
+		Matrix i = Matrix::identity();
+		i[0][0] = scale_factor;
+		i[1][1] = scale_factor;
+		i[2][2] = scale_factor;
+		return i;
+	}
+
+	static Matrix t(Vec3f translation) {
+		Matrix i = Matrix::identity();
+		i[0][3] = translation.raw[0];
+		i[1][3] = translation.raw[1];
+		i[2][3] = translation.raw[2];
+		return i;
 	}
 
 	Matrix inverse() {
