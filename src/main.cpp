@@ -1314,6 +1314,7 @@ struct GouraudShader : public gl::IShader {
     float* vertex_buffer;
     
     // Invariants (written by vertex shader, read by fragment shader)
+    Vec3f vertices[3];
     Vec3f normals[3];
     Vec2f text_uv[3];
 
@@ -1322,25 +1323,30 @@ struct GouraudShader : public gl::IShader {
     Matrix transformations_matrix;
 
     // resources used during fragment shader
-    Vec3f light_dir;
+    Vec3f light_position;
     IPixelBuffer* texture;
 
     virtual Vec3f vertex(int iface, int nthvert) {
 
         int offset = (iface * 3 * 8) + (8 * nthvert);
         // Get current vertex's data from vertex_buffer
+
         Vec3f vertex_position;
         vertex_position.raw[0] = vertex_buffer[offset + 0];
         vertex_position.raw[1] = vertex_buffer[offset + 1];
         vertex_position.raw[2] = vertex_buffer[offset + 2];
-        text_uv[nthvert].raw[0] = vertex_buffer[offset + 3] /* * texture->get_width() */;
-        text_uv[nthvert].raw[1] = vertex_buffer[offset + 4] /* * texture->get_height() */;
+
+        Matrix position = embed_in_4d(vertex_position);
+        Vec3f final_point = retro_project_back_into_3d(transformations_matrix * position);
+
+        // save some data about the vertex for the fragment to use later
+        text_uv[nthvert].raw[0] = vertex_buffer[offset + 3] * texture->get_width();
+        text_uv[nthvert].raw[1] = vertex_buffer[offset + 4] * texture->get_height();
         normals[nthvert].raw[0] = vertex_buffer[offset + 5];
         normals[nthvert].raw[1] = vertex_buffer[offset + 6];
         normals[nthvert].raw[2] = vertex_buffer[offset + 7];
+        vertices[nthvert] = final_point;
         
-        Matrix position = embed_in_4d(vertex_position);
-        Vec3f final_point = retro_project_back_into_3d(transformations_matrix * position);
         return final_point;
     }
 
@@ -1348,15 +1354,21 @@ struct GouraudShader : public gl::IShader {
 
         // interpolate intensity for the current pixel
         Vec3f interpolated_normal = barycentric_inverse(normals, bar);
+        
         // calculate the intensity of the light
-        float intensity = std::max(0.f, interpolated_normal * light_dir);
-        // // cool shader to make the light have 6 intensities
-        // if (intensity>.85) intensity = 1;
-        // else if (intensity>.60) intensity = .80;
-        // else if (intensity>.45) intensity = .60;
-        // else if (intensity>.30) intensity = .45;
-        // else if (intensity>.15) intensity = .30;
-        // else intensity = 0;
+        // Vec3f light_dir = light_position;
+        
+        Vec3f interpolated_position = barycentric_inverse(vertices, bar);
+        Vec3f light_dir = interpolated_position - light_position;
+        float intensity = std::max(0.0f, interpolated_normal.normalize() * light_dir.normalized());
+        
+        // cool shader to make the light have 6 intensities
+        if (intensity>.85) intensity = 1;
+        else if (intensity>.60) intensity = .80;
+        else if (intensity>.45) intensity = .60;
+        else if (intensity>.30) intensity = .45;
+        else if (intensity>.15) intensity = .30;
+        else intensity = 0;
 
         // interpolate texture_uv for the current pixel        
         Vec2f interpolated_text_uv = barycentric_inverse(text_uv, bar);
@@ -1375,21 +1387,18 @@ struct camera {
     Vec3f up;
 };
 
-void render(IPixelBuffer* pixel_buffer, float* vertex_buffer, int faces, IPixelBuffer* texture_data, camera camera, Vec3f light_dir) {
+void render(IPixelBuffer* pixel_buffer, float* vertex_buffer, int faces, IPixelBuffer* texture_data, camera camera, Vec3f light_position, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
     
     int w = pixel_buffer->get_width();
     int h = pixel_buffer->get_height();
 
-    // Initialize the zbuffer
-    static FloatBuffer z_buffer(w, h);
-    z_buffer.clear(-std::numeric_limits<float>::max());
-
     // Where the light is "coming from"
-    Matrix model_matrix = Matrix::identity();
+    Matrix model_matrix = Matrix::t(pos) * Matrix::s(scale_factor);
     Matrix view_matrix = lookat(camera.position, camera.looking_at, camera.up);
     Matrix viewport_matrix = viewport(0, 0, w, h);
     Matrix projection_matrix = Matrix::identity();
-    float c = camera.position.z;
+    // float c = camera.position.z;
+    float c = 0.5f;
     if (c != 0) projection_matrix[3][2] = -1 / c;
 
     Matrix point_camera_coords = view_matrix * model_matrix;
@@ -1399,8 +1408,8 @@ void render(IPixelBuffer* pixel_buffer, float* vertex_buffer, int faces, IPixelB
     GouraudShader shader;
     shader.vertex_buffer = vertex_buffer;
     shader.transformations_matrix = transformations_matrix;
-    shader.light_dir = light_dir;
     shader.texture = texture_data;
+    shader.light_position = retro_project_back_into_3d(transformations_matrix * embed_in_4d(light_position));
 
     for (int i = 0; i < faces; i++) {
 
@@ -1410,7 +1419,7 @@ void render(IPixelBuffer* pixel_buffer, float* vertex_buffer, int faces, IPixelB
             screen_coords[j] = shader.vertex(i, j);
         }
 
-        gl::triangle(screen_coords, &shader, pixel_buffer, &z_buffer);
+        gl::triangle(screen_coords, &shader, pixel_buffer, z_buffer);
     }
 
 }
@@ -1555,7 +1564,7 @@ void test_barycentric_2(const char* out_file) {
 }
 
 #include "win32.h"
-
+#undef max
 #define rgb(r,g,b) ((uint32_t)(((uint8_t)r << 16) | ((uint8_t)g << 8) | (uint8_t)b))
 
 struct PixelBuffer: public IPixelBuffer {
@@ -1694,30 +1703,52 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         static float* vertex_buffer;
         static camera cam;
         static float time = 0.0f;
-        static Vec3f light_direction = Vec3f(sin(time / 300), cos(time / 600), tan(time / 900));
+        static Vec3f light_direction;
+        static FloatBuffer z_buffer(s.get_width(), s.get_height());
+
         if (firstFrame) {
             Model model("res/african_head.obj");
+            // Model model("res/quad.obj");
             triangles = model.nfaces();
             int required_size = model.get_vertex_buffer_size();
             vertex_buffer = (float*)malloc(required_size);
             model.load_vertex_buffer(vertex_buffer);
+            
             // Aparently in obj the coordinates seem to be normalized so everything is between 0 and 1
-            // So, for the texture coords, gotta scale them with the textures size
-            for (int i = 0; i < triangles; i++) {
-                for (int j = 0; j < 3; j++) {
-                    vertex_buffer[(i*3*8)+(j*8)+3] *= texture.get_width();
-                    vertex_buffer[(i*3*8)+(j*8)+4] *= texture.get_height();
-                }
-            }
+            // So, for the texture coords, gotta scale them with the textures size. But, if
+            // 
+            //     for (int i = 0; i < triangles; i++) {
+            //         for (int j = 0; j < 3; j++) {
+            //             vertex_buffer[(i*3*8)+(j*8)+3] *= texture.get_width();
+            //             vertex_buffer[(i*3*8)+(j*8)+4] *= texture.get_height();
+            //         }
+            //     }
+            // 
+            
             texture.flip_vertically();
         }
+        
         time += dt_ms;
-        cam.position = Vec3f(0.2f, 0.3f, 2);
-        cam.looking_at = Vec3f(0,0,0);
-        cam.up = Vec3f(0, 1, 0);
-        light_direction = Vec3f(sin(time / 300), cos(time / 600), tan(time / 900));
+        float factor = 2000;
+        Vec3f horizontally_spinning_position(cos(time / factor), 0, sin(time / factor));
+        Vec3f vertically_spinning_position(0, cos(time / factor), sin(time / factor));
+        TGAColor smooth_color(cos(time / factor) * 255, sin(time / factor) * 255, tan(time / factor) * 255, 255);
 
-        render(&s, vertex_buffer, triangles, &texture, cam, light_direction);
+        cam.position = horizontally_spinning_position;
+        cam.position = Vec3f(.2, .4, 2);
+        cam.position.y += 0.2f;
+        cam.looking_at = Vec3f(0, 0, 0);
+        cam.up = Vec3f(0, 1, 0);
+        
+        Vec3f light_position = horizontally_spinning_position;
+
+        z_buffer.clear(-std::numeric_limits<float>::max());
+
+        render(&s, vertex_buffer, triangles, &texture, cam, light_position, 0.3f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
+        render(&s, vertex_buffer, triangles, &texture, cam, light_position, 0.1f, Vec3f(1.0f, 0.0f, 0.0f), &z_buffer);
+        render(&s, vertex_buffer, triangles, &texture, cam, light_position, 0.1f, Vec3f(0.0f, 1.0f, 0.0f), &z_buffer);
+        render(&s, vertex_buffer, triangles, &texture, cam, light_position, 0.1f, Vec3f(0.0f, 0.0f, 1.0f), &z_buffer);
+        render(&s, vertex_buffer, triangles, &texture, cam, light_position, 0.1f, light_position, &z_buffer);
 
         if (firstFrame) {
             // We want to keep the output of the render in a TGA file, but only needs to happen once
