@@ -544,6 +544,8 @@ namespace gl {
                 // barycentric coordinates for `z-buffer` and `texture sampling`
                 Vec3f bar = barycentric(screen, Vec2i(x, y));
 
+                if (bar.x < 0 || bar.y < 0 || bar.z < 0 || bar.x > 1.0 || bar.y > 1.0 || bar.z > 1.0) continue; //{ int a=1;a=a/0; }
+
                 // > the idea is to take the barycentric coordinates version of triangle rasterization,
                 // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
                 // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
@@ -556,9 +558,9 @@ namespace gl {
                 //     float z = 0;
                 //
                 float z = 0;
-                z += depth.raw[0] * bar.u;
-                z += depth.raw[1] * bar.v;
-                z += depth.raw[2] * bar.w;
+                z += depth.raw[0] * bar.w;
+                z += depth.raw[1] * bar.u;
+                z += depth.raw[2] * bar.v;
 
                 // calculate z-buffer value's index
                 int idx = int(x + y * image_witdth);
@@ -621,9 +623,9 @@ namespace gl {
                 //     float z = 0;
                 //
                 float z = 0;
-                z += depth.raw[0] * bar.u;
-                z += depth.raw[1] * bar.v;
-                z += depth.raw[2] * bar.w;
+                z += depth.raw[0] * bar.w;
+                z += depth.raw[1] * bar.u;
+                z += depth.raw[2] * bar.v;
 
                 // calculate z-buffer value's index
                 int idx = int(x + y * image_witdth);

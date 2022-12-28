@@ -62,6 +62,7 @@ struct GouraudShader : public gl::IShader {
     // vertex shader params
     // precomputed: viewport_matrix * projection_matrix * view_matrix * model_matrix
     Matrix transformations_matrix;
+    Matrix view_model_matrix;
 
     // resources used during fragment shader
     Vec3f light_position;
@@ -86,33 +87,40 @@ struct GouraudShader : public gl::IShader {
             vertex_buffer[offset + 7]
         );
 
-        Vec3f final_position = gl::retro_project_back_into_3d(transformations_matrix * gl::embed_in_4d(vertex_position));
+        Matrix world_position = view_model_matrix * gl::embed_in_4d(vertex_position);
+        Vec3f screen_position = gl::retro_project_back_into_3d(transformations_matrix * world_position);
         
         // calculate light intensity in the current vertex
-        Vec3f light_dir = final_position - light_position;
-        float light_intensity = vertex_normal * light_dir.normalized();
-        light_intensities[nthvert] = MAX(0.0f, light_intensity);
-        light_intensities[nthvert] = light_intensity;
+
+        // Vec3f light_dir = gl::retro_project_back_into_3d(world_position) - light_position;
+        // Vec3f light_dir = light_position - gl::retro_project_back_into_3d(world_position);
+        // Vec3f light_dir = Vec3f(0.1,0.1,0.1) - light_position;
+        // Vec3f light_dir = light_position - Vec3f(0.1,0.1,0.1);
+        // Vec3f light_dir = Vec3f(1,0,1);
+        
+        Vec3f light_dir = light_position;
+        float light_intensity = vertex_normal.normalized() * light_dir;
+        light_intensities[nthvert] = MAX(0.f, light_intensity);
         text_uvs[nthvert] = vertex_uv;
 
-        return final_position;
+        return screen_position;
     }
 
     virtual bool fragment(Vec3f bar, uint32_t* out_color) {
 
         // interpolate the light intensity in this particular pixel
         float intensity = 0;
-        intensity += light_intensities[0] * bar.u;
-        intensity += light_intensities[1] * bar.v;
-        intensity += light_intensities[2] * bar.w;
+        intensity += light_intensities[0] * bar.w;
+        intensity += light_intensities[1] * bar.u;
+        intensity += light_intensities[2] * bar.v;
 
         // clamp light intensity to 1 of 6 different levels (not needed but cool)
-        if (intensity>.85) intensity = 1;
-        else if (intensity>.60) intensity = .80;
-        else if (intensity>.45) intensity = .60;
-        else if (intensity>.30) intensity = .45;
-        else if (intensity>.15) intensity = .30;
-        else intensity = .20;
+        // if (intensity>.85) intensity = 1;
+        // else if (intensity>.60) intensity = .80;
+        // else if (intensity>.45) intensity = .60;
+        // else if (intensity>.30) intensity = .45;
+        // else if (intensity>.15) intensity = .30;
+        // else intensity = .0;
 
         // interpolate texture_uv for the current pixel and sample texture
         Vec2f interpolated_text_uv = gl::barycentric_inverse(text_uvs, bar);
@@ -133,17 +141,20 @@ void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuff
     Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
     Matrix projection_matrix = Matrix::identity();
     
-    float c = 0.5f;
+    float c = 0.8f;
     if (c != 0) projection_matrix[3][2] = -1 / c;
 
+    Matrix light_matrix = Matrix::t(light_position);
     Matrix model_matrix = Matrix::t(pos) * Matrix::s(scale_factor);
-    Matrix transformations_matrix = viewport_matrix * projection_matrix * view_matrix;
+    Matrix transformations_matrix = viewport_matrix * projection_matrix;
 
     GouraudShader shader;
+    shader.view_model_matrix = view_matrix * model_matrix;
     shader.vertex_buffer = vertex_buffer;
-    shader.transformations_matrix = transformations_matrix * model_matrix;
+    shader.transformations_matrix = transformations_matrix;
     shader.texture = texture_data;
-    shader.light_position = gl::retro_project_back_into_3d(transformations_matrix * gl::embed_in_4d(light_position));
+    shader.light_position = gl::retro_project_back_into_3d(view_matrix * light_matrix * gl::embed_in_4d(Vec3f(0,0,0)));
+    // shader.light_position = light_position;
 
     for (int i = 0; i < faces; i++) {
 
@@ -156,11 +167,6 @@ void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuff
         gl::triangle(screen_coords, &shader, pixel_buffer, z_buffer);
     }
 
-}
-
-bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2) {
-    // nothing is explicitly handled
-    return false;
 }
 
 bool onUpdate(double dt_ms, unsigned long long fps) {
@@ -186,7 +192,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     }
     
     PixelBuffer pixels(wc->width, wc->height, wc->pixels);
-    pixels.clear(black);
+    pixels.clear(white);
 
     /* render to pixel buffer */ {
         
@@ -243,26 +249,28 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         time += dt_ms;
         float factor = 2000;
         Vec3f horizontally_spinning_position(cos(time / factor), 0, sin(time / factor));
+        horizontally_spinning_position.y += 0.4;
         Vec3f vertically_spinning_position(0, cos(time / factor), sin(time / factor));
         uint32_t smooth_color = u32rgba(cos(time / factor) * 255, sin(time / factor) * 255, tan(time / factor) * 255, 255);
 
         // clear the depth buffer
-        z_buffer.clear(-99999);
+        z_buffer.clear(-9999999);
         
         // update camera
-        cam.position = Vec3f(.2, .4, 2);
-        cam.position.y += 0.2f;
-        cam.looking_at = Vec3f(0, 0, 0).normalized();
-        cam.up = Vec3f(0, 1, 0).normalized();
+        cam.position = Vec3f(.2, .35, 1);
+        // cam.position.y += 0.2f;
+        // cam.position = horizontally_spinning_position;
+        cam.looking_at = Vec3f(0, 0, 0);
+        cam.up = Vec3f(0, 1, 0);
         
         // move light
         Vec3f light_position = horizontally_spinning_position;
 
         render(pixels, vertex_buffer, triangles, texture, cam, light_position, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
-        render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(1.0f, 0.0f, 0.0f), &z_buffer);
-        render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 1.0f, 0.0f), &z_buffer);
-        render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 0.0f, 1.0f), &z_buffer);
-        render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, light_position, &z_buffer);
+        // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(1.0f, 0.0f, 0.0f), &z_buffer);
+        // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 1.0f, 0.0f), &z_buffer);
+        // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 0.0f, 1.0f), &z_buffer);
+        // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, light_position, &z_buffer);
     }
 
     /* stats and debugging stuff */ {
@@ -289,6 +297,11 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     }
 
     return true;
+}
+
+bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2) {
+    // nothing is explicitly handled
+    return false;
 }
 
 int main(int argc, char** argv) {

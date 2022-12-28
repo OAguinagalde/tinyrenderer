@@ -19,15 +19,13 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{FEE8F04D-29AA-4E1F-A1F1-D61D327240B2}"
 	ProjectSection(SolutionItems) = preProject
 		src\geometry.h = src\geometry.h
-		src\hr_app.cpp = src\hr_app.cpp
-		src\hr_host.cpp = src\hr_host.cpp
+		src\my_gl.cpp = src\my_gl.cpp
+		src\my_gl.h = src\my_gl.h
 		src\main.cpp = src\main.cpp
 		src\model.cpp = src\model.cpp
 		src\model.h = src\model.h
 		src\tgaimage.cpp = src\tgaimage.cpp
 		src\tgaimage.h = src\tgaimage.h
-		src\util.cpp = src\util.cpp
-		src\util.h = src\util.h
 		src\win32.cpp = src\win32.cpp
 		src\win32.h = src\win32.h
 	EndProjectSection

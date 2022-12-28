@@ -7,14 +7,14 @@
 // https://learn.microsoft.com/en-us/previous-versions//dd183376(v=vs.85)?redirectedfrom=MSDN
 // Windows does something weird with the order of bytes in a "rgb" pixel
 // (Also, windows decides to ignore Alpha channel even thought it DOES use 4 bytes per pixel... What the heck ? )
-#define pack_4_u8_in_a_single_u32(a,b,c,d) ((uint32_t)(((uint8_t)a << 8*3) | ((uint8_t)b << 8*2) | ((uint8_t)c << 8*1) | ((uint8_t)d << 8*0) ))
+#define pack_4_u8_in_a_single_u32(a,b,c,d) ((uint32_t)(((uint8_t)(a) << 8*3) | ((uint8_t)(b) << 8*2) | ((uint8_t)(c) << 8*1) | ((uint8_t)(d) << 8*0) ))
 #define unpack_single_u32_in_4_u8(in,out3,out2,out1,out0) \
-    uint8_t out3 = (uint8_t)(in << 8 * 3);\
-    uint8_t out2 = (uint8_t)(in << 8 * 2);\
-    uint8_t out1 = (uint8_t)(in << 8 * 1);\
-    uint8_t out0 = (uint8_t)(in << 8 * 0);
+    uint8_t out3 = (uint8_t)((in) >> 8 * 3);\
+    uint8_t out2 = (uint8_t)((in) >> 8 * 2);\
+    uint8_t out1 = (uint8_t)((in) >> 8 * 1);\
+    uint8_t out0 = (uint8_t)((in) >> 8 * 0);
 #define u32rgba(r,g,b,a) pack_4_u8_in_a_single_u32(a,r,g,b)
-#define u32rgba_unpack(input,r,g,b,a) unpack_single_u32_in_4_u8(input,r,g,b,a)
+#define u32rgba_unpack(input,r,g,b,a) unpack_single_u32_in_4_u8(input,a,r,g,b)
 
 struct FloatBuffer {
 
@@ -44,6 +44,7 @@ struct FloatBuffer {
 
 struct PixelBuffer {
 
+    // bgra
     uint32_t* data;
     int width;
     int height;
