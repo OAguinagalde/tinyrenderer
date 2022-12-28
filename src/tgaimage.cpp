@@ -259,13 +259,14 @@ TGAColor TGAImage::get(int x, int y) {
 	return TGAColor(data+(x+y*width)*bytespp, bytespp);
 }
 
-#define rgb(r,g,b) ((uint32_t)(((uint8_t)r << 16) | ((uint8_t)g << 8) | (uint8_t)b))
+#define rgb(b,g,r) ((uint32_t)(((uint8_t)b << 16) | ((uint8_t)g << 8) | (uint8_t)r))
 
 uint32_t TGAImage::at(int x, int y) {
 	if (!data || x < 0 || y < 0 || x >= width || y >= height) {
 		return 0;
 	}
 	const unsigned char* p = data + (x + y * width) * bytespp;
+	// b g r
 	return rgb(p[0], p[1], p[2]);
 }
 

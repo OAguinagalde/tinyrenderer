@@ -1,18 +1,14 @@
-#include <vector>
-#include <cmath>
-#include <iostream>
-
 #include "win32.h"
-#include "tgaimage.h"
-#include "model.h"
 #include "my_gl.h"
+#include "tgaimage.h" // for loading the texutre since its in .tga format
+#include "model.h" // for loading .obj models
 
 const uint32_t whiteTransparent = u32rgba(255, 255, 255, 50);
 const uint32_t white = u32rgba(255, 255, 255, 255);
+const uint32_t black = u32rgba(0, 0, 0, 255);
 const uint32_t red = u32rgba(255, 0, 0, 255);
 const uint32_t green = u32rgba(0, 255, 0, 255);
 const uint32_t blue = u32rgba(0, 0, 255, 255);
-const uint32_t aaa = u32rgba(125, 55, 255, 255);
 
 #undef MAX
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -60,9 +56,8 @@ struct GouraudShader : public gl::IShader {
     float* vertex_buffer;
     
     // Invariants (written by vertex shader, read by fragment shader)
-    Vec3f vertices[3];
-    Vec3f normals[3];
-    Vec2f text_uv[3];
+    float light_intensities[3];
+    Vec2f text_uvs[3];
 
     // vertex shader params
     // precomputed: viewport_matrix * projection_matrix * view_matrix * model_matrix
@@ -75,52 +70,57 @@ struct GouraudShader : public gl::IShader {
     virtual Vec3f vertex(int iface, int nthvert) {
 
         int offset = (iface * 3 * 8) + (8 * nthvert);
-        // Get current vertex's data from vertex_buffer
 
-        Vec3f vertex_position;
-        vertex_position.raw[0] = vertex_buffer[offset + 0];
-        vertex_position.raw[1] = vertex_buffer[offset + 1];
-        vertex_position.raw[2] = vertex_buffer[offset + 2];
+        Vec3f vertex_position(
+            vertex_buffer[offset + 0],
+            vertex_buffer[offset + 1],
+            vertex_buffer[offset + 2]
+        );
+        Vec2f vertex_uv(
+            vertex_buffer[offset + 3] * texture.width,
+            vertex_buffer[offset + 4] * texture.height
+        );
+        Vec3f vertex_normal( // assume that vertex normals are normalized
+            vertex_buffer[offset + 5],
+            vertex_buffer[offset + 6],
+            vertex_buffer[offset + 7]
+        );
 
-        Matrix position = gl::embed_in_4d(vertex_position);
-        Vec3f final_point = gl::retro_project_back_into_3d(transformations_matrix * position);
-
-        // save some data about the vertex for the fragment to use later
-        text_uv[nthvert].raw[0] = vertex_buffer[offset + 3] * texture.width;
-        text_uv[nthvert].raw[1] = vertex_buffer[offset + 4] * texture.height;
-        normals[nthvert].raw[0] = vertex_buffer[offset + 5];
-        normals[nthvert].raw[1] = vertex_buffer[offset + 6];
-        normals[nthvert].raw[2] = vertex_buffer[offset + 7];
-        vertices[nthvert] = final_point;
+        Vec3f final_position = gl::retro_project_back_into_3d(transformations_matrix * gl::embed_in_4d(vertex_position));
         
-        return final_point;
+        // calculate light intensity in the current vertex
+        Vec3f light_dir = final_position - light_position;
+        float light_intensity = vertex_normal * light_dir.normalized();
+        light_intensities[nthvert] = MAX(0.0f, light_intensity);
+        light_intensities[nthvert] = light_intensity;
+        text_uvs[nthvert] = vertex_uv;
+
+        return final_position;
     }
 
     virtual bool fragment(Vec3f bar, uint32_t* out_color) {
 
-        // interpolate intensity for the current pixel
-        Vec3f interpolated_normal = gl::barycentric_inverse(normals, bar);
-        
-        // calculate the intensity of the light
-        // Vec3f light_dir = light_position;
-        
-        Vec3f interpolated_position = gl::barycentric_inverse(vertices, bar);
-        Vec3f light_dir = interpolated_position - light_position;
-        float intensity = MAX(0.0f, interpolated_normal.normalize() * light_dir.normalized());
-        
-        // cool shader to make the light have 6 intensities
+        // interpolate the light intensity in this particular pixel
+        float intensity = 0;
+        intensity += light_intensities[0] * bar.u;
+        intensity += light_intensities[1] * bar.v;
+        intensity += light_intensities[2] * bar.w;
+
+        // clamp light intensity to 1 of 6 different levels (not needed but cool)
         if (intensity>.85) intensity = 1;
         else if (intensity>.60) intensity = .80;
         else if (intensity>.45) intensity = .60;
         else if (intensity>.30) intensity = .45;
         else if (intensity>.15) intensity = .30;
-        else intensity = 0;
+        else intensity = .20;
 
-        // interpolate texture_uv for the current pixel        
-        Vec2f interpolated_text_uv = gl::barycentric_inverse(text_uv, bar);
-        // sample texture
+        // interpolate texture_uv for the current pixel and sample texture
+        Vec2f interpolated_text_uv = gl::barycentric_inverse(text_uvs, bar);
         uint32_t texture_sample = texture.get(interpolated_text_uv.x, interpolated_text_uv.y);
-        *out_color = (texture_sample * intensity);
+
+        // final color is the texture color times the intensity of the light
+        u32rgba_unpack(texture_sample, r, g, b, a);
+        *out_color = u32rgba(intensity * r, intensity * g, intensity * b, intensity * a);
 
         // Do not discard the pixel
         return false;
@@ -129,25 +129,19 @@ struct GouraudShader : public gl::IShader {
 
 void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuffer texture_data, camera camera, Vec3f light_position, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
     
-    int w = pixel_buffer.width;
-    int h = pixel_buffer.height;
-
-    // Where the light is "coming from"
-    Matrix model_matrix = Matrix::t(pos) * Matrix::s(scale_factor);
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
-    Matrix viewport_matrix = gl::viewport(0, 0, w, h);
+    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
     Matrix projection_matrix = Matrix::identity();
-    // float c = camera.position.z;
+    
     float c = 0.5f;
     if (c != 0) projection_matrix[3][2] = -1 / c;
 
-    Matrix point_camera_coords = view_matrix * model_matrix;
-    Matrix point_clip_coords = projection_matrix * point_camera_coords;
-    Matrix transformations_matrix = viewport_matrix * point_clip_coords;
+    Matrix model_matrix = Matrix::t(pos) * Matrix::s(scale_factor);
+    Matrix transformations_matrix = viewport_matrix * projection_matrix * view_matrix;
 
     GouraudShader shader;
     shader.vertex_buffer = vertex_buffer;
-    shader.transformations_matrix = transformations_matrix;
+    shader.transformations_matrix = transformations_matrix * model_matrix;
     shader.texture = texture_data;
     shader.light_position = gl::retro_project_back_into_3d(transformations_matrix * gl::embed_in_4d(light_position));
 
@@ -159,7 +153,7 @@ void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuff
             screen_coords[j] = shader.vertex(i, j);
         }
 
-        gl::triangle2(screen_coords, &shader, pixel_buffer, z_buffer);
+        gl::triangle(screen_coords, &shader, pixel_buffer, z_buffer);
     }
 
 }
@@ -192,75 +186,83 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
     }
     
     PixelBuffer pixels(wc->width, wc->height, wc->pixels);
-    pixels.clear(u32rgb(0, 0, 0));
+    pixels.clear(black);
 
     /* render to pixel buffer */ {
         
-        static bool firstFrame = true;
-        static PixelBuffer texture(0,0);
-        static int triangles;
-        static float* vertex_buffer;
+        // camera
         static camera cam;
-        static float time = 0.0f;
-        static Vec3f light_direction;
+        // depth buffer
         static FloatBuffer z_buffer(pixels.width, pixels.height);
-
+        // texture
+        static PixelBuffer texture(0, 0);
+        // model
+        static float* vertex_buffer;
+        static int triangles;
+        // total time
+        static float time = 0.0f;
+        
+        static bool firstFrame = true;
         if (firstFrame) {
-            TGAImage diffuse_texture_data("res/african_head_diffuse.tga");
-            diffuse_texture_data.flip_vertically();
-            texture.width = diffuse_texture_data.get_width();
-            texture.height = diffuse_texture_data.get_height();
-            texture.data = (uint32_t*)malloc(sizeof(uint32_t) * texture.width * texture.height);
-            for (int i = 0; i < texture.width * texture.height; i++) {
-                int y = i % texture.width;
-                int x = i / texture.width;
-                TGAColor c = diffuse_texture_data.get(x, y);
-                texture.data[i] = u32rgba(c.r, c.g, c.b, c.a);
+            /* Load texture into a pixel buffer */ {
+                TGAImage diffuse_texture_data("res/african_head_diffuse.tga");
+                diffuse_texture_data.flip_vertically();
+                texture.width = diffuse_texture_data.get_width();
+                texture.height = diffuse_texture_data.get_height();
+                texture.data = (uint32_t*)malloc(sizeof(uint32_t) * texture.width * texture.height);
+                for (int i = 0; i < texture.width * texture.height; i++) {
+                    int row = i / texture.width;
+                    int column = i - row * texture.width;
+                    TGAColor c = diffuse_texture_data.get(column, row);
+                    texture.data[i] = u32rgba(c.r, c.g, c.b, c.a);
+                }
             }
+            /* Load model into a vertex buffer */ {
+                Model model("res/african_head.obj");
+                // Model model("res/quad.obj");
+                triangles = model.nfaces();
+                int required_size = model.get_vertex_buffer_size();
+                vertex_buffer = (float*)malloc(required_size);
+                model.load_vertex_buffer(vertex_buffer);
 
-            Model model("res/african_head.obj");
-            // Model model("res/quad.obj");
-            triangles = model.nfaces();
-            int required_size = model.get_vertex_buffer_size();
-            vertex_buffer = (float*)malloc(required_size);
-            model.load_vertex_buffer(vertex_buffer);
-            
-            // Aparently in obj the coordinates seem to be normalized so everything is between 0 and 1
-            // So, for the texture coords, gotta scale them with the textures size. But, if
-            // 
-            //     for (int i = 0; i < triangles; i++) {
-            //         for (int j = 0; j < 3; j++) {
-            //             vertex_buffer[(i*3*8)+(j*8)+3] *= texture.get_width();
-            //             vertex_buffer[(i*3*8)+(j*8)+4] *= texture.get_height();
-            //         }
-            //     }
-            // 
-            
+                // Aparently in obj the coordinates seem to be normalized so everything is between 0 and 1
+                // So, for the texture coords, gotta scale them with the textures size. But, if
+                // 
+                //     for (int i = 0; i < triangles; i++) {
+                //         for (int j = 0; j < 3; j++) {
+                //             vertex_buffer[(i*3*8)+(j*8)+3] *= texture.get_width();
+                //             vertex_buffer[(i*3*8)+(j*8)+4] *= texture.get_height();
+                //         }
+                //     }
+                // 
+            }
+            firstFrame = false;
         }
         
+        // "advance time" and others
         time += dt_ms;
         float factor = 2000;
         Vec3f horizontally_spinning_position(cos(time / factor), 0, sin(time / factor));
         Vec3f vertically_spinning_position(0, cos(time / factor), sin(time / factor));
         uint32_t smooth_color = u32rgba(cos(time / factor) * 255, sin(time / factor) * 255, tan(time / factor) * 255, 255);
 
-        cam.position = horizontally_spinning_position;
+        // clear the depth buffer
+        z_buffer.clear(-99999);
+        
+        // update camera
         cam.position = Vec3f(.2, .4, 2);
         cam.position.y += 0.2f;
-        cam.looking_at = Vec3f(0, 0, 0);
-        cam.up = Vec3f(0, 1, 0);
+        cam.looking_at = Vec3f(0, 0, 0).normalized();
+        cam.up = Vec3f(0, 1, 0).normalized();
         
+        // move light
         Vec3f light_position = horizontally_spinning_position;
 
-        z_buffer.clear(-99999);
-
-        render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.3f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
+        render(pixels, vertex_buffer, triangles, texture, cam, light_position, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
         render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(1.0f, 0.0f, 0.0f), &z_buffer);
         render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 1.0f, 0.0f), &z_buffer);
         render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 0.0f, 1.0f), &z_buffer);
         render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, light_position, &z_buffer);
-
-        firstFrame = false;
     }
 
     /* stats and debugging stuff */ {
