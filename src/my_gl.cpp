@@ -3,6 +3,14 @@
 // #include <cstdlib>
 #include "my_gl.h"
 
+#undef MAX
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#undef MIN
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#undef ABSOLUTE
+#define ABSOLUTE(a) ((a) < 0 ? (-a) : (a))
+static void swap_int(int* a, int* b) { int c = *a; *a = *b; *b = c; }
+
 // mallocs the data buffer. free with `destroy()`
 FloatBuffer::FloatBuffer(int w, int h) : data(NULL), width(w), height(h) {
     data = (float*)malloc(width * height * sizeof(float));
@@ -37,21 +45,48 @@ void FloatBuffer::load(FloatBuffer* other) {
     }
 }
 
-namespace gl {
+PixelBuffer::PixelBuffer(): width(0), height(0), data(NULL) {}
+PixelBuffer::PixelBuffer(int w, int h) : width(w), height(h) {
+    data = (uint32_t*)malloc(width * height * sizeof(uint32_t));
+}
 
-    // AKA model_view_matrix
-    Matrix view_matrix;
-    Matrix viewport_matrix;
-    Matrix projection_matrix;
+PixelBuffer::PixelBuffer(int w, int h, uint32_t* buffer) : data(buffer), width(w), height(h) {}
+
+void PixelBuffer::destroy() {
+    if (data) free(data);
+}
+
+void PixelBuffer::clear(uint32_t c) {
+    for (int i = 0; i < width * height; i++) {
+        data[i] = c;
+    }
+}
+
+// assumes buffers are the same size
+void PixelBuffer::load(PixelBuffer other) {
+    for (int y = 0; y < other.height; y++) {
+        for (int x = 0; x < other.width; x++) {
+            data[x + y * width] = other.data[x + y * width];
+        }
+    }
+}
+
+float PixelBuffer::get(int x, int y) {
+    return data[x + y * width];
+}
+
+void PixelBuffer::set(int x, int y, uint32_t pixel) {
+    data[x + y * width] = pixel;
+}
+
+namespace gl {
 
     // Builds a "viewport matrix".
     // So, a viewport is just a matrix that will translate and map every point,
     // mapping every point in the original 3 dimensional cube with ranges[-1, 1] * [-1, 1] * [-1, 1]
     // onto the screen cube [x, x + w] * [y, y + h] * [0, d], where d is the depth (and resolution) of the z-buffer and of value 255.
     // opengl calls this the viewport matrix
-    void viewport(int x, int y, int w, int h) {
-
-        int depth = 255;
+    Matrix viewport(int x, int y, int w, int h, int depth) {
 
         Matrix m = Matrix::identity(4);
         
@@ -91,7 +126,8 @@ namespace gl {
         // In this function, we are basically mapping a cube [-1,1]*[-1,1]*[-1,1] onto the screen cube [x,x+w]*[y,y+h]*[0,d]
         // Its a cube (and not a rectangle) since there is a `d`epth variable to it, which acts as the resolution of the z-buffer.
 
-        viewport_matrix = m;
+        // viewport_matrix
+        return m;
     }
 
     // This should probably go something like...
@@ -100,10 +136,39 @@ namespace gl {
     //     if (c != 0) c = -1 / c;
     //     projection(c);
     // 
-    void projection(float coeff) {
+    Matrix projection(float coeff) {
         Matrix m = Matrix::identity();
         m[3][2] = coeff;
-        projection_matrix = m;
+        // projection_matrix = m;
+        return m;
+    }
+
+    // This is here just for reference. It contains details on how projection matrix is built.
+    Matrix get_projection_on_plane_xy_and_camera_on_axis_z(float distance_from_origin) {
+
+        // the camera will be in the axis z
+        Vec3f camera(0.f, 0.f, distance_from_origin);
+        
+        // https://github.com/ssloy/tinyrenderer/wiki/Lesson-4:-Perspective-projection
+        // > So to compute a central projection with a camera located on the z-axis with distance c from the origin,
+        // > (A) we embed the point into 4D by augmenting it with 1,
+        // > (B) then we multiply it with the following matrix,
+        // > (C) and retro-project it into 3D.
+        // > 
+        // >      (B)      (A)                    (C)
+        // > |1 0   0  0|  |x|    |   x   |    |   x / (1-z/c)   |
+        // > |0 1   0  0|  |y| => |   y   | => |   y / (1-z/c)   |
+        // > |0 0   1  0|  |z|    |   z   |    |   z / (1-z/c)   |
+        // > |0 0 -1/c 1|  |1|    | 1-z/c |
+        // > 
+        // > We deformed our object in a way, that simply forgetting its z-coordinate we will get a drawing in a perspective.
+
+        float c = camera.z;
+
+        Matrix projection = Matrix::identity(4);
+        projection[3][2] = -1/c;
+
+        return projection;
     }
 
     // Builds a lookat matrix. More infor below.
@@ -128,7 +193,7 @@ namespace gl {
     //     > The reason for two separate matrices, instead of one, is that lighting is applied after the modelview view matrix (i.e. on eye coordinates) and before the projection matrix
     // 
     // https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera
-    void lookat(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
+    Matrix lookat(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
 
         // We are basically calculating the 3 axis centered on `center`, where:
         //     
@@ -166,7 +231,67 @@ namespace gl {
         // Not sure why Minv and this mutiplication of matrices is necessary or what its doing
         // > The last step is a translation of the origin to the point of viewer e and our transformation matrix is ready
         Matrix model_view = Minv * Tr;
-        view_matrix = model_view;
+        return model_view;
+    }
+
+    // Retro-project a point in "4d" back into "3d"
+    //     
+    //     | x |    | x/w |
+    //     | y | => | y/w |
+    //     | z |    | z/w |
+    //     | w |         
+    //
+    Vec3f retro_project_back_into_3d(Matrix m) {
+        if (m.ncols() != 1) {int a=1;a=a/0;}
+        if (m.nrows() != 4) {int a=1;a=a/0;}
+        return Vec3f(
+            // x / w
+            m[0][0]/m[3][0],
+            // y / w
+            m[1][0]/m[3][0],
+            // z / w
+            m[2][0]/m[3][0]
+        );
+    }
+
+    // Embed the point into "4D" by augmenting it with 1, so that we can work with it.
+    // 
+    //     | x |    | x |
+    //     | y | => | y |
+    //     | z |    | z |
+    //              | 1 |
+    //     
+    Matrix embed_in_4d(Vec3f p) {
+        Matrix m(4, 1);
+        m[0][0] = p.x;
+        m[1][0] = p.y;
+        m[2][0] = p.z;
+        m[3][0] = 1.f;
+        return m;
+    }
+
+    BoundingBox triangle_bb(Vec3f t[3]) {
+        BoundingBox bb;
+
+        bb.tl.x = MIN(t[0].x, MIN(t[1].x, t[2].x));
+        bb.tl.y = MAX(t[0].y, MAX(t[1].y, t[2].y));
+
+        bb.br.x = MAX(t[0].x, MAX(t[1].x, t[2].x));
+        bb.br.y = MIN(t[0].y, MIN(t[1].y, t[2].y));
+
+        return bb;
+    }
+    
+    BoundingBox triangle_bb(Vec2i t[3]) {
+        BoundingBox bb;
+
+        bb.tl.x = MIN(t[0].x, MIN(t[1].x, t[2].x));
+        bb.tl.y = MAX(t[0].y, MAX(t[1].y, t[2].y));
+
+        bb.br.x = MAX(t[0].x, MAX(t[1].x, t[2].x));
+        bb.br.y = MIN(t[0].y, MIN(t[1].y, t[2].y));
+
+        return bb;
     }
 
     // returns the barycentric coordenates of the point p relative to triangle t
@@ -258,25 +383,79 @@ namespace gl {
         return point;
     }
 
-    // sample a texture using barycentric interpolation
-    TGAColor sample(IPixelBuffer& sampled_data, Vec2f t[3], Vec3f barycentric) {
-
-        Vec2f point = barycentric_inverse(t, barycentric);
-
-        // aparently in tga the coordinates seem to be normalized so everything is between 0 and 1 for the texture coords so gotta scale them with the textures size
-        Vec2f scaled(point.x * sampled_data.get_width(), point.y * sampled_data.get_height());
-
-        // printf("in texture triangle %f, %f - %f, %f - %f, %f\n", a.x, a.y, b.x, b.y, c.x, c.y);
-        // printf("samples to p %f - %f\n", point.x, point.y);
-        // printf("scaled to p %f - %f\n", scaled.x, scaled.y);
-
-        return sampled_data.get(scaled.x, scaled.y);
+    // returns true if the given barycentric coordinates represent a point inside a triangle
+    bool barycentric_inside(Vec3f bar) {
+        if (bar.x < 0.0f || bar.x > 1.0f) { return false; }
+        if (bar.y < 0.0f || bar.y > 1.0f) { return false; }
+        if (bar.z < 0.0f || bar.z > 1.0f) { return false; }
+        return true;
     }
 
-    
+    // sample a texture using barycentric interpolation
+    // sample the texture data (PixelBuffer& sampled_data) by giving the the 3 points of the triangle (Vec2f uv[3]) and the barycentric coordenates
+    uint32_t sample_texture(PixelBuffer& sampled_data, Vec2f uv[3], Vec3f barycentric) {
+        Vec2f point = barycentric_inverse(uv, barycentric);
+        return sampled_data.get(point.x, point.y);
+    }
+
+    void line(Vec2i a, Vec2i b, PixelBuffer image, uint32_t color) {
+        int differenceX = b.x - a.x;
+        int differenceXAbs = ABSOLUTE(differenceX);
+
+        int differenceY = b.y - a.y;
+        int differenceYAbs = ABSOLUTE(differenceY);
+
+        if (differenceXAbs > differenceYAbs) {
+            // draw horizontally
+
+            if (differenceX < 0) {
+                swap_int(&a.x, &b.x);
+                swap_int(&a.y, &b.y);
+            }
+
+            float percentageOfLineDone = 0.0;
+            float increment = 1.0 / (float)differenceXAbs;
+            for (int x = a.x; x <= b.x; x++) {
+                int y = a.y + (b.y - a.y) * percentageOfLineDone;
+                image.set(x, y, color);
+                percentageOfLineDone += increment;
+            }
+        }
+        else {
+            // draw vertically
+
+            if (differenceY < 0) {
+                swap_int(&a.x, &b.x);
+                swap_int(&a.y, &b.y);
+            }
+
+            float percentageOfLineDone = 0.0;
+            float increment = 1.0 / (float)differenceYAbs;
+            for (int y = a.y; y <= b.y; y++) {
+                int x = a.x + (b.x - a.x) * percentageOfLineDone;
+                image.set(x, y, color);
+                percentageOfLineDone += increment;
+            }
+        }
+    }
+
+    void triangle_outline(Vec2i t[3], PixelBuffer image, uint32_t color) {
+        line(t[0], t[1], image, color);
+        line(t[1], t[2], image, color);
+        line(t[2], t[0], image, color);
+    }
+
+    void fat_dot(Vec2i p, PixelBuffer image, uint32_t color) {
+        image.set(p.x, p.y, color);
+        image.set(p.x+1, p.y, color);
+        image.set(p.x-1, p.y, color);
+        image.set(p.x, p.y+1, color);
+        image.set(p.x, p.y-1, color);
+    }
+
     // The algorith proposed puts the depth directly into the Vec2i (making it a Vec3i), but I chose to put it separately
     // so that its easier to understand whats going on. Its used for z-buffer calculations
-    void triangle(Vec3f pts[3], IShader* shader, IPixelBuffer* image, FloatBuffer* z_buffer) {
+    void triangle(Vec3f pts[3], IShader* shader, PixelBuffer image, FloatBuffer* z_buffer) {
         
         // TODO make this calculations with floats rather than ints
         Vec2i screen[3];
@@ -343,8 +522,8 @@ namespace gl {
             side2 -= incrementShortLine1;
         }
 
-        int image_witdth = image->get_width();
-        int image_height = image->get_height();
+        int image_witdth = image.width;
+        int image_height = image.height;
 
         // first, draw the top half of the triangle
         for (int y = top->y; y > bot->y; y--) {
@@ -387,11 +566,11 @@ namespace gl {
                 // Other algorithms might check using the barycentric that the current pixel is inside (usually run multithreaded)
                 // but this algorithm is more of an old school single threaded one which will directly only run on the right pixels
                 if (z_buffer->data[idx] < z) {
-                    TGAColor color;
+                    uint32_t color;
                     bool discard = shader->fragment(bar, &color);
                     if (!discard) {
                         z_buffer->data[idx] = z;
-                        image->set(x, y, color);
+                        image.set(x, y, color);
                     }
                 }
             }
@@ -407,5 +586,61 @@ namespace gl {
             }
         }
     }
+
+    void triangle2(Vec3f pts[3], IShader* shader, PixelBuffer image, FloatBuffer* z_buffer) {
+
+        // TODO make this calculations with floats rather than ints
+        Vec2i screen[3];
+        screen[0] = Vec2i(pts[0].x, pts[0].y);
+        screen[1] = Vec2i(pts[1].x, pts[1].y);
+        screen[2] = Vec2i(pts[2].x, pts[2].y);
+
+        Vec3i depth(pts[0].z, pts[1].z, pts[2].z);
+
+        BoundingBox bb = triangle_bb(screen);
+
+        int image_witdth = image.width;
+        for (int y = bb.tl.y; y > bb.br.y; y--) { // top to bottom
+            for (int x = bb.tl.x; x < bb.br.x; x++) { // left to right
+
+                // barycentric coordinates for bounds checking, `z-buffer`, `texture sampling`
+                Vec3f bar = barycentric(screen, Vec2i(x, y));
+                if (!barycentric_inside(bar)) {
+                    continue;
+                }
+
+                // > the idea is to take the barycentric coordinates version of triangle rasterization,
+                // > and for every pixel we want to draw simply to multiply its barycentric coordinates [u, v, w]
+                // > by the z-values [3rd element] of the vertices of the triangle [t0, t1 and t2] we rasterize
+                // This is basically finding the z value of an specific pixel in a triangle by interpolating the 3 values of z that we know.
+                // The same as how we sample the texture, except in this case we only care about the z components.
+                // Also, this is equivalent to this but without the extra uneeded calculations...
+                //
+                //     Vec3f point_in_world_space = barycentric_inverse(world, bar);
+                //     z = point_in_world_space.z;
+                //     float z = 0;
+                //
+                float z = 0;
+                z += depth.raw[0] * bar.u;
+                z += depth.raw[1] * bar.v;
+                z += depth.raw[2] * bar.w;
+
+                // calculate z-buffer value's index
+                int idx = int(x + y * image_witdth);
+
+                // Other algorithms might check using the barycentric that the current pixel is inside (usually run multithreaded)
+                // but this algorithm is more of an old school single threaded one which will directly only run on the right pixels
+                if (z_buffer->data[idx] < z) {
+                    uint32_t color;
+                    bool discard = shader->fragment(bar, &color);
+                    if (!discard) {
+                        z_buffer->data[idx] = z;
+                        image.set(x, y, color);
+                    }
+                }
+            }
+        }
+    }   
+
 }
 

@@ -51,7 +51,6 @@ template <class t> struct Vec2 {
 	
 	inline float cross_product_magnitude(const Vec2<t> &v) const { return x*v.y-y*v.x; }
 	
-	template <class > friend std::ostream& operator<<(std::ostream& s, Vec2<t>& v);
 };
 
 template <class t> struct Vec3 {
@@ -73,7 +72,6 @@ template <class t> struct Vec3 {
 	float norm () const { return std::sqrt(x*x+y*y+z*z); }
 	Vec3<t> & normalize(t l=1) { *this = (*this)*(l/norm()); return *this; }
 	Vec3<t> normalized(t l=1) { return (*this)*(l/norm()); }
-	template <class > friend std::ostream& operator<<(std::ostream& s, Vec3<t>& v);
 };
 
 typedef Vec2<float> Vec2f;
@@ -84,16 +82,6 @@ typedef Vec3<int>   Vec3i;
 struct BoundingBox {
 	Vec2i tl, br;
 };
-
-template <class t> std::ostream& operator<<(std::ostream& s, Vec2<t>& v) {
-	s << "(" << v.x << ", " << v.y << ")\n";
-	return s;
-}
-
-template <class t> std::ostream& operator<<(std::ostream& s, Vec3<t>& v) {
-	s << "(" << v.x << ", " << v.y << ", " << v.z << ")\n";
-	return s;
-}
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -211,17 +199,6 @@ public:
 			for (int j = 0; j < cols; j++)
 				truncate[i][j] = result[i][j + cols];
 		return truncate;
-	}
-
-	friend std::ostream& operator<<(std::ostream& s, Matrix& m) {
-		for (int i = 0; i < m.nrows(); i++) {
-			for (int j = 0; j < m.ncols(); j++) {
-				s << m[i][j];
-				if (j < m.ncols() - 1) s << "\t";
-			}
-			s << "\n";
-		}
-		return s;
 	}
 };
 
