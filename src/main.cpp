@@ -86,6 +86,7 @@ struct GouraudShader : public gl::IShader {
             vertex_buffer[offset + 6],
             vertex_buffer[offset + 7]
         );
+        vertex_normal.normalize();
 
         Matrix world_position = view_model_matrix * gl::embed_in_4d(vertex_position);
         Vec3f screen_position = gl::retro_project_back_into_3d(transformations_matrix * world_position);
@@ -99,7 +100,9 @@ struct GouraudShader : public gl::IShader {
         //            \/
         //             * Vertex
         Vec3f light_dir = light_position - gl::retro_project_back_into_3d(world_position);
+        light_dir.normalize();
         float light_intensity = vertex_normal * light_dir;
+
         light_intensities[nthvert] = MAX(0.f, light_intensity);
         text_uvs[nthvert] = vertex_uv;
 

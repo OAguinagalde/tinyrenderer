@@ -72,7 +72,7 @@ void PixelBuffer::load(PixelBuffer other) {
     }
 }
 
-float PixelBuffer::get(int x, int y) {
+uint32_t PixelBuffer::get(int x, int y) {
     return data[x + y * width];
 }
 
@@ -204,9 +204,9 @@ namespace gl {
         //                            \  (+x)
         //                             V
         // 
-        Vec3f z = (camera_location - point_looked_at).normalize();
-        Vec3f x = (up ^ z).normalize();
-        Vec3f y = (z ^ x).normalize();
+        Vec3f z = (camera_location - point_looked_at).normalized();
+        Vec3f x = (up ^ z).normalized();
+        Vec3f y = (z ^ x).normalized();
 
         // I think Tr stands for Translation
         Matrix Tr = Matrix::identity();
@@ -425,6 +425,10 @@ namespace gl {
                 if (depth.data[idx] < z) {
                     pixels.set(x, y, color);
                 }
+                else {
+                    u32rgba_unpack(pixels.get(x, y), r, g, b, a);
+                    pixels.set(x, y, u32rgba(r*0.5f, g*0.5f, b*0.5f, a*0.5f));
+                }
                 percentageOfLineDone += increment;
             }
         }
@@ -446,6 +450,10 @@ namespace gl {
                 int idx = x + y * pixels.width;
                 if (depth.data[idx] < z) {
                     pixels.set(x, y, color);
+                }
+                else {
+                    u32rgba_unpack(pixels.get(x, y), r, g, b, a);
+                    pixels.set(x, y, u32rgba(r*0.5f, g*0.5f, b*0.5f, a*0.5f));
                 }
                 percentageOfLineDone += increment;
             }

@@ -59,7 +59,7 @@ struct PixelBuffer {
     // assumes buffers are the same size
     void load(PixelBuffer other);
 
-    float get(int x, int y);
+    uint32_t get(int x, int y);
     void set(int x, int y, uint32_t pixel);
 };
 

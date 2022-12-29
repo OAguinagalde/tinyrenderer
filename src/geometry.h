@@ -45,7 +45,6 @@ template <class t> struct Vec2 {
 	// in this implementation we assume z = 0, meaning that the result will always be of type Vec3 (0, 0, x*v.y-y*v.x)
 	// for that same reason, the magnitude of the resulting Vec3 will be just the value of the component z
 	// inline Vec3<t> operator ^(const Vec2<t> &v) const { t z = 0; return Vec3<t>(y*z-z*v.y, z*v.x-x*z, x*v.y-y*v.x); }
-	
 	// taking into consideration the notes about the cross product above, it only makes sense to just use this and never the implementation above
 	inline t       operator ^(const Vec2<t> &v) const { return x*v.y-y*v.x; }
 	
@@ -69,6 +68,7 @@ template <class t> struct Vec3 {
 	inline Vec3<t> operator *(float f)          const { return Vec3<t>(x*f, y*f, z*f); }
 	// dot product
 	inline t       operator *(const Vec3<t> &v) const { return x*v.x + y*v.y + z*v.z; }
+	// returns the magnitude of a vector
 	float norm () const { return std::sqrt(x*x+y*y+z*z); }
 	Vec3<t> & normalize(t l=1) { *this = (*this)*(l/norm()); return *this; }
 	Vec3<t> normalized(t l=1) { return (*this)*(l/norm()); }
