@@ -10,6 +10,7 @@
 #undef ABSOLUTE
 #define ABSOLUTE(a) ((a) < 0 ? (-a) : (a))
 static void swap_int(int* a, int* b) { int c = *a; *a = *b; *b = c; }
+static void swap_float(float* a, float* b) { float c = *a; *a = *b; *b = c; }
 
 // mallocs the data buffer. free with `destroy()`
 FloatBuffer::FloatBuffer(int w, int h) : data(NULL), width(w), height(h) {
@@ -396,6 +397,59 @@ namespace gl {
     uint32_t sample_texture(PixelBuffer& sampled_data, Vec2f uv[3], Vec3f barycentric) {
         Vec2f point = barycentric_inverse(uv, barycentric);
         return sampled_data.get(point.x, point.y);
+    }
+
+    void line(PixelBuffer pixels, FloatBuffer depth, Vec3f a, Vec3f b, uint32_t color) {
+        float differenceX = b.x - a.x;
+        float differenceXAbs = ABSOLUTE(differenceX);
+
+        float differenceY = b.y - a.y;
+        float differenceYAbs = ABSOLUTE(differenceY);
+
+        if (differenceXAbs > differenceYAbs) {
+            // draw horizontally
+
+            if (differenceX < 0) {
+                swap_float(&a.x, &b.x);
+                swap_float(&a.y, &b.y);
+                swap_float(&a.z, &b.z);
+            }
+
+            float percentageOfLineDone = 0.0;
+            float increment = 1.0 / differenceXAbs;
+            for (int x = a.x; x <= b.x; x++) {
+                int y = a.y + (b.y - a.y) * percentageOfLineDone;
+                int z = a.z + (b.z - a.z) * percentageOfLineDone;
+                if (x < 0 || x >= pixels.width || y < 0 || y >= pixels.height || z < 0) continue;
+                int idx = x + y * pixels.width;
+                if (depth.data[idx] < z) {
+                    pixels.set(x, y, color);
+                }
+                percentageOfLineDone += increment;
+            }
+        }
+        else {
+            // draw vertically
+
+            if (differenceY < 0) {
+                swap_float(&a.x, &b.x);
+                swap_float(&a.y, &b.y);
+                swap_float(&a.z, &b.z);
+            }
+
+            float percentageOfLineDone = 0.0;
+            float increment = 1.0 / differenceYAbs;
+            for (int y = a.y; y <= b.y; y++) {
+                int x = a.x + (b.x - a.x) * percentageOfLineDone;
+                int z = a.z + (b.z - a.z) * percentageOfLineDone;
+                if (x < 0 || x >= pixels.width || y < 0 || y >= pixels.height || z < 0) continue;
+                int idx = x + y * pixels.width;
+                if (depth.data[idx] < z) {
+                    pixels.set(x, y, color);
+                }
+                percentageOfLineDone += increment;
+            }
+        }
     }
 
     void line(Vec2i a, Vec2i b, PixelBuffer image, uint32_t color) {

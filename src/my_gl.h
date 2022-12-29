@@ -103,6 +103,7 @@ namespace gl {
         virtual bool fragment(Vec3f bar, uint32_t* out_color) = 0;
     };
 
+    void line(PixelBuffer pixels, FloatBuffer depth, Vec3f a, Vec3f b, uint32_t color);
     void line(Vec2i a, Vec2i b, PixelBuffer image, uint32_t color);
     void triangle_outline(Vec2i t[3], PixelBuffer image, uint32_t color);
     void fat_dot(Vec2i p, PixelBuffer image, uint32_t color);

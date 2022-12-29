@@ -135,12 +135,23 @@ struct GouraudShader : public gl::IShader {
     }
 };
 
+void render_line(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f start, Vec3f end, uint32_t color) {
+    Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
+    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
+    Matrix projection_matrix = Matrix::identity();
+    float c = 0.9f;
+    if (c != 0) projection_matrix[3][2] = -1 / c;
+    Vec3f start_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(start));
+    Vec3f end_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(end));
+    gl::line(pixel_buffer, z_buffer, start_real, end_real, color);
+}
+
 void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuffer texture_data, camera camera, Vec3f light_position, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
     
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
     Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
     Matrix projection_matrix = Matrix::identity();
-    float c = 0.5f;
+    float c = 0.9f;
     if (c != 0) projection_matrix[3][2] = -1 / c;
 
     Matrix light_matrix = Matrix::identity();
@@ -255,11 +266,11 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         z_buffer.clear(-9999999);
         
         // update camera
-        // cam.position = Vec3f(.2, .35, 1);
+        cam.position = Vec3f(.2, .35, 1);
         // cam.position = Vec3f(1,0,0);
         // cam.position = Vec3f(0,1,0);
-        cam.position = Vec3f(0,0,1);
-        // cam.position = horizontally_spinning_position;
+        // cam.position = Vec3f(0,0,2);
+        cam.position = horizontally_spinning_position;
         cam.looking_at = Vec3f(0, 0, 0);
         cam.up = Vec3f(0, 1, 0);
         
@@ -268,6 +279,9 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         Vec3f light_position = cam.position;
 
         render(pixels, vertex_buffer, triangles, texture, cam, light_position, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
+        render_line(pixels, z_buffer, cam, Vec3f(-2,0,0), Vec3f(2,0,0), blue);
+        render_line(pixels, z_buffer, cam, Vec3f(0,-2,0), Vec3f(0,2,0), blue);
+        render_line(pixels, z_buffer, cam, Vec3f(0,0,-2), Vec3f(0,0,2), blue);
         // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(1.0f, 0.0f, 0.0f), &z_buffer);
         // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 1.0f, 0.0f), &z_buffer);
         // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 0.0f, 1.0f), &z_buffer);
