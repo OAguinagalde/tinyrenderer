@@ -224,7 +224,7 @@ void render_text(PixelBuffer pixel_buffer, Vec2i pos, uint32_t color, const char
         //     offset_x = -((i+1)*(4*size_factor));
         //     continue;
         // }
-        char c = char_lower(text[i]);
+        char c = text[i];
         int x = offset_x + (pos.x + i * (4 * size_factor));
         int y = offset_y + pos.y;
         int u1 = (c%16) * 8;
@@ -308,7 +308,7 @@ void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuff
     }
 
 }
-
+bool space_pressed = false;
 bool onUpdate(double dt_ms, unsigned long long fps) {
 
     auto wc = win32::GetWindowContext();
@@ -386,7 +386,13 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         }
         
         // "advance time" and others
-        time += dt_ms;
+        if (space_pressed) {
+            time += dt_ms;
+        }
+
+        static POINT mouse;
+        GetCursorPos(&mouse);
+
         float factor = 2000;
         Vec3f horizontally_spinning_position(cos(time / factor), .0, sin(time / factor));
         Vec3f vertically_spinning_position(0, cos(time / factor), sin(time / factor));
@@ -396,25 +402,34 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         z_buffer.clear(-9999999);
         
         // update camera
-        cam.position = horizontally_spinning_position;
-        cam.position.x += cam.position.x * 0.3f;
-        cam.position.z += cam.position.z * 0.3f;
-        cam.position.y = 0.2;
+        cam.position.x = (-mouse.x / 1920.0f * 10.f) + 5.f;
+        cam.position.z = 6.3f;
+        cam.position.y = (-mouse.y / 1080.0f * 10.f) + 5.f;
         cam.looking_at = Vec3f(0, 0, 0);
         cam.up = Vec3f(0, 1, 0);
-        
+
         // move light
         Vec3f light_position = horizontally_spinning_position;
 
-        // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
+        render(pixels, vertex_buffer, triangles, texture, cam, light_position, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
         render_line(pixels, z_buffer, cam, Vec3f(-2,0,0), Vec3f(2,0,0), blue);
-        render_line(pixels, z_buffer, cam, Vec3f(0,-2,0), Vec3f(0,2,0), blue);
-        render_line(pixels, z_buffer, cam, Vec3f(0,0,-2), Vec3f(0,0,2), blue);
-        render_text(pixels, Vec2i(10, pixels.height-10), red, "Hello", 5);
+        render_line(pixels, z_buffer, cam, Vec3f(0,-2,0), Vec3f(0,2,0), red);
+        render_line(pixels, z_buffer, cam, Vec3f(0,0,-2), Vec3f(0,0,2), green);
+        
         // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(1.0f, 0.0f, 0.0f), &z_buffer);
         // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 1.0f, 0.0f), &z_buffer);
         // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 0.0f, 1.0f), &z_buffer);
         // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, light_position, &z_buffer);
+        
+        static char text[1024];
+        static int total_chars;
+        
+        total_chars = snprintf(text, 1024, "fps %llu, ms %f, space_pressed %d", fps, dt_ms, space_pressed);
+        render_text(pixels, Vec2i(10, pixels.height-15), red, text, total_chars);
+        total_chars = snprintf(text, 1024, "camera: %f, %f, %f", cam.position.x, cam.position.y, cam.position.z);
+        render_text(pixels, Vec2i(10, pixels.height-30), red, text, total_chars);
+        total_chars = snprintf(text, 1024, "mouse %d, %d", mouse.x, mouse.y);
+        render_text(pixels, Vec2i(10, pixels.height-45), red, text, total_chars);
     }
 
     /* stats and debugging stuff */ {
@@ -427,24 +442,24 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         if (dt_ms < 16.0f) { performance_base = 16.0f; performance_color = u32rgba(174, 255, 0, 255); }
         gl::line(Vec2i(0,0), Vec2i( MIN((dt_ms / performance_base) * pixels.width, pixels.width), 0), pixels, performance_color);
         gl::line(Vec2i(0,1), Vec2i( MIN((dt_ms / performance_base) * pixels.width, pixels.width), 1), pixels, performance_color);
-
-        // mouse pos
-        POINT mouse;
-        GetCursorPos(&mouse);
-        // gl::fat_dot(Vec2i(mouse.x, mouse.y), pixels, TGAColor(255, 0, 0, 255));
         
-        static short cursorx, cursory;
-        if (win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
-            win32::FormattedPrint("fps %d, ms %f", fps, dt_ms);
-            win32::ConsoleSetCursorPosition(cursorx, cursory);
-        }
+        // static short cursorx, cursory;
+        // if (win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
+        //     win32::FormattedPrint("fps %d, ms %f, space_pressed %d", fps, dt_ms, space_pressed);
+        //     win32::ConsoleSetCursorPosition(cursorx, cursory);
+        // }
     }
 
     return true;
 }
 
 bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2) {
-    // nothing is explicitly handled
+    if (messageType == WM_KEYDOWN && param1 == VK_SPACE) {
+        space_pressed = true;
+    }
+    if (messageType == WM_KEYUP && param1 == VK_SPACE) {
+        space_pressed = false;
+    }
     return false;
 }
 
