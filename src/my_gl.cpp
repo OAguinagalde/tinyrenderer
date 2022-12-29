@@ -133,8 +133,7 @@ namespace gl {
 
     // This should probably go something like...
     // 
-    //     float c = camera.position.z;
-    //     if (c != 0) c = -1 / c;
+    //     float c = -1 / (camera.looking_at - camera.position).norm();
     //     projection(c);
     // 
     Matrix projection(float coeff) {
@@ -196,57 +195,95 @@ namespace gl {
     // https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera
     Matrix lookat(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
 
-        // We are basically calculating the 3 axis centered on `center`, where:
+        // Make the camera the "center of the world". So...
+        // * In front of the camera, the z < 0 (so, negative) and behind is > 0, for convention.
+        // * To the right, x > 0, and to the left x < 0.
+        // * On top of us (meaning that if the camera is looking slightly down, the "top" gets also tilted) y > 0 and below, y < 0
         //     
-        //      A (up)               A (+y)
-        //      |                    |
-        //     eye    (+z) <----- center
-        //                            \  (+x)
-        //                             V
-        // 
+        //      A up (+y)         
+        //      |             front (-z)          .---
+        //  camera (eye)  ----->             o <--| The point 
+        //       \                                | the camera
+        //        \  right (+x)                   | is looking at
+        //         V                               `--
+        //                                                                     
+        up.normalize();
+        // z = front
         Vec3f z = (camera_location - point_looked_at).normalized();
+        // x = looking to the front, x is the right side
+        // NOTES so aparently, since the "front" is by convention negative z, now the right is on the left lol so inverted this cross(z, up) to cross(up, z)
+        // WAIT A MOMENT, according to this, thats not the casce WTH? https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function
         Vec3f x = (up ^ z).normalized();
+        // y = whatever is on top of the camera
         Vec3f y = (z ^ x).normalized();
 
-        // I think Tr stands for Translation
-        Matrix Tr = Matrix::identity();
-        Tr[0][3] = -point_looked_at.x;
-        Tr[1][3] = -point_looked_at.y;
-        Tr[2][3] = -point_looked_at.z;
+        // To simulate that the camera moves, everything move in the oposite direction that the camera:
+        // If the camera does 1 step (z+=1) towards something, then everything moves 1 step in the other direction (z-=1)
+        // 
+        // https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera#change-of-basis-in-3d-space
+        // 
+        //  the point we
+        //  want to get     the inverse matrix (down below called matrix_inv)
+        //     \          /           the camera position
+        //      '        '           /   
+        //                          '
+        //     |x'| =  -1  ( |x|   |O'x| )
+        //     |y'| = M    ( |y| - |O'y| )
+        //     |z'| =      ( |z|   |O'z| )
+        //                   .
+        //                  /    
+        //  the original point respect to the original "center of the world"           
+        // 
+        // https://stackoverflow.com/questions/53143175/writing-a-lookat-function
+        // 
+        // > To construct a 3D transform matrix you need position O and 3 basis vectors (X,Y,Z) which are unit and perpendicular to each other.
+        // > Now just simply feed O,X,Y,Z into unit 4x4 matrix. As camera is usually inverted, invert it and you got your resulting matrix.
+        // 
+        // Where O is the position of the camera, and XYZ are the previously calculated unti vectors (front, right and up)
 
-        // I think Minv stands for Matrix inversed
-        // TODO Why exactly do we need this?
-        Matrix Minv = Matrix::identity();
-        Minv[0][0] = x.x;
-        Minv[1][0] = y.x;
-        Minv[2][0] = z.x;
+        
+        // AAAAAAAAAAAAAAAAH AAAAAAAH AIUDAAAA
+        // Here: https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera
+        // it uses -eye
+        // Here: https://github.com/ssloy/tinyrenderer/blob/f037c7a0517a632c7391b35131f9746a8f8bb235/our_gl.cpp
+        // it uses -center
+        // Here: https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function
+        // And Here: https://stackoverflow.com/questions/53143175/writing-a-lookat-function
+        // it uses eye
+        
+        Matrix translation = Matrix::identity();
+        translation[0][3] = camera_location.x;
+        translation[1][3] = camera_location.y;
+        translation[2][3] = camera_location.z;
 
-        Minv[0][1] = x.y;
-        Minv[1][1] = y.y;
-        Minv[2][1] = z.y;
+        // translation[0][3] = point_looked_at.x;
+        // translation[1][3] = point_looked_at.y;
+        // translation[2][3] = point_looked_at.z;
 
-        Minv[0][2] = x.z;
-        Minv[1][2] = y.z;
-        Minv[2][2] = z.z;
+        // translation[0][3] = -point_looked_at.x;
+        // translation[1][3] = -point_looked_at.y;
+        // translation[2][3] = -point_looked_at.z;
 
-        // Not sure why Minv and this mutiplication of matrices is necessary or what its doing
+        // translation[0][3] = -camera_location.x;
+        // translation[1][3] = -camera_location.y;
+        // translation[2][3] = -camera_location.z;
+        
+        Matrix matrix = Matrix::identity();
+        matrix[0][0] = x.x;
+        matrix[0][1] = x.y;
+        matrix[0][2] = x.z;
+
+        matrix[1][0] = y.x;
+        matrix[1][1] = y.y;
+        matrix[1][2] = y.z;
+
+        matrix[2][0] = z.x;
+        matrix[2][1] = z.y;
+        matrix[2][2] = z.z;
+
         // > The last step is a translation of the origin to the point of viewer e and our transformation matrix is ready
-        Matrix model_view = Minv * Tr;
-        return model_view;
-    }
-
-    Matrix lookaat(Vec3f eye, Vec3f center, Vec3f up) {
-        Vec3f z = (eye-center).normalized();
-        Vec3f x = (up^z).normalized();
-        Vec3f y = (z^x).normalized();
-        Matrix ModelView = Matrix::identity();
-        for (int i=0; i<3; i++) {
-            ModelView[0][i] = x.raw[i];
-            ModelView[1][i] = y.raw[i];
-            ModelView[2][i] = z.raw[i];
-            ModelView[i][3] = -center.raw[i];
-        }
-        return ModelView;
+        Matrix view_matrix = matrix * translation;
+        return view_matrix;
     }
 
     // Retro-project a point in "4d" back into "3d"
@@ -400,9 +437,9 @@ namespace gl {
 
     // returns true if the given barycentric coordinates represent a point inside a triangle
     bool barycentric_inside(Vec3f bar) {
-        if (bar.x < 0.0f || bar.x > 1.0f) { return false; }
-        if (bar.y < 0.0f || bar.y > 1.0f) { return false; }
-        if (bar.z < 0.0f || bar.z > 1.0f) { return false; }
+        if (bar.x < 0.0f || bar.x >= 1.0f) { return false; }
+        if (bar.y < 0.0f || bar.y >= 1.0f) { return false; }
+        if (bar.z < 0.0f || bar.z >= 1.0f) { return false; }
         return true;
     }
 
