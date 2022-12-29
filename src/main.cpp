@@ -49,6 +49,43 @@ public:
     defer(const defer&) = delete;
 };
 
+struct TextureQuadShader : public gl::IShader {
+
+    TextureQuadShader(float* data, PixelBuffer texture) : vertex_buffer(data), texture(texture) {}
+    
+    // { location_x, location_y, location_z, text_u, text_v } * 3 * tirangle_count
+    // 2 triangles per character
+    float* vertex_buffer;
+
+    // resources used during fragment shader
+    PixelBuffer texture;
+
+    // Invariants (written by vertex shader, read by fragment shader)
+    Vec2f text_uvs[3];
+
+    virtual Vec3f vertex(int iface, int nthvert) {
+        int offset = (iface * 3 * 5) + (5 * nthvert);
+        Vec3f vertex_position(
+            vertex_buffer[offset + 0],
+            vertex_buffer[offset + 1],
+            vertex_buffer[offset + 2]
+        );
+        Vec2f vertex_uv(
+            vertex_buffer[offset + 3],
+            vertex_buffer[offset + 4]
+        );
+        text_uvs[nthvert] = vertex_uv;
+        return vertex_position;
+    }
+
+    virtual bool fragment(Vec3f bar, uint32_t* out_color) {
+        Vec2f interpolated_text_uv = gl::barycentric_inverse(text_uvs, bar);
+        uint32_t texture_sample = texture.get(interpolated_text_uv.x, interpolated_text_uv.y);
+        *out_color = texture_sample;
+        return false;
+    }
+};
+
 struct GouraudShader : public gl::IShader {
 
     // Expected data:
@@ -138,33 +175,124 @@ struct GouraudShader : public gl::IShader {
     }
 };
 
+float c = 0.8;
+
 void render_line(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f start, Vec3f end, uint32_t color) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
     Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    Matrix projection_matrix = Matrix::identity();
-    float c = 0.9f;
-    if (c != 0) projection_matrix[3][2] = -1 / c;
+    Matrix projection_matrix = gl::projection(-1/c);
     Vec3f start_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(start));
     Vec3f end_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(end));
     gl::line(pixel_buffer, z_buffer, start_real, end_real, color);
 }
 
-void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuffer texture_data, camera camera, Vec3f light_position, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
+char char_lower(char c) {
+    if (c >= 65 && c <= 90) c += 32;
+    return c;
+}
+struct float4 { float f[4]; };
+float4 char_uv(char c) {
+    float4 uv;
+    c = char_lower(c);
+    uv.f[0] = (c%16)*8;
+    uv.f[1] = (c/16)*8;
+    uv.f[2] = 4;
+    uv.f[3] = 8;
+    return uv;
+}
     
+void render_text(PixelBuffer pixel_buffer, Vec2i pos, uint32_t color, const char* text, size_t text_size) {
+    
+    // bitmap font embeded in the executable
+    #include "texture_font.cpp"
+    static PixelBuffer texture(texture_font_width, texture_font_height, texture_font_data);
+    // 1 vertex = 5 floats { location_x, location_y, location_z, text_u, text_v }
+    // 1 triangle = 3 vertices
+    // 1 quad = 2 triangles
+    // 1 char = 1 quad
+    // Up to 1024 characters
+    static float vertices[5*3*2*1024] = {0};
+
+    float size_factor = 1.0f;
+    size_factor = 2.0f;
+    // size_factor = 0.5f;
+    int offset_x = 0;
+    int offset_y = 0;
+    for(int i = 0; i < text_size; i++) {
+        // if (text[i] == '\n') {
+        //     offset_y += (8*size_factor);
+        //     offset_x = -((i+1)*(4*size_factor));
+        //     continue;
+        // }
+        char c = char_lower(text[i]);
+        int x = offset_x + (pos.x + i * (4 * size_factor));
+        int y = offset_y + pos.y;
+        int u1 = (c%16) * 8;
+        int v1 = (c/16) * 8;
+        int u2 = u1 + 4;
+        int v2 = v1 + 8;
+        int w = 4.0f * size_factor;
+        int h = 8.0f * size_factor;
+        int offset = i*5*3*2;
+
+        vertices[offset + 0] = x;
+        vertices[offset + 1] = y;
+        vertices[offset + 2] = 0;
+        vertices[offset + 3] = u1;
+        vertices[offset + 4] = v1;
+
+        vertices[offset + 5] = x + w;
+        vertices[offset + 6] = y;
+        vertices[offset + 7] = 0;
+        vertices[offset + 8] = u2;
+        vertices[offset + 9] = v1;
+
+        vertices[offset + 10] = x;
+        vertices[offset + 11] = y - h;
+        vertices[offset + 12] = 0;
+        vertices[offset + 13] = u1;
+        vertices[offset + 14] = v2;
+
+        vertices[offset + 15] = x;
+        vertices[offset + 16] = y - h;
+        vertices[offset + 17] = 0;
+        vertices[offset + 18] = u1;
+        vertices[offset + 19] = v2;
+
+        vertices[offset + 20] = x + w;
+        vertices[offset + 21] = y - h;
+        vertices[offset + 22] = 0;
+        vertices[offset + 23] = u2;
+        vertices[offset + 24] = v2;
+
+        vertices[offset + 25] = x + w;
+        vertices[offset + 26] = y;
+        vertices[offset + 27] = 0;
+        vertices[offset + 28] = u2;
+        vertices[offset + 29] = v1;
+    }
+
+    TextureQuadShader shader(vertices, texture);
+    for (int i = 0; i < text_size*2; i++) {
+        Vec3f screen_coords[3];
+        for (int j=0; j<3; j++) {
+            screen_coords[j] = shader.vertex(i, j);
+        }
+        gl::triangle(screen_coords, &shader, pixel_buffer);
+    }
+}
+
+void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuffer texture_data, camera camera, Vec3f light_position, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
     Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    Matrix projection_matrix = Matrix::identity();
-    float c = 0.9f;
-    if (c != 0) projection_matrix[3][2] = -1 / c;
-
+    Matrix projection_matrix = gl::projection(-1/c);
     Matrix light_matrix = Matrix::identity();
     Matrix model_matrix = Matrix::t(pos) * Matrix::s(scale_factor);
-    Matrix transformations_matrix = viewport_matrix * projection_matrix;
 
     GouraudShader shader;
     shader.view_model_matrix = view_matrix * model_matrix;
     shader.vertex_buffer = vertex_buffer;
-    shader.transformations_matrix = transformations_matrix;
+    shader.transformations_matrix = viewport_matrix * projection_matrix;
     shader.texture = texture_data;
     shader.light_position = gl::retro_project_back_into_3d(view_matrix * light_matrix * gl::embed_in_4d(light_position));
 
@@ -260,8 +388,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         // "advance time" and others
         time += dt_ms;
         float factor = 2000;
-        Vec3f horizontally_spinning_position(cos(time / factor), .55, sin(time / factor));
-        // horizontally_spinning_position.y += 0.4;
+        Vec3f horizontally_spinning_position(cos(time / factor), .0, sin(time / factor));
         Vec3f vertically_spinning_position(0, cos(time / factor), sin(time / factor));
         uint32_t smooth_color = u32rgba(cos(time / factor) * 255, sin(time / factor) * 255, tan(time / factor) * 255, 255);
 
@@ -269,22 +396,21 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         z_buffer.clear(-9999999);
         
         // update camera
-        cam.position = Vec3f(.2, .35, 1);
-        // cam.position = Vec3f(1,0,0);
-        // cam.position = Vec3f(0,1,0);
-        // cam.position = Vec3f(0,0,2);
         cam.position = horizontally_spinning_position;
+        cam.position.x += cam.position.x * 0.3f;
+        cam.position.z += cam.position.z * 0.3f;
+        cam.position.y = 0.2;
         cam.looking_at = Vec3f(0, 0, 0);
         cam.up = Vec3f(0, 1, 0);
         
         // move light
-        // Vec3f light_position = horizontally_spinning_position;
-        Vec3f light_position = cam.position;
+        Vec3f light_position = horizontally_spinning_position;
 
-        render(pixels, vertex_buffer, triangles, texture, cam, light_position, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
+        // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
         render_line(pixels, z_buffer, cam, Vec3f(-2,0,0), Vec3f(2,0,0), blue);
         render_line(pixels, z_buffer, cam, Vec3f(0,-2,0), Vec3f(0,2,0), blue);
         render_line(pixels, z_buffer, cam, Vec3f(0,0,-2), Vec3f(0,0,2), blue);
+        render_text(pixels, Vec2i(10, pixels.height-10), red, "Hello", 5);
         // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(1.0f, 0.0f, 0.0f), &z_buffer);
         // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 1.0f, 0.0f), &z_buffer);
         // render(pixels, vertex_buffer, triangles, texture, cam, light_position, 0.1f, Vec3f(0.0f, 0.0f, 1.0f), &z_buffer);

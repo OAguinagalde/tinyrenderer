@@ -210,9 +210,9 @@ namespace gl {
 
         // I think Tr stands for Translation
         Matrix Tr = Matrix::identity();
-        Tr[0][3] = -camera_location.x;
-        Tr[1][3] = -camera_location.y;
-        Tr[2][3] = -camera_location.z;
+        Tr[0][3] = -point_looked_at.x;
+        Tr[1][3] = -point_looked_at.y;
+        Tr[2][3] = -point_looked_at.z;
 
         // I think Minv stands for Matrix inversed
         // TODO Why exactly do we need this?
@@ -233,6 +233,20 @@ namespace gl {
         // > The last step is a translation of the origin to the point of viewer e and our transformation matrix is ready
         Matrix model_view = Minv * Tr;
         return model_view;
+    }
+
+    Matrix lookaat(Vec3f eye, Vec3f center, Vec3f up) {
+        Vec3f z = (eye-center).normalized();
+        Vec3f x = (up^z).normalized();
+        Vec3f y = (z^x).normalized();
+        Matrix ModelView = Matrix::identity();
+        for (int i=0; i<3; i++) {
+            ModelView[0][i] = x.raw[i];
+            ModelView[1][i] = y.raw[i];
+            ModelView[2][i] = z.raw[i];
+            ModelView[i][3] = -center.raw[i];
+        }
+        return ModelView;
     }
 
     // Retro-project a point in "4d" back into "3d"
@@ -624,6 +638,8 @@ namespace gl {
                 z += depth.raw[1] * bar.u;
                 z += depth.raw[2] * bar.v;
 
+                if (x < 0 || x >= image.width || y < 0 || y >= image.height || z < 0) continue;
+
                 // calculate z-buffer value's index
                 int idx = int(x + y * image_witdth);
 
@@ -636,6 +652,122 @@ namespace gl {
                         z_buffer->data[idx] = z;
                         image.set(x, y, color);
                     }
+                }
+            }
+
+            // We don't really need to know which side will be in the "left" or "right", since the increments are already signed
+            // Just get the current "horizontal line"'s positions and add the increments (substract* since we are drawing the triangle top to bottom)
+            side1 -= incrementLongLine;
+            if (y > mid->y) {
+                side2 -= incrementShortLine1;
+            }
+            else {
+                side2 -= incrementShortLine2;
+            }
+        }
+    }
+
+    void triangle(Vec3f pts[3], IShader* shader, PixelBuffer image) {
+        
+        // TODO make this calculations with floats rather than ints
+        Vec2i screen[3];
+        screen[0] = Vec2i(pts[0].x, pts[0].y);
+        screen[1] = Vec2i(pts[1].x, pts[1].y);
+        screen[2] = Vec2i(pts[2].x, pts[2].y);
+
+        Vec3i depth(pts[0].z, pts[1].z, pts[2].z);
+        
+        // 1. find the highest vertex and the lowest vertex
+        Vec2i* top = &screen[0];
+        Vec2i* mid = &screen[1];
+        Vec2i* bot = &screen[2];
+        Vec2i* aux;
+        
+        if (bot->y > mid->y) {
+            aux = mid;
+            mid = bot;
+            bot = aux;
+        }
+
+        if (bot->y > top->y) {
+            aux = top;
+            top = bot;
+            bot = aux;
+        }
+
+        if (mid->y > top->y) {
+            aux = top;
+            top = mid;
+            mid = aux;
+        }
+
+        // The poor mans assert lol
+        if (!(top->y >= mid->y && top->y >= bot->y)) { int a=1;a=a/0; }
+        if (!(mid->y <= top->y && mid->y >= bot->y)) { int a=1;a=a/0; }
+        if (!(bot->y <= top->y && bot->y <= mid->y)) { int a=1;a=a/0; }
+
+        // 2. calculate dy between them
+        int dyTopMid = top->y - mid->y;
+        int dyMidBot = mid->y - bot->y;
+        int dyTopBot = top->y - bot->y;
+
+        int dxTopMid = top->x - mid->x;
+        int dxTopBot = top->x - bot->x;
+        int dxMidBot = mid->x - bot->x;
+
+        // So we know that line(T-B) is going to be longer than line(T-M) or (M-B)
+        // So we can split the triangle in 2 triangles, divided by the horizontal line where y == mid.y
+
+        // Calculate the increments (the steepness?) of the segments of the triangle as we progress with the filling
+        float incrementLongLine = dxTopBot / (float)dyTopBot;
+        float incrementShortLine1 = dxTopMid / (float)dyTopMid;
+        float incrementShortLine2 = dxMidBot / (float)dyMidBot;
+        
+        // 3. loop though each "horizontal line" between top and bottom
+        // Starting position is the top so both side's x position will be tops's x position
+        float side1 = top->x;
+        float side2 = top->x;
+
+        // If the first half of the triangle "does't exist" then draw only the second part
+        if (dyTopMid == 0) {
+            incrementShortLine1 = dxTopMid;
+            side2 -= incrementShortLine1;
+        }
+
+        int image_witdth = image.width;
+        int image_height = image.height;
+
+        // first, draw the top half of the triangle
+        for (int y = top->y; y > bot->y; y--) {
+
+            // TODO I probably dont need to check this in each line
+            int left = side1;
+            int right = side2;
+            if (left > right) {
+                // swap!
+                int c = left;
+                left = right;
+                right = c;
+            }
+            
+            // draw a horizontal line (left, y) to (right, y)
+            for (int x = left; x <= right; x++) {
+                
+                // barycentric coordinates for `z-buffer` and `texture sampling`
+                Vec3f bar = barycentric(screen, Vec2i(x, y));
+
+                if (bar.x < 0 || bar.y < 0 || bar.z < 0 || bar.x > 1.0 || bar.y > 1.0 || bar.z > 1.0) continue; //{ int a=1;a=a/0; }
+
+                if (x < 0 || x >= image.width || y < 0 || y >= image.height) continue;
+
+                // calculate z-buffer value's index
+
+                // Other algorithms might check using the barycentric that the current pixel is inside (usually run multithreaded)
+                // but this algorithm is more of an old school single threaded one which will directly only run on the right pixels
+                uint32_t color;
+                bool discard = shader->fragment(bar, &color);
+                if (!discard) {
+                    image.set(x, y, color);
                 }
             }
 
