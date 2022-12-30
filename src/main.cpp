@@ -164,14 +164,24 @@ struct GouraudShader : public gl::IShader {
     }
 };
 
-float c = 0.9;
+float c = 1;
+
+void render_dot(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f p, uint32_t color) {
+    Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
+    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
+    Matrix projection_matrix = gl::projection(-1/c);
+    // Matrix projection_matrix = gl::projection(-1/(camera.looking_at - camera.position).norm());
+    // Matrix projection_matrix = Matrix::identity();
+    Vec3f p_ = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(p));
+    gl::dot(pixel_buffer, z_buffer, p_, color);
+}
 
 void render_line(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f start, Vec3f end, uint32_t color) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
     Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    // Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
-    // Matrix projection_matrix = gl::projection(-1/c);
-    Matrix projection_matrix = gl::projection(-1/(camera.looking_at - camera.position).norm());
+    Matrix projection_matrix = gl::projection(-1/c);
+    // Matrix projection_matrix = gl::projection(-1/(camera.looking_at - camera.position).norm());
+    // Matrix projection_matrix = Matrix::identity();
     Vec3f start_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(start));
     Vec3f end_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(end));
     gl::line(pixel_buffer, z_buffer, start_real, end_real, color);
@@ -275,9 +285,9 @@ void render_text(PixelBuffer pixel_buffer, Vec2i pos, uint32_t color, const char
 void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuffer texture_data, camera camera, Vec3f light_direction, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
     Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    // Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
-    // Matrix projection_matrix = gl::projection(-1/c);
-    Matrix projection_matrix = gl::projection(-1/(camera.looking_at - camera.position).norm());
+    Matrix projection_matrix = gl::projection(-1/c);
+    // Matrix projection_matrix = gl::projection(-1/(camera.looking_at - camera.position).norm());
+    // Matrix projection_matrix = Matrix::identity();
     Matrix light_matrix = Matrix::identity();
     Matrix model_matrix = Matrix::t(pos) * Matrix::s(scale_factor);
 
@@ -393,24 +403,73 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         cam.position.x = (-mouse.x / 1920.0f * 10.f) + 5.f;
         cam.position.z = 1.0f;
         cam.position.y = (-mouse.y / 1080.0f * 10.f) + 5.f;
+        // cam.position = Vec3f(0, 0, 5);
+        // cam.position = Vec3f(0,0,0);
         cam.looking_at = Vec3f(0, 0, 0);
         cam.up = Vec3f(0, 1, 0);
 
-        Vec3f light_direction = Vec3f(1,1,1);
+        // Vec3f light_direction = Vec3f(1, 0, 1);
+        Vec3f light_source = horizontally_spinning_position;
+        Vec3f light_target = Vec3f(0, 0, 0);
+        Vec3f light_direction = light_target - light_source;
+        light_direction.normalize();
 
         render(pixels, vertex_buffer, triangles, texture, cam, light_direction, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
-        render_line(pixels, z_buffer, cam, Vec3f(-2,0,0), Vec3f(2,0,0), blue);
-        render_line(pixels, z_buffer, cam, Vec3f(0,-2,0), Vec3f(0,2,0), red);
-        render_line(pixels, z_buffer, cam, Vec3f(0,0,-2), Vec3f(0,0,2), green);
+        render(pixels, vertex_buffer, triangles, texture, cam, light_direction, 2.3f, Vec3f(0.0f, 0.0f, -4.0f), &z_buffer);
+        render_line(pixels, z_buffer, cam, Vec3f(-1,0,0), Vec3f(1,0,0), blue);
+        render_line(pixels, z_buffer, cam, Vec3f(0,-1,0), Vec3f(0,1,0), red);
+        render_line(pixels, z_buffer, cam, Vec3f(0,0,-1), Vec3f(0,0,1), green);
         
+        // TODO For some reason, points that are not normalized (0, 1), dont render properly,
+        // Although it seems like the model renderer has no issue with that tho?
+        render_line(pixels, z_buffer, cam, Vec3f(-100, 0, 0), Vec3f(100, 0, 0), white);
+        render_line(pixels, z_buffer, cam, Vec3f(0,-100,0), Vec3f(0,100,0), white);
+        render_line(pixels, z_buffer, cam, Vec3f(0,0,100), Vec3f(0,0,-100), white);
+
+        render_dot(pixels, z_buffer, cam, Vec3f(1, 1, 1), green);
+        render_dot(pixels, z_buffer, cam, Vec3f(-1, 1, 1), green);
+        render_dot(pixels, z_buffer, cam, Vec3f(1,-1,1), green);
+        render_dot(pixels, z_buffer, cam, Vec3f(1,1,-1), red);
+        render_dot(pixels, z_buffer, cam, Vec3f(-1,-1,-1), red);
+        render_dot(pixels, z_buffer, cam, Vec3f(1,-1,-1), red);
+        render_dot(pixels, z_buffer, cam, Vec3f(-1,1,-1), red);
+        render_dot(pixels, z_buffer, cam, Vec3f(-1,-1,1), green);
+
+        render_line(pixels, z_buffer, cam, light_source, light_target, white);
+        render_dot(pixels, z_buffer, cam, light_source, blue);
+
+        // auto distance = (Vec3f(0, 0, 0) - Vec3f(1, 0, 2)).norm();
+        // auto m = gl::lookat(Vec3f(1, 0, 2), Vec3f(0, 0, 0), Vec3f(0, 1, 0));
+        // auto viewport = gl::viewport(0, 0, pixels.width, pixels.height);
+        // auto p = Vec3f(0, 0, 1);
+        // auto p_ = gl::retro_project_back_into_3d(viewport * m * gl::embed_in_4d(p));
+        // auto c_ = gl::retro_project_back_into_3d(viewport * m * gl::embed_in_4d(Vec3f(0,0,0)));
+        // gl::fat_dot(Vec2i(p_.x, p_.y), pixels, blue);
+        // gl::fat_dot(Vec2i(c_.x, c_.y), pixels, red);
+
         static char text[1024];
         static int total_chars;
+        int line = 0;
         total_chars = snprintf(text, 1024, "FPS %llu, ms %f, space_pressed %d", fps, dt_ms, space_pressed);
-        render_text(pixels, Vec2i(10, pixels.height-15), red, text, total_chars);
+        render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
         total_chars = snprintf(text, 1024, "camera: %f, %f, %f", cam.position.x, cam.position.y, cam.position.z);
-        render_text(pixels, Vec2i(10, pixels.height-30), red, text, total_chars);
+        render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
         total_chars = snprintf(text, 1024, "mouse %d, %d", mouse.x, mouse.y);
-        render_text(pixels, Vec2i(10, pixels.height-45), red, text, total_chars);
+        render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
+        total_chars = snprintf(text, 1024, "distance: %f", (cam.position - cam.looking_at).norm());
+        render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
+
+        // total_chars = snprintf(text, 1024, "p_: %f, %f, %f", p_.x, p_.y, p_.z);
+        // render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
+        
+        // total_chars = snprintf(text, 1024, "m: %f, %f, %f, %f", m[0][0], m[0][1], m[0][2], m[0][3]);
+        // render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
+        // total_chars = snprintf(text, 1024, "   %f, %f, %f, %f", m[1][0], m[1][1], m[1][2], m[1][3]);
+        // render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
+        // total_chars = snprintf(text, 1024, "   %f, %f, %f, %f", m[2][0], m[2][1], m[2][2], m[2][3]);
+        // render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
+        // total_chars = snprintf(text, 1024, "   %f, %f, %f, %f", m[3][0], m[3][1], m[3][2], m[0][3]);
+        // render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
     }
 
     /* stats and debugging stuff */ {
@@ -446,7 +505,7 @@ bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2
 
 int main(int argc, char** argv) {
     srand(time(NULL));
-    
+
     /* window scope */ {
         auto window = win32::NewWindow("myWindow", "tinyrenderer", 100, 100, 10, 10, &window_callback);
         defer _([window]() { win32::CleanWindow("myWindow", window); });

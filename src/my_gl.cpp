@@ -171,119 +171,44 @@ namespace gl {
         return projection;
     }
 
-    // Builds a lookat matrix. More infor below.
     // param `camera_location` commonly referred to as `eye`.
     // param `point_looked_at` commonly referred to as `center`.
-    // 
-    //     http://www.songho.ca/opengl/gl_transform.html
-    //     > Note that there is no separate camera (view) matrix in OpenGL.
-    //     > Therefore, in order to simulate transforming the camera or view, the scene(3D objects and lights) must be transformed with the inverse
-    //     > of the view transformation. In other words, OpenGL defines that the camera is always located at(0, 0, 0) and
-    //     > facing to - Z axis in the eye space coordinates, and cannot be transformed
-    // 
-    // As that says, OpenGl and this renderer are able to draw scenes only with the camera located on the z-axis.
-    // TODO I dont quite understand why that is...???
-    // So a lookat Matrix is basically a Matrix that moves a point simulating that we do have a camera.
-    // And once that Matrix is obtained, if you transform every single point in the world with it, we have basially moved the world to simulated our camera.
-    // 
-    // Some other notes from random sources:
-    // 
-    //     > View Matrix defines the position (location and orientation) of the camera
-    // 
-    //     > The reason for two separate matrices, instead of one, is that lighting is applied after the modelview view matrix (i.e. on eye coordinates) and before the projection matrix
-    // 
+    // This is RIGHT HANDED COLUMN MAJOR
+    // http://www.songho.ca/opengl/gl_transform.html
+    // https://stackoverflow.com/questions/349050/calculating-a-lookat-matrix
+    // https://stackoverflow.com/questions/53143175/writing-a-lookat-function
     // https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera
+    // https://github.com/ssloy/tinyrenderer/blob/f037c7a0517a632c7391b35131f9746a8f8bb235/our_gl.cpp
+    // https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function
+    // https://github.com/HandmadeMath/HandmadeMath/blob/master/HandmadeMath.h
     Matrix lookat(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
 
-        // Make the camera the "center of the world". So...
-        // * In front of the camera, the z < 0 (so, negative) and behind is > 0, for convention.
-        // * To the right, x > 0, and to the left x < 0.
-        // * On top of us (meaning that if the camera is looking slightly down, the "top" gets also tilted) y > 0 and below, y < 0
-        //     
-        //      A up (+y)         
-        //      |             front (-z)          .---
-        //  camera (eye)  ----->             o <--| The point 
-        //       \                                | the camera
-        //        \  right (+x)                   | is looking at
-        //         V                               `--
-        //                                                                     
+        // just in case, normalize the up direction
         up.normalize();
-        // z = front
+
+        // here z is technically -z
         Vec3f z = (camera_location - point_looked_at).normalized();
-        // x = looking to the front, x is the right side
-        // NOTES so aparently, since the "front" is by convention negative z, now the right is on the left lol so inverted this cross(z, up) to cross(up, z)
-        // WAIT A MOMENT, according to this, thats not the casce WTH? https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function
         Vec3f x = (up ^ z).normalized();
-        // y = whatever is on top of the camera
         Vec3f y = (z ^ x).normalized();
 
-        // To simulate that the camera moves, everything move in the oposite direction that the camera:
-        // If the camera does 1 step (z+=1) towards something, then everything moves 1 step in the other direction (z-=1)
-        // 
-        // https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera#change-of-basis-in-3d-space
-        // 
-        //  the point we
-        //  want to get     the inverse matrix (down below called matrix_inv)
-        //     \          /           the camera position
-        //      '        '           /   
-        //                          '
-        //     |x'| =  -1  ( |x|   |O'x| )
-        //     |y'| = M    ( |y| - |O'y| )
-        //     |z'| =      ( |z|   |O'z| )
-        //                   .
-        //                  /    
-        //  the original point respect to the original "center of the world"           
-        // 
-        // https://stackoverflow.com/questions/53143175/writing-a-lookat-function
-        // 
-        // > To construct a 3D transform matrix you need position O and 3 basis vectors (X,Y,Z) which are unit and perpendicular to each other.
-        // > Now just simply feed O,X,Y,Z into unit 4x4 matrix. As camera is usually inverted, invert it and you got your resulting matrix.
-        // 
-        // Where O is the position of the camera, and XYZ are the previously calculated unti vectors (front, right and up)
+        Matrix transformation_matrix = Matrix::identity();
+        transformation_matrix[0][0] = x.x;
+        transformation_matrix[1][0] = x.y;
+        transformation_matrix[2][0] = x.z;
 
-        
-        // AAAAAAAAAAAAAAAAH AAAAAAAH AIUDAAAA
-        // Here: https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera
-        // it uses -eye
-        // Here: https://github.com/ssloy/tinyrenderer/blob/f037c7a0517a632c7391b35131f9746a8f8bb235/our_gl.cpp
-        // it uses -center
-        // Here: https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function
-        // And Here: https://stackoverflow.com/questions/53143175/writing-a-lookat-function
-        // it uses eye
-        
-        Matrix translation = Matrix::identity();
-        translation[0][3] = camera_location.x;
-        translation[1][3] = camera_location.y;
-        translation[2][3] = camera_location.z;
+        transformation_matrix[0][1] = y.x;
+        transformation_matrix[1][1] = y.y;
+        transformation_matrix[2][1] = y.z;
 
-        // translation[0][3] = point_looked_at.x;
-        // translation[1][3] = point_looked_at.y;
-        // translation[2][3] = point_looked_at.z;
+        transformation_matrix[0][2] = z.x;
+        transformation_matrix[1][2] = z.y;
+        transformation_matrix[2][2] = z.z;
 
-        // translation[0][3] = -point_looked_at.x;
-        // translation[1][3] = -point_looked_at.y;
-        // translation[2][3] = -point_looked_at.z;
+        transformation_matrix[0][3] = (x * camera_location)  * -1 ;
+        transformation_matrix[1][3] = (y * camera_location)  * -1 ;
+        transformation_matrix[2][3] = (z * camera_location)  * -1 ;
 
-        // translation[0][3] = -camera_location.x;
-        // translation[1][3] = -camera_location.y;
-        // translation[2][3] = -camera_location.z;
-        
-        Matrix matrix = Matrix::identity();
-        matrix[0][0] = x.x;
-        matrix[0][1] = x.y;
-        matrix[0][2] = x.z;
-
-        matrix[1][0] = y.x;
-        matrix[1][1] = y.y;
-        matrix[1][2] = y.z;
-
-        matrix[2][0] = z.x;
-        matrix[2][1] = z.y;
-        matrix[2][2] = z.z;
-
-        // > The last step is a translation of the origin to the point of viewer e and our transformation matrix is ready
-        Matrix view_matrix = matrix * translation;
-        return view_matrix;
+        return transformation_matrix;
     }
 
     // Retro-project a point in "4d" back into "3d"
@@ -564,6 +489,22 @@ namespace gl {
         image.set(p.x-1, p.y, color);
         image.set(p.x, p.y+1, color);
         image.set(p.x, p.y-1, color);
+    }
+    
+    void dot(PixelBuffer pixels, FloatBuffer depth, Vec3f p, uint32_t color) {
+        if (p.x < 0 || p.x >= pixels.width || p.y < 0 || p.y >= pixels.height || p.z < 0) return;
+        int idx = p.x + p.y * pixels.width;
+        if (depth.data[idx] < p.z) {
+            pixels.set(p.x, p.y, color);
+            // pixels.set(p.x + 1, p.y, color);
+            // pixels.set(p.x - 1, p.y, color);
+            // pixels.set(p.x, p.y + 1, color);
+            // pixels.set(p.x, p.y - 1, color);
+        }
+        else {
+            u32rgba_unpack(pixels.get(p.x, p.y), r, g, b, a);
+            pixels.set(p.x, p.y, u32rgba(r*0.5f, g*0.5f, b*0.5f, a*0.5f));
+        }
     }
 
     // The algorith proposed puts the depth directly into the Vec2i (making it a Vec3i), but I chose to put it separately

@@ -87,6 +87,7 @@ struct BoundingBox {
 
 const int DEFAULT_ALLOC = 4;
 
+// https://en.wikipedia.org/wiki/File:2D_affine_transformation_matrix.svg
 class Matrix {
 	std::vector<std::vector<float> > m;
 	int rows, cols;
