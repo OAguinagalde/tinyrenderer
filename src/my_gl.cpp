@@ -204,9 +204,9 @@ namespace gl {
         transformation_matrix[2][1] = z.y;
         transformation_matrix[2][2] = z.z;
         
-        transformation_matrix[0][3] = (x * camera_location) * -1;
-        transformation_matrix[1][3] = (y * camera_location) * -1;
-        transformation_matrix[2][3] = (z * camera_location) * -1;
+        transformation_matrix[0][3] = point_looked_at.raw[0] * -1;
+        transformation_matrix[1][3] = point_looked_at.raw[1] * -1;
+        transformation_matrix[2][3] = point_looked_at.raw[2] * -1;
 
         return transformation_matrix;
     }

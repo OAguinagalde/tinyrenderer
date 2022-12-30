@@ -129,6 +129,7 @@ struct GouraudShader : public gl::IShader {
         Vec3f screen_position = gl::retro_project_back_into_3d(transformations_matrix * world_position);
         
         light_intensities[nthvert] = MIN(MAX(0.f, vertex_normal * light_direction), 1.f);
+        // light_intensities[nthvert] = vertex_normal * light_direction;
         text_uvs[nthvert] = vertex_uv;
 
         return screen_position;
@@ -156,7 +157,7 @@ struct GouraudShader : public gl::IShader {
 
         // final color is the texture color times the intensity of the light
         u32rgba_unpack(texture_sample, r, g, b, a);
-        // r = 255; g = 255; b = 255; a = 255;
+        r = 255; g = 255; b = 255; a = 255;
         *out_color = u32rgba(intensity * r, intensity * g, intensity * b, intensity * a);
 
         // Do not discard the pixel
@@ -168,9 +169,10 @@ float c = 1;
 
 void render_dot(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f p, uint32_t color) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
-    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    Matrix projection_matrix = gl::projection(-1/c);
-    // Matrix projection_matrix = gl::projection(-1/(camera.looking_at - camera.position).norm());
+    // Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
+    Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
+    // Matrix projection_matrix = gl::projection(-1/c);
+    Matrix projection_matrix = gl::projection(-1/(camera.position - camera.looking_at).norm());
     // Matrix projection_matrix = Matrix::identity();
     Vec3f p_ = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(p));
     gl::dot(pixel_buffer, z_buffer, p_, color);
@@ -178,9 +180,10 @@ void render_dot(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, V
 
 void render_line(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f start, Vec3f end, uint32_t color) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
-    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    Matrix projection_matrix = gl::projection(-1/c);
-    // Matrix projection_matrix = gl::projection(-1/(camera.looking_at - camera.position).norm());
+    // Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
+    Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
+    // Matrix projection_matrix = gl::projection(-1/c);
+    Matrix projection_matrix = gl::projection(-1/(camera.position - camera.looking_at).norm());
     // Matrix projection_matrix = Matrix::identity();
     Vec3f start_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(start));
     Vec3f end_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(end));
@@ -284,9 +287,10 @@ void render_text(PixelBuffer pixel_buffer, Vec2i pos, uint32_t color, const char
 
 void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuffer texture_data, camera camera, Vec3f light_direction, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
-    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    Matrix projection_matrix = gl::projection(-1/c);
-    // Matrix projection_matrix = gl::projection(-1/(camera.looking_at - camera.position).norm());
+    // Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
+    Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
+    // Matrix projection_matrix = gl::projection(-1/c);
+    Matrix projection_matrix = gl::projection(-1/(camera.position - camera.looking_at).norm());
     // Matrix projection_matrix = Matrix::identity();
     Matrix light_matrix = Matrix::identity();
     Matrix model_matrix = Matrix::t(pos) * Matrix::s(scale_factor);
@@ -405,6 +409,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         cam.position.y = (-mouse.y / 1080.0f * 10.f) + 5.f;
         // cam.position = Vec3f(0, 0, 5);
         // cam.position = Vec3f(0,0,0);
+        cam.position = Vec3f(1,1,3);
         cam.looking_at = Vec3f(0, 0, 0);
         cam.up = Vec3f(0, 1, 0);
 
@@ -412,6 +417,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         Vec3f light_source = horizontally_spinning_position;
         Vec3f light_target = Vec3f(0, 0, 0);
         Vec3f light_direction = light_target - light_source;
+        light_direction = Vec3f(1,-1,1);
         light_direction.normalize();
 
         render(pixels, vertex_buffer, triangles, texture, cam, light_direction, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
