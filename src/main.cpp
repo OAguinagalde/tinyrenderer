@@ -310,7 +310,7 @@ void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuff
             screen_coords[j] = shader.vertex(i, j);
         }
 
-        gl::triangle(screen_coords, &shader, pixel_buffer, z_buffer);
+        gl::triangle2(screen_coords, &shader, pixel_buffer, z_buffer);
     }
 
 }

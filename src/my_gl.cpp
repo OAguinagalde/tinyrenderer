@@ -774,8 +774,8 @@ namespace gl {
         BoundingBox bb = triangle_bb(screen);
 
         int image_witdth = image.width;
-        for (int y = bb.tl.y; y > bb.br.y; y--) { // top to bottom
-            for (int x = bb.tl.x; x < bb.br.x; x++) { // left to right
+        for (int y = MIN(bb.tl.y, image.height-1); y > MAX(bb.br.y,0); y--) { // top to bottom
+            for (int x = MAX(bb.tl.x, 0); x < MIN(bb.br.x, image.width-1); x++) { // left to right
 
                 // barycentric coordinates for bounds checking, `z-buffer`, `texture sampling`
                 Vec3f bar = barycentric(screen, Vec2i(x, y));
