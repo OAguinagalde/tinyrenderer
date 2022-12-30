@@ -56,9 +56,9 @@ public:
 				triangle_vertices[8 * j + 2] = vert(location_indexes[j]).z;
 				triangle_vertices[8 * j + 3] = text(uv_indexes[j]).u;
 				triangle_vertices[8 * j + 4] = text(uv_indexes[j]).v;
-				triangle_vertices[8 * j + 5] = normal(normal_indexes[j]).v;
-				triangle_vertices[8 * j + 6] = normal(normal_indexes[j]).v;
-				triangle_vertices[8 * j + 7] = normal(normal_indexes[j]).v;
+				triangle_vertices[8 * j + 5] = normal(normal_indexes[j]).x;
+				triangle_vertices[8 * j + 6] = normal(normal_indexes[j]).y;
+				triangle_vertices[8 * j + 7] = normal(normal_indexes[j]).z;
 				
 			}
 		}
