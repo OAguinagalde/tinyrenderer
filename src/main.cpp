@@ -129,7 +129,7 @@ struct GouraudShader : public gl::IShader {
         Vec3f screen_position = gl::retro_project_back_into_3d(transformations_matrix * world_position);
         
         light_intensities[nthvert] = MIN(MAX(0.f, vertex_normal * light_direction), 1.f);
-        light_intensities[nthvert] = vertex_normal * light_direction;
+        // light_intensities[nthvert] = vertex_normal * light_direction;
         text_uvs[nthvert] = vertex_uv;
 
         return screen_position;
