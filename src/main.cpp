@@ -100,10 +100,14 @@ struct GouraudShader : public gl::IShader {
     // precomputed: viewport_matrix * projection_matrix * view_matrix * model_matrix
     Matrix transformations_matrix;
     Matrix view_model_matrix;
+    Vec3f light_source;
 
     // resources used during fragment shader
-    Vec3f light_direction;
     PixelBuffer texture;
+
+    // debugging
+    Vec3f world_position;
+    Vec3f light_direction;
 
     virtual Vec3f vertex(int iface, int nthvert) {
 
@@ -125,9 +129,10 @@ struct GouraudShader : public gl::IShader {
         );
         vertex_normal.normalize();
 
-        Matrix world_position = view_model_matrix * gl::embed_in_4d(vertex_position);
-        Vec3f screen_position = gl::retro_project_back_into_3d(transformations_matrix * world_position);
+        world_position = gl::retro_project_back_into_3d(view_model_matrix * gl::embed_in_4d(vertex_position));
+        Vec3f screen_position = gl::retro_project_back_into_3d(transformations_matrix * gl::embed_in_4d(world_position));
         
+        light_direction = (light_source - world_position).normalized();
         light_intensities[nthvert] = MIN(MAX(0.f, vertex_normal * light_direction), 1.f);
         text_uvs[nthvert] = vertex_uv;
 
@@ -143,12 +148,12 @@ struct GouraudShader : public gl::IShader {
         intensity += light_intensities[2] * bar.v;
 
         // clamp light intensity to 1 of 6 different levels (not needed but cool)
-        // if (intensity>.85) intensity = 1;
-        // else if (intensity>.60) intensity = .80;
-        // else if (intensity>.45) intensity = .60;
-        // else if (intensity>.30) intensity = .45;
-        // else if (intensity>.15) intensity = .30;
-        // else intensity = .15;
+        if (intensity>.85) intensity = 1;
+        else if (intensity>.60) intensity = .80;
+        else if (intensity>.45) intensity = .60;
+        else if (intensity>.30) intensity = .45;
+        else if (intensity>.15) intensity = .30;
+        else intensity = .15;
 
         // interpolate texture_uv for the current pixel and sample texture
         Vec2f interpolated_text_uv = gl::barycentric_inverse(text_uvs, bar);
@@ -284,7 +289,7 @@ void render_text(PixelBuffer pixel_buffer, Vec2i pos, uint32_t color, const char
     }
 }
 
-void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuffer texture_data, camera camera, Vec3f light_direction, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
+void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuffer texture_data, camera camera, Vec3f light_source, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
     // Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
     Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
@@ -299,7 +304,7 @@ void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuff
     shader.vertex_buffer = vertex_buffer;
     shader.transformations_matrix = viewport_matrix * projection_matrix;
     shader.texture = texture_data;
-    shader.light_direction = light_direction.normalized();
+    shader.light_source = gl::retro_project_back_into_3d(view_matrix * light_matrix * gl::embed_in_4d(light_source));
 
     for (int i = 0; i < faces; i++) {
 
@@ -307,6 +312,9 @@ void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuff
 
         for (int j=0; j<3; j++) {
             screen_coords[j] = shader.vertex(i, j);
+
+            // for debugging, render the light directions to each vertex
+            // render_line(pixel_buffer, *z_buffer, camera, shader.world_position, shader.world_position + shader.light_direction, white);
         }
 
         gl::triangle2(screen_coords, &shader, pixel_buffer, z_buffer);
@@ -317,8 +325,8 @@ bool space_pressed = false;
 bool onUpdate(double dt_ms, unsigned long long fps) {
 
     auto wc = win32::GetWindowContext();
-    static int render_width = 800;
-    static int render_height = 800;
+    static int render_width = 500;
+    static int render_height = 500;
     static const char* render_name = "textured.tga";
     
     /* setup the window */ {
@@ -404,23 +412,15 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
 
         z_buffer.clear(-9999999);
         cam.position.x = (-mouse.x / 1920.0f * 10.f) + 5.f;
-        cam.position.z = 1.0f;
+        cam.position.z = 8.0f;
         cam.position.y = (-mouse.y / 1080.0f * 10.f) + 5.f;
-        // cam.position = Vec3f(0, 0, 5);
-        // cam.position = Vec3f(0,0,0);
-        // cam.position = Vec3f(1,1,3);
         cam.looking_at = Vec3f(0, 0, 0);
         cam.up = Vec3f(0, 1, 0);
 
-        // Vec3f light_direction = Vec3f(1, 0, 1);
         Vec3f light_source = horizontally_spinning_position;
-        Vec3f light_target = Vec3f(0, 0, 0);
-        Vec3f light_direction = light_target - light_source;
-        // light_direction = Vec3f(1,-1,1);
-        light_direction.normalize();
 
-        render(pixels, vertex_buffer, triangles, texture, cam, light_direction, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
-        render(pixels, vertex_buffer, triangles, texture, cam, light_direction, 2.3f, Vec3f(0.0f, 0.0f, -4.0f), &z_buffer);
+        render(pixels, vertex_buffer, triangles, texture, cam, light_source, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
+        render(pixels, vertex_buffer, triangles, texture, cam, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f), &z_buffer);
         render_line(pixels, z_buffer, cam, Vec3f(-1,0,0), Vec3f(1,0,0), blue);
         render_line(pixels, z_buffer, cam, Vec3f(0,-1,0), Vec3f(0,1,0), red);
         render_line(pixels, z_buffer, cam, Vec3f(0,0,-1), Vec3f(0,0,1), green);
@@ -440,8 +440,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         render_dot(pixels, z_buffer, cam, Vec3f(-1,1,-1), red);
         render_dot(pixels, z_buffer, cam, Vec3f(-1,-1,1), green);
 
-        render_line(pixels, z_buffer, cam, light_source, light_target, white);
-        render_dot(pixels, z_buffer, cam, light_source, blue);
+        render_dot(pixels, z_buffer, cam, light_source, white);
 
         // auto distance = (Vec3f(0, 0, 0) - Vec3f(1, 0, 2)).norm();
         // auto m = gl::lookat(Vec3f(1, 0, 2), Vec3f(0, 0, 0), Vec3f(0, 1, 0));
