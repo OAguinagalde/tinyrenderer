@@ -9,6 +9,7 @@ const uint32_t black = u32rgba(0, 0, 0, 255);
 const uint32_t red = u32rgba(255, 0, 0, 255);
 const uint32_t green = u32rgba(0, 255, 0, 255);
 const uint32_t blue = u32rgba(0, 0, 255, 255);
+const uint32_t orange = u32rgba(255, 191, 0, 255);
 
 #undef MAX
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -221,7 +222,7 @@ void render_text(PixelBuffer pixel_buffer, Vec2i pos, uint32_t color, const char
     static float vertices[5*3*2*1024] = {0};
 
     float size_factor = 1.0f;
-    size_factor = 2.0f;
+    // size_factor = 2.0f;
     // size_factor = 0.5f;
     int offset_x = 0;
     int offset_y = 0;
@@ -299,6 +300,26 @@ void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuff
     Matrix light_matrix = Matrix::identity();
     Matrix model_matrix = Matrix::t(pos) * Matrix::s(scale_factor);
 
+    // multiply agains *** matrix to get the point in the point of view of the ***
+    // viewport, screen
+    // projection, clip coords
+    // lookat, camera
+    // model, world (origin)
+    // the original input point: [-1, 1] for obj, or whatever I manually pass
+
+    // vec3 p = point already in world space
+    // from cameras point of view | p1 = lookat * p
+    // in clip space              | p2 = projection * p1
+    // in screen                  | p3 = viewport * p2
+
+    // Example
+    // Matrix point_object_coords = embed_in_4d(some point);
+    // Matrix point_world_coords = model_matrix * point_object_coords;
+    // Matrix point_camera_coords = view_matrix * point_world_coords;
+    // Matrix point_clip_coords = projection_matrix * point_camera_coords;
+    // Matrix point_screen_coords = viewport_matrix * point_clip_coords;
+    // Vec3f final_point = retro_project_back_into_3d(point_screen_coords);
+
     GouraudShader shader;
     shader.view_model_matrix = view_matrix * model_matrix;
     shader.vertex_buffer = vertex_buffer;
@@ -325,8 +346,8 @@ bool space_pressed = false;
 bool onUpdate(double dt_ms, unsigned long long fps) {
 
     auto wc = win32::GetWindowContext();
-    static int render_width = 500;
-    static int render_height = 500;
+    static int render_width = 300;
+    static int render_height = 300;
     static const char* render_name = "textured.tga";
     
     /* setup the window */ {
@@ -412,35 +433,51 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
 
         z_buffer.clear(-9999999);
         cam.position.x = (-mouse.x / 1920.0f * 10.f) + 5.f;
-        cam.position.z = 8.0f;
+        cam.position.z = 1.0f;
         cam.position.y = (-mouse.y / 1080.0f * 10.f) + 5.f;
         cam.looking_at = Vec3f(0, 0, 0);
         cam.up = Vec3f(0, 1, 0);
 
         Vec3f light_source = horizontally_spinning_position;
 
-        render(pixels, vertex_buffer, triangles, texture, cam, light_source, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
-        render(pixels, vertex_buffer, triangles, texture, cam, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f), &z_buffer);
-        render_line(pixels, z_buffer, cam, Vec3f(-1,0,0), Vec3f(1,0,0), blue);
-        render_line(pixels, z_buffer, cam, Vec3f(0,-1,0), Vec3f(0,1,0), red);
+        // render(pixels, vertex_buffer, triangles, texture, cam, light_source, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
+        // render(pixels, vertex_buffer, triangles, texture, cam, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f), &z_buffer);
+
+        // draw a cube made out of lines
+        // plane z = 2
+        render_line(pixels, z_buffer, cam, Vec3f(-2, -2, 2), Vec3f(2, -2, 2), orange);
+        render_line(pixels, z_buffer, cam, Vec3f(2, -2, 2), Vec3f(2, 2, 2), orange);
+        render_line(pixels, z_buffer, cam, Vec3f(2, 2, 2), Vec3f(-2, 2, 2), orange);
+        render_line(pixels, z_buffer, cam, Vec3f(-2, 2, 2), Vec3f(-2, -2, 2), orange);
+        // plane z = -2
+        render_line(pixels, z_buffer, cam, Vec3f(-2, -2, -2), Vec3f(2, -2, -2), orange);
+        render_line(pixels, z_buffer, cam, Vec3f(2, -2, -2), Vec3f(2, 2, -2), orange);
+        render_line(pixels, z_buffer, cam, Vec3f(2, 2, -2), Vec3f(-2, 2, -2), orange);
+        render_line(pixels, z_buffer, cam, Vec3f(-2, 2, -2), Vec3f(-2, -2, -2), orange);
+        
+
+
+        // draw the unit vectors at (0, 0, 0)
+        render_line(pixels, z_buffer, cam, Vec3f(-1, 0, 0), Vec3f(1, 0, 0), blue);
+        render_line(pixels, z_buffer, cam, Vec3f(0, -1, 0), Vec3f(0, 1, 0), red);
         render_line(pixels, z_buffer, cam, Vec3f(0,0,-1), Vec3f(0,0,1), green);
         
         // TODO For some reason, points that are not normalized (0, 1), dont render properly,
         // Although it seems like the model renderer has no issue with that tho?
-        render_line(pixels, z_buffer, cam, Vec3f(-100, 0, 0), Vec3f(100, 0, 0), white);
-        render_line(pixels, z_buffer, cam, Vec3f(0,-100,0), Vec3f(0,100,0), white);
-        render_line(pixels, z_buffer, cam, Vec3f(0,0,100), Vec3f(0,0,-100), white);
+        // render_line(pixels, z_buffer, cam, Vec3f(-100, 0, 0), Vec3f(100, 0, 0), white);
+        // render_line(pixels, z_buffer, cam, Vec3f(0,-100,0), Vec3f(0,100,0), white);
+        // render_line(pixels, z_buffer, cam, Vec3f(0,0,100), Vec3f(0,0,-100), white);
 
-        render_dot(pixels, z_buffer, cam, Vec3f(1, 1, 1), green);
-        render_dot(pixels, z_buffer, cam, Vec3f(-1, 1, 1), green);
-        render_dot(pixels, z_buffer, cam, Vec3f(1,-1,1), green);
-        render_dot(pixels, z_buffer, cam, Vec3f(1,1,-1), red);
-        render_dot(pixels, z_buffer, cam, Vec3f(-1,-1,-1), red);
-        render_dot(pixels, z_buffer, cam, Vec3f(1,-1,-1), red);
-        render_dot(pixels, z_buffer, cam, Vec3f(-1,1,-1), red);
-        render_dot(pixels, z_buffer, cam, Vec3f(-1,-1,1), green);
+        // render_dot(pixels, z_buffer, cam, Vec3f(1, 1, 1), green);
+        // render_dot(pixels, z_buffer, cam, Vec3f(-1, 1, 1), green);
+        // render_dot(pixels, z_buffer, cam, Vec3f(1,-1,1), green);
+        // render_dot(pixels, z_buffer, cam, Vec3f(1,1,-1), red);
+        // render_dot(pixels, z_buffer, cam, Vec3f(-1,-1,-1), red);
+        // render_dot(pixels, z_buffer, cam, Vec3f(1,-1,-1), red);
+        // render_dot(pixels, z_buffer, cam, Vec3f(-1,1,-1), red);
+        // render_dot(pixels, z_buffer, cam, Vec3f(-1,-1,1), green);
 
-        render_dot(pixels, z_buffer, cam, light_source, white);
+        // render_dot(pixels, z_buffer, cam, light_source, white);
 
         // auto distance = (Vec3f(0, 0, 0) - Vec3f(1, 0, 2)).norm();
         // auto m = gl::lookat(Vec3f(1, 0, 2), Vec3f(0, 0, 0), Vec3f(0, 1, 0));
@@ -453,15 +490,15 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
 
         static char text[1024];
         static int total_chars;
-        int line = 0;
+        int line = 1;
         total_chars = snprintf(text, 1024, "FPS %llu, ms %f, space_pressed %d", fps, dt_ms, space_pressed);
-        render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
+        render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
         total_chars = snprintf(text, 1024, "camera: %f, %f, %f", cam.position.x, cam.position.y, cam.position.z);
-        render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
+        render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
         total_chars = snprintf(text, 1024, "mouse %d, %d", mouse.x, mouse.y);
-        render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
+        render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
         total_chars = snprintf(text, 1024, "distance: %f", (cam.position - cam.looking_at).norm());
-        render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
+        render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
 
         // total_chars = snprintf(text, 1024, "p_: %f, %f, %f", p_.x, p_.y, p_.z);
         // render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
@@ -511,7 +548,10 @@ int main(int argc, char** argv) {
     srand(time(NULL));
 
     /* window scope */ {
-        auto window = win32::NewWindow("myWindow", "tinyrenderer", 100, 100, 10, 10, &window_callback);
+        int w = 100, h = 100;
+        int x = 1920 + 1920 - 500;
+        int y = 1080 - 500;
+        auto window = win32::NewWindow("myWindow", "tinyrenderer", x, y, w, h, &window_callback);
         defer _([window]() { win32::CleanWindow("myWindow", window); });
 
         // make sure there is a console attached, or create one if not
