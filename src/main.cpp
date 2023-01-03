@@ -174,8 +174,10 @@ float c = 1;
 
 void render_dot(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f p, uint32_t color) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
-    // Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
+    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
+    // Matrix projection_matrix = gl::projection(-1);
+    // Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
+    // Matrix projection_matrix = gl::projection(0);
     // Matrix projection_matrix = gl::projection(-1/c);
     Matrix projection_matrix = gl::projection(-1/(camera.position - camera.looking_at).norm());
     // Matrix projection_matrix = Matrix::identity();
@@ -185,8 +187,10 @@ void render_dot(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, V
 
 void render_line(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f start, Vec3f end, uint32_t color) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
-    // Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
+    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
+    // Matrix projection_matrix = gl::projection(-1);
+    // Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
+    // Matrix projection_matrix = gl::projection(0);
     // Matrix projection_matrix = gl::projection(-1/c);
     Matrix projection_matrix = gl::projection(-1/(camera.position - camera.looking_at).norm());
     // Matrix projection_matrix = Matrix::identity();
@@ -292,8 +296,10 @@ void render_text(PixelBuffer pixel_buffer, Vec2i pos, uint32_t color, const char
 
 void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuffer texture_data, camera camera, Vec3f light_source, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
     Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
-    // Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
+    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
+    // Matrix projection_matrix = gl::projection(-1);
+    // Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
+    // Matrix projection_matrix = gl::projection(0);
     // Matrix projection_matrix = gl::projection(-1/c);
     Matrix projection_matrix = gl::projection(-1/(camera.position - camera.looking_at).norm());
     // Matrix projection_matrix = Matrix::identity();
@@ -346,8 +352,8 @@ bool space_pressed = false;
 bool onUpdate(double dt_ms, unsigned long long fps) {
 
     auto wc = win32::GetWindowContext();
-    static int render_width = 300;
-    static int render_height = 300;
+    static int render_width = 800;
+    static int render_height = 800;
     static const char* render_name = "textured.tga";
     
     /* setup the window */ {
@@ -432,16 +438,19 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         uint32_t smooth_color = u32rgba(cos(time / factor) * 255, sin(time / factor) * 255, tan(time / factor) * 255, 255);
 
         z_buffer.clear(-9999999);
-        cam.position.x = (-mouse.x / 1920.0f * 10.f) + 5.f;
-        cam.position.z = 1.0f;
+        cam.position.x = -(mouse.x / 1920.0f * 10.f) + 5.f;
+        cam.position.z = 5.0f;
         cam.position.y = (-mouse.y / 1080.0f * 10.f) + 5.f;
         cam.looking_at = Vec3f(0, 0, 0);
+        cam.looking_at.x = cam.position.x;
+        cam.looking_at.y = cam.position.y;
+        cam.looking_at.z = cam.position.z-2;
         cam.up = Vec3f(0, 1, 0);
 
         Vec3f light_source = horizontally_spinning_position;
 
-        // render(pixels, vertex_buffer, triangles, texture, cam, light_source, 1.0f, Vec3f(0.0f, 0.0f, 0.0f), &z_buffer);
-        // render(pixels, vertex_buffer, triangles, texture, cam, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f), &z_buffer);
+        render(pixels, vertex_buffer, triangles, texture, cam, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f), &z_buffer);
+        render(pixels, vertex_buffer, triangles, texture, cam, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f), &z_buffer);
 
         // draw a cube made out of lines
         // plane z = 2
@@ -550,7 +559,9 @@ int main(int argc, char** argv) {
     /* window scope */ {
         int w = 100, h = 100;
         int x = 1920 + 1920 - 500;
+        x = 100;
         int y = 1080 - 500;
+        y = 100;
         auto window = win32::NewWindow("myWindow", "tinyrenderer", x, y, w, h, &window_callback);
         defer _([window]() { win32::CleanWindow("myWindow", window); });
 
