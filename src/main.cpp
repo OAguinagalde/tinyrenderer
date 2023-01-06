@@ -303,8 +303,8 @@ void render_model(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera,
 bool onUpdate(double dt_ms, unsigned long long fps) {
 
     auto wc = win32::GetWindowContext();
-    static int render_width = 300;
-    static int render_height = 300;
+    static int render_width = 800;
+    static int render_height = 800;
     static const char* render_name = "textured.tga";
     
     /* setup the window */ {
@@ -380,8 +380,21 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         // advance time
         if (keys['T']) time += dt_ms;
 
-        static POINT mouse;
-        GetCursorPos(&mouse);
+        static POINT mouse1 = {0,0};
+        static POINT mouse2 = {0,0};
+        static float factor1 = 0.005f;
+        static Vec3f direction(0, 0, 0);
+        GetCursorPos(&mouse2);
+        float dx = (mouse1.x - mouse2.x) * factor1;
+        float dy = (mouse1.y - mouse2.y) * factor1;
+        mouse1 = mouse2;
+        direction.x += dx;
+        if (dx < 0.f) while (direction.x < -1.f) direction.x += 2.f;
+        if (dx > 0.f) while (direction.x > 1.f) direction.x -= 2.f;
+        direction.y += dy;
+        direction.y = MAX(MIN(direction.y, 1.f), -1.f);
+        direction.normalize();
+
         float factor = 2000;
         Vec3f horizontally_spinning_position(cos(time / factor), .0, sin(time / factor));
         Vec3f vertically_spinning_position(0, cos(time / factor), sin(time / factor));
@@ -389,20 +402,17 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
 
         z_buffer.clear(-9999999);
 
-        Vec3f dir = Vec3f((mouse.x / 1920.0f) * 2.f -1.f, (mouse.y / 1080.0f) *2.f - 1.f, 0).normalized();
-        // cam.position.x = -(mouse.x / 1920.0f * 10.f) + 5.f;
-        // cam.position.z = 5.0f;
-        // cam.position.y = (-mouse.y / 1080.0f * 10.f) + 5.f;
-
-        if (keys['W']) cam.position.y -= 0.1;
+        if (keys['W']) cam.position.y += 0.1;
         if (keys['A']) cam.position.x -= 0.1;
-        if (keys['S']) cam.position.y += 0.1;
+        if (keys['S']) cam.position.y -= 0.1;
         if (keys['D']) cam.position.x += 0.1;
+        if (keys['Q']) cam.position.z += 0.1;
+        if (keys['E']) cam.position.z -= 0.1;
 
         // cam.looking_at.x = cam.position.x;
         // cam.looking_at.y = cam.position.y;
         // cam.looking_at.z = cam.position.z-2;
-        cam.looking_at = cam.position + dir;
+        cam.looking_at = cam.position + direction;
         
         cam.up = Vec3f(0, 1, 0);
 
@@ -412,16 +422,13 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         viewport_matrix = gl::viewport(0, 0, pixels.width, pixels.height);
         projection_matrix = gl::projection(-1 / (cam.position - cam.looking_at).norm());
 
-
-        
         if (keys['P']) projection_matrix = Matrix::identity();
         if (keys['V']) viewport_matrix = Matrix::identity();
 
-        render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f));
-        
+        if (false) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f));
         if (false) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f));
 
-        if (false) {
+        if (true) {
             // draw a cube made out of lines
             // plane z = 2
             render_line(pixels, z_buffer, cam, Vec3f(-2, -2, 2), Vec3f(2, -2, 2), red);
@@ -473,11 +480,11 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
         total_chars = snprintf(text, 1024, "camera: %f, %f, %f", cam.position.x, cam.position.y, cam.position.z);
         render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
-        total_chars = snprintf(text, 1024, "mouse %d, %d", mouse.x, mouse.y);
+        total_chars = snprintf(text, 1024, "mouse %d, %d", mouse2.x, mouse2.y);
         render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
         total_chars = snprintf(text, 1024, "distance: %f", (cam.position - cam.looking_at).norm());
         render_text(pixels, Vec2i(10, pixels.height - line++ * 10), red, text, total_chars);
-        total_chars = snprintf(text, 1024, "dir: %f, %f, %f", dir.x, dir.y, dir.z);
+        total_chars = snprintf(text, 1024, "dir: %f, %f, %f", direction.x, direction.y, direction.z);
         render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
 
 
