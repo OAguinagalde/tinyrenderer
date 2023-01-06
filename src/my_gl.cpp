@@ -436,7 +436,7 @@ namespace gl {
         }
     }
 
-    void line(Vec2i a, Vec2i b, PixelBuffer image, uint32_t color) {
+    void line(PixelBuffer image, Vec2i a, Vec2i b, uint32_t color) {
         int differenceX = b.x - a.x;
         int differenceXAbs = ABSOLUTE(differenceX);
 
@@ -477,13 +477,13 @@ namespace gl {
         }
     }
 
-    void triangle_outline(Vec2i t[3], PixelBuffer image, uint32_t color) {
-        line(t[0], t[1], image, color);
-        line(t[1], t[2], image, color);
-        line(t[2], t[0], image, color);
+    void triangle_outline(PixelBuffer image, Vec2i t[3], uint32_t color) {
+        line(image, t[0], t[1], color);
+        line(image, t[1], t[2], color);
+        line(image, t[2], t[0], color);
     }
 
-    void fat_dot(Vec2i p, PixelBuffer image, uint32_t color) {
+    void fat_dot(PixelBuffer image, Vec2i p, uint32_t color) {
         image.set(p.x, p.y, color);
         image.set(p.x+1, p.y, color);
         image.set(p.x-1, p.y, color);
@@ -509,7 +509,7 @@ namespace gl {
 
     // The algorith proposed puts the depth directly into the Vec2i (making it a Vec3i), but I chose to put it separately
     // so that its easier to understand whats going on. Its used for z-buffer calculations
-    void triangle(Vec3f pts[3], IShader* shader, PixelBuffer image, FloatBuffer* z_buffer) {
+    void triangle(PixelBuffer image, FloatBuffer z_buffer, Vec3f pts[3], IShader* shader) {
         
         // TODO make this calculations with floats rather than ints
         Vec2i screen[3];
@@ -623,11 +623,11 @@ namespace gl {
 
                 // Other algorithms might check using the barycentric that the current pixel is inside (usually run multithreaded)
                 // but this algorithm is more of an old school single threaded one which will directly only run on the right pixels
-                if (z_buffer->data[idx] < z) {
+                if (z_buffer.data[idx] < z) {
                     uint32_t color;
                     bool discard = shader->fragment(bar, &color);
                     if (!discard) {
-                        z_buffer->data[idx] = z;
+                        z_buffer.data[idx] = z;
                         image.set(x, y, color);
                     }
                 }
@@ -645,7 +645,7 @@ namespace gl {
         }
     }
 
-    void triangle(Vec3f pts[3], IShader* shader, PixelBuffer image) {
+    void triangle(PixelBuffer image, Vec3f pts[3], IShader* shader) {
         
         // TODO make this calculations with floats rather than ints
         Vec2i screen[3];
@@ -761,7 +761,7 @@ namespace gl {
         }
     }
 
-    void triangle2(Vec3f pts[3], IShader* shader, PixelBuffer image, FloatBuffer* z_buffer) {
+    void triangle2(PixelBuffer image, FloatBuffer z_buffer, Vec3f pts[3], IShader* shader) {
 
         // TODO make this calculations with floats rather than ints
         Vec2i screen[3];
@@ -804,11 +804,11 @@ namespace gl {
 
                 // Other algorithms might check using the barycentric that the current pixel is inside (usually run multithreaded)
                 // but this algorithm is more of an old school single threaded one which will directly only run on the right pixels
-                if (z_buffer->data[idx] < z) {
+                if (z_buffer.data[idx] < z) {
                     uint32_t color;
                     bool discard = shader->fragment(bar, &color);
                     if (!discard) {
-                        z_buffer->data[idx] = z;
+                        z_buffer.data[idx] = z;
                         image.set(x, y, color);
                     }
                 }

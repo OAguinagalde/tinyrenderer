@@ -104,13 +104,13 @@ namespace gl {
     };
 
     void line(PixelBuffer pixels, FloatBuffer depth, Vec3f a, Vec3f b, uint32_t color);
-    void line(Vec2i a, Vec2i b, PixelBuffer image, uint32_t color);
-    void triangle_outline(Vec2i t[3], PixelBuffer image, uint32_t color);
+    void line(PixelBuffer pixels, Vec2i a, Vec2i b, uint32_t color);
     void dot(PixelBuffer pixels, FloatBuffer depth, Vec3f p, uint32_t color);
-    void fat_dot(Vec2i p, PixelBuffer image, uint32_t color);
-    void triangle(Vec3f pts[3], IShader* shader, PixelBuffer image);
-    void triangle(Vec3f pts[3], IShader* shader, PixelBuffer image, FloatBuffer* z_buffer);
-    void triangle2(Vec3f pts[3], IShader* shader, PixelBuffer image, FloatBuffer* z_buffer);
+    void fat_dot(PixelBuffer pixels, Vec2i p, uint32_t color);
+    void triangle_outline(PixelBuffer pixels, Vec2i t[3], uint32_t color);
+    void triangle(PixelBuffer pixels, Vec3f pts[3], IShader* shader);
+    void triangle(PixelBuffer pixels, FloatBuffer depth, Vec3f pts[3], IShader* shader);
+    void triangle2(PixelBuffer pixels, FloatBuffer depth, Vec3f pts[3], IShader* shader);
 }
 
 #endif //__MY_GL_H__

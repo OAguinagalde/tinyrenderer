@@ -170,35 +170,6 @@ struct GouraudShader : public gl::IShader {
     }
 };
 
-float c = 1;
-
-void render_dot(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f p, uint32_t color) {
-    Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
-    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    // Matrix projection_matrix = gl::projection(-1);
-    // Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
-    // Matrix projection_matrix = gl::projection(0);
-    // Matrix projection_matrix = gl::projection(-1/c);
-    Matrix projection_matrix = gl::projection(-1/(camera.position - camera.looking_at).norm());
-    // Matrix projection_matrix = Matrix::identity();
-    Vec3f p_ = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(p));
-    gl::dot(pixel_buffer, z_buffer, p_, color);
-}
-
-void render_line(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f start, Vec3f end, uint32_t color) {
-    Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
-    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    // Matrix projection_matrix = gl::projection(-1);
-    // Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
-    // Matrix projection_matrix = gl::projection(0);
-    // Matrix projection_matrix = gl::projection(-1/c);
-    Matrix projection_matrix = gl::projection(-1/(camera.position - camera.looking_at).norm());
-    // Matrix projection_matrix = Matrix::identity();
-    Vec3f start_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(start));
-    Vec3f end_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(end));
-    gl::line(pixel_buffer, z_buffer, start_real, end_real, color);
-}
-
 char char_lower(char c) {
     if (c >= 65 && c <= 90) c += 32;
     return c;
@@ -290,70 +261,50 @@ void render_text(PixelBuffer pixel_buffer, Vec2i pos, uint32_t color, const char
         for (int j=0; j<3; j++) {
             screen_coords[j] = shader.vertex(i, j);
         }
-        gl::triangle(screen_coords, &shader, pixel_buffer);
+        gl::triangle(pixel_buffer, screen_coords, &shader);
     }
 }
 
-void render(PixelBuffer pixel_buffer, float* vertex_buffer, int faces, PixelBuffer texture_data, camera camera, Vec3f light_source, float scale_factor, Vec3f pos, FloatBuffer* z_buffer) {
-    Matrix view_matrix = gl::lookat(camera.position, camera.looking_at, camera.up);
-    Matrix viewport_matrix = gl::viewport(0, 0, pixel_buffer.width, pixel_buffer.height);
-    // Matrix projection_matrix = gl::projection(-1);
-    // Matrix viewport_matrix = gl::viewport(pixel_buffer.width/8, pixel_buffer.height/8, pixel_buffer.width*3/4, pixel_buffer.height*3/4);
-    // Matrix projection_matrix = gl::projection(0);
-    // Matrix projection_matrix = gl::projection(-1/c);
-    Matrix projection_matrix = gl::projection(-1/(camera.position - camera.looking_at).norm());
-    // Matrix projection_matrix = Matrix::identity();
-    Matrix light_matrix = Matrix::identity();
-    Matrix model_matrix = Matrix::t(pos) * Matrix::s(scale_factor);
+Matrix view_matrix;
+Matrix viewport_matrix;
+Matrix projection_matrix;
+bool keys[256] = {};
 
-    // multiply agains *** matrix to get the point in the point of view of the ***
-    // viewport, screen
-    // projection, clip coords
-    // lookat, camera
-    // model, world (origin)
-    // the original input point: [-1, 1] for obj, or whatever I manually pass
+void render_dot(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f p, uint32_t color) {
+    Vec3f p_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(p));
+    gl::dot(pixel_buffer, z_buffer, p_real, color);
+}
 
-    // vec3 p = point already in world space
-    // from cameras point of view | p1 = lookat * p
-    // in clip space              | p2 = projection * p1
-    // in screen                  | p3 = viewport * p2
+void render_line(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f start, Vec3f end, uint32_t color) {
+    Vec3f start_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(start));
+    Vec3f end_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(end));
+    
+    gl::line(pixel_buffer, z_buffer, start_real, end_real, color);
+}
 
-    // Example
-    // Matrix point_object_coords = embed_in_4d(some point);
-    // Matrix point_world_coords = model_matrix * point_object_coords;
-    // Matrix point_camera_coords = view_matrix * point_world_coords;
-    // Matrix point_clip_coords = projection_matrix * point_camera_coords;
-    // Matrix point_screen_coords = viewport_matrix * point_clip_coords;
-    // Vec3f final_point = retro_project_back_into_3d(point_screen_coords);
-
+void render_model(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, float* vertex_buffer, int faces, PixelBuffer texture_data, Vec3f light_source, float scale_factor, Vec3f pos) {
     GouraudShader shader;
-    shader.view_model_matrix = view_matrix * model_matrix;
+    shader.view_model_matrix = view_matrix * Matrix::t(pos) * Matrix::s(scale_factor);
     shader.vertex_buffer = vertex_buffer;
     shader.transformations_matrix = viewport_matrix * projection_matrix;
     shader.texture = texture_data;
-    shader.light_source = gl::retro_project_back_into_3d(view_matrix * light_matrix * gl::embed_in_4d(light_source));
+    shader.light_source = gl::retro_project_back_into_3d(view_matrix * gl::embed_in_4d(light_source));
 
     for (int i = 0; i < faces; i++) {
-
         Vec3f screen_coords[3];
-
         for (int j=0; j<3; j++) {
             screen_coords[j] = shader.vertex(i, j);
-
-            // for debugging, render the light directions to each vertex
-            // render_line(pixel_buffer, *z_buffer, camera, shader.world_position, shader.world_position + shader.light_direction, white);
         }
-
-        gl::triangle2(screen_coords, &shader, pixel_buffer, z_buffer);
+        gl::triangle2(pixel_buffer, z_buffer, screen_coords, &shader);
     }
 
 }
-bool space_pressed = false;
+
 bool onUpdate(double dt_ms, unsigned long long fps) {
 
     auto wc = win32::GetWindowContext();
-    static int render_width = 800;
-    static int render_height = 800;
+    static int render_width = 300;
+    static int render_height = 300;
     static const char* render_name = "textured.tga";
     
     /* setup the window */ {
@@ -422,13 +373,12 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
                 //     }
                 // 
             }
+            cam.position = Vec3f(0, 0, 1);
             firstFrame = false;
         }
         
-        // "advance time" and others
-        if (space_pressed) {
-            time += dt_ms;
-        }
+        // advance time
+        if (keys['T']) time += dt_ms;
 
         static POINT mouse;
         GetCursorPos(&mouse);
@@ -438,39 +388,58 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         uint32_t smooth_color = u32rgba(cos(time / factor) * 255, sin(time / factor) * 255, tan(time / factor) * 255, 255);
 
         z_buffer.clear(-9999999);
-        cam.position.x = -(mouse.x / 1920.0f * 10.f) + 5.f;
-        cam.position.z = 5.0f;
-        cam.position.y = (-mouse.y / 1080.0f * 10.f) + 5.f;
-        cam.looking_at = Vec3f(0, 0, 0);
-        cam.looking_at.x = cam.position.x;
-        cam.looking_at.y = cam.position.y;
-        cam.looking_at.z = cam.position.z-2;
+
+        Vec3f dir = Vec3f((mouse.x / 1920.0f) * 2.f -1.f, (mouse.y / 1080.0f) *2.f - 1.f, 0).normalized();
+        // cam.position.x = -(mouse.x / 1920.0f * 10.f) + 5.f;
+        // cam.position.z = 5.0f;
+        // cam.position.y = (-mouse.y / 1080.0f * 10.f) + 5.f;
+
+        if (keys['W']) cam.position.y -= 0.1;
+        if (keys['A']) cam.position.x -= 0.1;
+        if (keys['S']) cam.position.y += 0.1;
+        if (keys['D']) cam.position.x += 0.1;
+
+        // cam.looking_at.x = cam.position.x;
+        // cam.looking_at.y = cam.position.y;
+        // cam.looking_at.z = cam.position.z-2;
+        cam.looking_at = cam.position + dir;
+        
         cam.up = Vec3f(0, 1, 0);
 
         Vec3f light_source = horizontally_spinning_position;
 
-        render(pixels, vertex_buffer, triangles, texture, cam, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f), &z_buffer);
-        render(pixels, vertex_buffer, triangles, texture, cam, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f), &z_buffer);
+        view_matrix = gl::lookat(cam.position, cam.looking_at, cam.up);
+        viewport_matrix = gl::viewport(0, 0, pixels.width, pixels.height);
+        projection_matrix = gl::projection(-1 / (cam.position - cam.looking_at).norm());
 
-        // draw a cube made out of lines
-        // plane z = 2
-        render_line(pixels, z_buffer, cam, Vec3f(-2, -2, 2), Vec3f(2, -2, 2), orange);
-        render_line(pixels, z_buffer, cam, Vec3f(2, -2, 2), Vec3f(2, 2, 2), orange);
-        render_line(pixels, z_buffer, cam, Vec3f(2, 2, 2), Vec3f(-2, 2, 2), orange);
-        render_line(pixels, z_buffer, cam, Vec3f(-2, 2, 2), Vec3f(-2, -2, 2), orange);
-        // plane z = -2
-        render_line(pixels, z_buffer, cam, Vec3f(-2, -2, -2), Vec3f(2, -2, -2), orange);
-        render_line(pixels, z_buffer, cam, Vec3f(2, -2, -2), Vec3f(2, 2, -2), orange);
-        render_line(pixels, z_buffer, cam, Vec3f(2, 2, -2), Vec3f(-2, 2, -2), orange);
-        render_line(pixels, z_buffer, cam, Vec3f(-2, 2, -2), Vec3f(-2, -2, -2), orange);
+
         
+        if (keys['P']) projection_matrix = Matrix::identity();
+        if (keys['V']) viewport_matrix = Matrix::identity();
 
-
-        // draw the unit vectors at (0, 0, 0)
-        render_line(pixels, z_buffer, cam, Vec3f(-1, 0, 0), Vec3f(1, 0, 0), blue);
-        render_line(pixels, z_buffer, cam, Vec3f(0, -1, 0), Vec3f(0, 1, 0), red);
-        render_line(pixels, z_buffer, cam, Vec3f(0,0,-1), Vec3f(0,0,1), green);
+        render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f));
         
+        if (false) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f));
+
+        if (false) {
+            // draw a cube made out of lines
+            // plane z = 2
+            render_line(pixels, z_buffer, cam, Vec3f(-2, -2, 2), Vec3f(2, -2, 2), red);
+            render_line(pixels, z_buffer, cam, Vec3f(2, -2, 2), Vec3f(2, 2, 2), red);
+            render_line(pixels, z_buffer, cam, Vec3f(2, 2, 2), Vec3f(-2, 2, 2), red);
+            render_line(pixels, z_buffer, cam, Vec3f(-2, 2, 2), Vec3f(-2, -2,  2), red);
+            // plane z = -2
+            render_line(pixels, z_buffer, cam, Vec3f(-2, -2, -2), Vec3f(2, -2, -2), orange);
+            render_line(pixels, z_buffer, cam, Vec3f(2, -2, -2), Vec3f(2, 2, -2), orange);
+            render_line(pixels, z_buffer, cam, Vec3f(2, 2, -2), Vec3f(-2, 2, -2), orange);
+            render_line(pixels, z_buffer, cam, Vec3f(-2, 2, -2), Vec3f(-2, -2, -2), orange);
+
+            // draw the unit vectors at (0, 0, 0)
+            render_line(pixels, z_buffer, cam, Vec3f(-1, 0, 0), Vec3f(1, 0, 0), blue);
+            render_line(pixels, z_buffer, cam, Vec3f(0, -1, 0), Vec3f(0, 1, 0), red);
+            render_line(pixels, z_buffer, cam, Vec3f(0, 0, -1), Vec3f(0, 0, 1), green);
+        }
+
         // TODO For some reason, points that are not normalized (0, 1), dont render properly,
         // Although it seems like the model renderer has no issue with that tho?
         // render_line(pixels, z_buffer, cam, Vec3f(-100, 0, 0), Vec3f(100, 0, 0), white);
@@ -500,14 +469,17 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         static char text[1024];
         static int total_chars;
         int line = 1;
-        total_chars = snprintf(text, 1024, "FPS %llu, ms %f, space_pressed %d", fps, dt_ms, space_pressed);
+        total_chars = snprintf(text, 1024, "FPS %llu, ms %f", fps, dt_ms);
         render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
         total_chars = snprintf(text, 1024, "camera: %f, %f, %f", cam.position.x, cam.position.y, cam.position.z);
         render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
         total_chars = snprintf(text, 1024, "mouse %d, %d", mouse.x, mouse.y);
         render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
         total_chars = snprintf(text, 1024, "distance: %f", (cam.position - cam.looking_at).norm());
+        render_text(pixels, Vec2i(10, pixels.height - line++ * 10), red, text, total_chars);
+        total_chars = snprintf(text, 1024, "dir: %f, %f, %f", dir.x, dir.y, dir.z);
         render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
+
 
         // total_chars = snprintf(text, 1024, "p_: %f, %f, %f", p_.x, p_.y, p_.z);
         // render_text(pixels, Vec2i(10, pixels.height - line++ *15), red, text, total_chars);
@@ -530,8 +502,8 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         if (dt_ms < 64.0f) { performance_base = 64.0f; performance_color = u32rgba(255, 150, 0, 255); }
         if (dt_ms < 32.0f) { performance_base = 32.0f; performance_color = u32rgba(240, 204, 0, 255); }
         if (dt_ms < 16.0f) { performance_base = 16.0f; performance_color = u32rgba(174, 255, 0, 255); }
-        gl::line(Vec2i(0,0), Vec2i( MIN((dt_ms / performance_base) * pixels.width, pixels.width), 0), pixels, performance_color);
-        gl::line(Vec2i(0,1), Vec2i( MIN((dt_ms / performance_base) * pixels.width, pixels.width), 1), pixels, performance_color);
+        gl::line(pixels, Vec2i(0,0), Vec2i( MIN((dt_ms / performance_base) * pixels.width, pixels.width), 0), performance_color);
+        gl::line(pixels, Vec2i(0,1), Vec2i( MIN((dt_ms / performance_base) * pixels.width, pixels.width), 1), performance_color);
         
         // static short cursorx, cursory;
         // if (win32::ConsoleGetCursorPosition(&cursorx, &cursory)) {
@@ -544,12 +516,15 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
 }
 
 bool window_callback(HWND window, UINT messageType, WPARAM param1, LPARAM param2) {
-    if (messageType == WM_KEYDOWN && param1 == VK_SPACE) {
-        space_pressed = true;
+
+    // if (messageType == WM_KEYDOWN && param1 == VK_SPACE)
+    if (messageType == WM_KEYDOWN && param1 < 256 && param1 >= 0) {
+        keys[param1] = true;
     }
-    if (messageType == WM_KEYUP && param1 == VK_SPACE) {
-        space_pressed = false;
+    if (messageType == WM_KEYUP && param1 < 256 && param1 >= 0) {
+        keys[param1] = false;
     }
+    
     return false;
 }
 
@@ -559,9 +534,9 @@ int main(int argc, char** argv) {
     /* window scope */ {
         int w = 100, h = 100;
         int x = 1920 + 1920 - 500;
-        x = 100;
+        // x = 100;
         int y = 1080 - 500;
-        y = 100;
+        // y = 100;
         auto window = win32::NewWindow("myWindow", "tinyrenderer", x, y, w, h, &window_callback);
         defer _([window]() { win32::CleanWindow("myWindow", window); });
 
