@@ -373,7 +373,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
                 //     }
                 // 
             }
-            cam.position = Vec3f(1, 1, 1);
+            cam.position = Vec3f(1, 1, 3);
             cam.up = Vec3f(0, 1, 0);
             cam.direction = Vec3f(0, 0, 1);
             firstFrame = false;
@@ -407,12 +407,12 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         Vec3f vertically_spinning_position(0, cos(time / factor), sin(time / factor));
         uint32_t smooth_color = u32rgba(cos(time / factor) * 255, sin(time / factor) * 255, tan(time / factor) * 255, 255);
 
-        if (keys['W']) cam.position = cam.position + (cam.direction * 0.03);
-        if (keys['S']) cam.position = cam.position + (cam.direction * 0.03) * -1.0f;
-        if (keys['A']) cam.position = cam.position + (real_right * 0.03) * -1.0f;
-        if (keys['D']) cam.position = cam.position + (real_right * 0.03);
-        if (keys['Q']) cam.position.y += 0.03;
-        if (keys['E']) cam.position.y -= 0.03;
+        if (keys['W']) cam.position = cam.position + (cam.direction * factor1);
+        if (keys['S']) cam.position = cam.position + (cam.direction * factor1) * -1.0f;
+        if (keys['A']) cam.position = cam.position + (real_right * factor1) * -1.0f;
+        if (keys['D']) cam.position = cam.position + (real_right * factor1);
+        if (keys['Q']) cam.position.y += factor1;
+        if (keys['E']) cam.position.y -= factor1;
 
         cam.looking_at = cam.position + cam.direction;
         // cam.looking_at.x = cam.position.x;
@@ -431,7 +431,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
 
         z_buffer.clear(-9999999);
         
-        if (false) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f));
+        if (true) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f));
         if (false) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f));
 
         if (true) {
@@ -455,9 +455,9 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
 
         // TODO For some reason, points that are not normalized (0, 1), dont render properly,
         // Although it seems like the model renderer has no issue with that tho?
-        // render_line(pixels, z_buffer, cam, Vec3f(-100, 0, 0), Vec3f(100, 0, 0), white);
-        // render_line(pixels, z_buffer, cam, Vec3f(0,-100,0), Vec3f(0,100,0), white);
-        // render_line(pixels, z_buffer, cam, Vec3f(0,0,100), Vec3f(0,0,-100), white);
+        render_line(pixels, z_buffer, cam, Vec3f(-100, 0, 0), Vec3f(100, 0, 0), white);
+        render_line(pixels, z_buffer, cam, Vec3f(0,-100,0), Vec3f(0,100,0), white);
+        render_line(pixels, z_buffer, cam, Vec3f(0,0,100), Vec3f(0,0,-100), white);
 
         // render_dot(pixels, z_buffer, cam, Vec3f(1, 1, 1), green);
         // render_dot(pixels, z_buffer, cam, Vec3f(-1, 1, 1), green);
