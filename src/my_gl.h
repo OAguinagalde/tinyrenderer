@@ -65,6 +65,7 @@ struct PixelBuffer {
 
 struct camera {
     Vec3f position;
+    Vec3f direction;
     Vec3f looking_at;
     Vec3f up;
 };
@@ -74,6 +75,7 @@ namespace gl {
     Matrix viewport(int x, int y, int w, int h, int depth = 255);
     Matrix projection(float coeff = 0.f);
     Matrix lookat(Vec3f eye, Vec3f center, Vec3f up);
+    Matrix lookat2(Vec3f eye, Vec3f center, Vec3f up);
 
     // Retro-project a point in "4d" back into "3d"
     //     

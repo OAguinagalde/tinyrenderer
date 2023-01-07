@@ -211,6 +211,150 @@ namespace gl {
         return transformation_matrix;
     }
 
+// http://davidlively.com/programming/graphics/opengl-matrices/row-major-vs-column-major/
+// # Row Major VS. Column Major
+// 
+// ## Column-Major
+// 
+// - Standard widely used for OpenGL.
+// - Values are stored in column-first order (see below)
+// - Transpose of row-major.
+// - The matrix must be to the LEFT of the multiply operator
+// - The vertex or vector must to the RIGHT of the operator
+// 
+// Given a matrix:
+// 
+//     a00 a01 a02 a03
+//     a10 a11 a12 a13
+//     a20 a21 a22 a23
+//     a30 a31 a32 a33
+// 
+// The values would be stored in memory in the order
+// 
+//     a00, a10, a20, a30, a01, a11, a21, a31, a02, a12, a22, a32, a03, a13, a23, a33
+// 
+// Translation matrix:
+// 
+//     | 1 0 0 tx |   | x |     | x+w*tx |
+//     | 0 1 0 ty |   | y |  =  | y+w*ty |
+//     | 0 0 1 tz |   | z |     | z+w*tz |
+//     | 0 0 0 tw |   | 1 |     |   tw   |
+// 
+// 
+// ## Row-Major
+// 
+// - Used in DirectX and HLSL
+// - Values are stored in row-first order
+// - Transpose of column-major
+// - The matrix must be to the RIGHT of the multiply operator
+// - The vertex or vector must to the LEFT of the operator
+// - When using the row-major convention, the matrix:
+// 
+// Given a matrix:
+// 
+//     a00 a01 a02 a03
+//     a10 a11 a12 a13
+//     a20 a21 a22 a23
+//     a30 a31 a32 a33
+// 
+// The values would be stored in memory in the order
+// 
+//     a00, a01, a02, a03, a10, a11, a12, a13, a20, a21, a22, a23, a30, a31, a32, a33
+//  
+// Translation matrix:
+//  
+//                     | 0  0  0  0  |
+//     | x, y, z, 1 |  | 0  0  0  0  |  =  | x+w∗tx, y+w∗ty, z+w∗tz, tw |
+//                     | 0  0  0  0  | 
+//                     | tx ty tz tw |
+// 
+// https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3dxmatrixlookatlh
+// https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3dxmatrixlookatrh
+// 
+// From D3D9, Left Handed Look At
+// 
+//     zaxis = normal(At - Eye)
+//     xaxis = normal(cross(Up, zaxis))
+//     yaxis = cross(zaxis, xaxis)
+//     
+//      xaxis.x           yaxis.x           zaxis.x          0
+//      xaxis.y           yaxis.y           zaxis.y          0
+//      xaxis.z           yaxis.z           zaxis.z          0
+//     -dot(xaxis, eye)  -dot(yaxis, eye)  -dot(zaxis, eye)  1
+// 
+// From D3D9, Right Handed Look At
+// 
+//     zaxis = normal(Eye - At)
+//     xaxis = normal(cross(Up, zaxis))
+//     yaxis = cross(zaxis, xaxis)
+//     
+//      xaxis.x            yaxis.x            zaxis.x           0
+//      xaxis.y            yaxis.y            zaxis.y           0
+//      xaxis.z            yaxis.z            zaxis.z           0
+//      -dot(xaxis, eye)   -dot(yaxis, eye)   -dot(zaxis, eye)  1
+// 
+
+    Matrix lookat2(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
+
+        // https://stackoverflow.com/questions/349050/calculating-a-lookat-matrix
+        // > # Note the example given is a left-handed, row major matrix.
+        // > 
+        // > So the operation is: Translate to the origin first (move by -eye),
+        // > then rotate so that the vector from eye to At lines up with +z:
+        // > 
+        // > Basically you get the same result if you pre-multiply the rotation matrix by a translation -eye:
+        // > 
+        // >     [      1       0       0   0 ]   [ xaxis.x  yaxis.x  zaxis.x 0 ]
+        // >     [      0       1       0   0 ] * [ xaxis.y  yaxis.y  zaxis.y 0 ]
+        // >     [      0       0       1   0 ]   [ xaxis.z  yaxis.z  zaxis.z 0 ]
+        // >     [ -eye.x  -eye.y  -eye.z   1 ]   [       0        0        0 1 ]
+        // >     
+        // >       [         xaxis.x          yaxis.x          zaxis.x  0 ]
+        // >     = [         xaxis.y          yaxis.y          zaxis.y  0 ]
+        // >       [         xaxis.z          yaxis.z          zaxis.z  0 ]
+        // >       [ dot(xaxis,-eye)  dot(yaxis,-eye)  dot(zaxis,-eye)  1 ]
+        // > 
+        // > ## Additional notes:
+        // > 
+        // > Note that a viewing transformation is (intentionally) inverted: you multiply every vertex by
+        // > this matrix to "move the world" so that the portion you want to see ends up in the canonical view volume.
+        // > 
+        // > Also note that the rotation matrix (call it R) component of the LookAt
+        // > matrix is an inverted change of basis matrix where the rows of R are the new basis vectors in
+        // > terms of the old basis vectors (hence the variable names xaxis.x, .. xaxis is the new x axis
+        // > after the change of basis occurs). Because of the inversion, however, the rows and columns are transposed.
+        // 
+        // > This would imply that the LookAt matrix is an orthonormal basis (they are all unit vectors and orthogonal to each other)
+        // > otherwise the transpose would not be equal to it's inverse
+
+        // Notes(Oscar) My implementation is RIGHT HANDED COLUMN MAJOR
+
+        // just in case, normalize the up direction
+        up.normalize();
+
+        // here z is technically -z
+        Vec3f z = (camera_location - point_looked_at).normalized();
+        Vec3f x = (up ^ z).normalized();
+        Vec3f y = (z ^ x).normalized();
+
+        // AKA change of basis matrix
+        Matrix rotation_matrix = Matrix::identity();
+        rotation_matrix[0][0] = x.x;
+        rotation_matrix[0][1] = x.y;
+        rotation_matrix[0][2] = x.z;
+
+        rotation_matrix[1][0] = y.x;
+        rotation_matrix[1][1] = y.y;
+        rotation_matrix[1][2] = y.z;
+
+        rotation_matrix[2][0] = z.x;
+        rotation_matrix[2][1] = z.y;
+        rotation_matrix[2][2] = z.z;
+        
+        // translate the world to the location of the camera and rotate it
+        return rotation_matrix * Matrix::t(camera_location * -1.0f);
+    }
+
     // Retro-project a point in "4d" back into "3d"
     //     
     //     | x |    | x/w |

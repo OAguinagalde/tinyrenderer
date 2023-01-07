@@ -373,7 +373,9 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
                 //     }
                 // 
             }
-            cam.position = Vec3f(0, 0, 1);
+            cam.position = Vec3f(1, 1, 1);
+            cam.up = Vec3f(0, 1, 0);
+            cam.direction = Vec3f(0, 0, 1);
             firstFrame = false;
         }
         
@@ -382,51 +384,55 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
 
         static POINT mouse1 = {0,0};
         static POINT mouse2 = {0,0};
-        static float factor1 = 0.005f;
+        static float factor1 = 0.02f;
         static Vec3f direction(0, 0, 0);
         GetCursorPos(&mouse2);
-        float dx = (mouse1.x - mouse2.x) * factor1;
-        float dy = (mouse1.y - mouse2.y) * factor1;
+        float dx = (mouse2.x - mouse1.x) * factor1;
+        float dy = (mouse2.y - mouse1.y) * factor1 * -1.0f;
         mouse1 = mouse2;
-        direction.x += dx;
-        if (dx < 0.f) while (direction.x < -1.f) direction.x += 2.f;
-        if (dx > 0.f) while (direction.x > 1.f) direction.x -= 2.f;
-        direction.y += dy;
-        direction.y = MAX(MIN(direction.y, 1.f), -1.f);
-        direction.normalize();
+        
+        Vec3f up(0,1,0);
+        Vec3f real_right = (cam.direction ^ up).normalized();
+        Vec3f real_up = (cam.direction ^ real_right).normalized() * -1.f;
+        if (dx != 0 || dy != 0) {
+            cam.direction = cam.direction + (real_right * dx);
+            if (cam.direction.y <0.95 && cam.direction.y > -0.95) {
+                cam.direction = cam.direction + (real_up * dy);
+            }
+            cam.direction.normalize();
+        }
 
         float factor = 2000;
         Vec3f horizontally_spinning_position(cos(time / factor), .0, sin(time / factor));
         Vec3f vertically_spinning_position(0, cos(time / factor), sin(time / factor));
         uint32_t smooth_color = u32rgba(cos(time / factor) * 255, sin(time / factor) * 255, tan(time / factor) * 255, 255);
 
-        z_buffer.clear(-9999999);
+        if (keys['W']) cam.position = cam.position + (cam.direction * 0.03);
+        if (keys['S']) cam.position = cam.position + (cam.direction * 0.03) * -1.0f;
+        if (keys['A']) cam.position = cam.position + (real_right * 0.03) * -1.0f;
+        if (keys['D']) cam.position = cam.position + (real_right * 0.03);
+        if (keys['Q']) cam.position.y += 0.03;
+        if (keys['E']) cam.position.y -= 0.03;
 
-        if (keys['W']) cam.position.y += 0.1;
-        if (keys['A']) cam.position.x -= 0.1;
-        if (keys['S']) cam.position.y -= 0.1;
-        if (keys['D']) cam.position.x += 0.1;
-        if (keys['Q']) cam.position.z += 0.1;
-        if (keys['E']) cam.position.z -= 0.1;
-
+        cam.looking_at = cam.position + cam.direction;
         // cam.looking_at.x = cam.position.x;
         // cam.looking_at.y = cam.position.y;
         // cam.looking_at.z = cam.position.z-2;
-        cam.looking_at = cam.position + direction;
-        
-        cam.up = Vec3f(0, 1, 0);
+
 
         Vec3f light_source = horizontally_spinning_position;
 
-        view_matrix = gl::lookat(cam.position, cam.looking_at, cam.up);
+        view_matrix = gl::lookat2(cam.position, cam.looking_at, cam.up);
         viewport_matrix = gl::viewport(0, 0, pixels.width, pixels.height);
         projection_matrix = gl::projection(-1 / (cam.position - cam.looking_at).norm());
 
         if (keys['P']) projection_matrix = Matrix::identity();
         if (keys['V']) viewport_matrix = Matrix::identity();
 
-        if (false) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f));
-        if (false) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f));
+        z_buffer.clear(-9999999);
+        
+        if (true) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f));
+        if (true) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f));
 
         if (true) {
             // draw a cube made out of lines
@@ -484,7 +490,7 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
         total_chars = snprintf(text, 1024, "distance: %f", (cam.position - cam.looking_at).norm());
         render_text(pixels, Vec2i(10, pixels.height - line++ * 10), red, text, total_chars);
-        total_chars = snprintf(text, 1024, "dir: %f, %f, %f", direction.x, direction.y, direction.z);
+        total_chars = snprintf(text, 1024, "cam direction: %f, %f, %f", cam.direction.x, cam.direction.y, cam.direction.z);
         render_text(pixels, Vec2i(10, pixels.height - line++ *10), red, text, total_chars);
 
 
@@ -541,9 +547,9 @@ int main(int argc, char** argv) {
     /* window scope */ {
         int w = 100, h = 100;
         int x = 1920 + 1920 - 500;
-        // x = 100;
+        x = 100;
         int y = 1080 - 500;
-        // y = 100;
+        y = 100;
         auto window = win32::NewWindow("myWindow", "tinyrenderer", x, y, w, h, &window_callback);
         defer _([window]() { win32::CleanWindow("myWindow", window); });
 
