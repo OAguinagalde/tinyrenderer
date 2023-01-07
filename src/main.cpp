@@ -99,8 +99,8 @@ struct GouraudShader : public gl::IShader {
 
     // vertex shader params
     // precomputed: viewport_matrix * projection_matrix * view_matrix * model_matrix
-    Matrix transformations_matrix;
-    Matrix view_model_matrix;
+    m44 transformations_matrix;
+    m44 view_model_matrix;
     Vec3f light_source;
 
     // resources used during fragment shader
@@ -265,9 +265,9 @@ void render_text(PixelBuffer pixel_buffer, Vec2i pos, uint32_t color, const char
     }
 }
 
-Matrix view_matrix;
-Matrix viewport_matrix;
-Matrix projection_matrix;
+m44 view_matrix;
+m44 viewport_matrix;
+m44 projection_matrix;
 bool keys[256] = {};
 
 void render_dot(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f p, uint32_t color) {
@@ -284,7 +284,7 @@ void render_line(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, 
 
 void render_model(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, float* vertex_buffer, int faces, PixelBuffer texture_data, Vec3f light_source, float scale_factor, Vec3f pos) {
     GouraudShader shader;
-    shader.view_model_matrix = view_matrix * Matrix::t(pos) * Matrix::s(scale_factor);
+    shader.view_model_matrix = view_matrix * m44::translation(pos) * m44::scaling(scale_factor);
     shader.vertex_buffer = vertex_buffer;
     shader.transformations_matrix = viewport_matrix * projection_matrix;
     shader.texture = texture_data;
@@ -426,13 +426,13 @@ bool onUpdate(double dt_ms, unsigned long long fps) {
         viewport_matrix = gl::viewport(0, 0, pixels.width, pixels.height);
         projection_matrix = gl::projection(-1 / (cam.position - cam.looking_at).norm());
 
-        if (keys['P']) projection_matrix = Matrix::identity();
-        if (keys['V']) viewport_matrix = Matrix::identity();
+        if (keys['P']) projection_matrix = m44::identity();
+        if (keys['V']) viewport_matrix = m44::identity();
 
         z_buffer.clear(-9999999);
         
-        if (true) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f));
-        if (true) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f));
+        if (false) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 1.0f, Vec3f(0.0f, 0.0f, -1.0f));
+        if (false) render_model(pixels, z_buffer, cam, vertex_buffer, triangles, texture, light_source, 2.3f, Vec3f(0.0f, 0.0f, -4.0f));
 
         if (true) {
             // draw a cube made out of lines

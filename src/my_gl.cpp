@@ -12,6 +12,83 @@
 static void swap_int(int* a, int* b) { int c = *a; *a = *b; *b = c; }
 static void swap_float(float* a, float* b) { float c = *a; *a = *b; *b = c; }
 
+m44 m44::operator*(const m44& other) {
+    m44 m;
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            m.v[i*4+j] = 0.f;
+            for (int k = 0; k < 4; k++) {
+                m.v[i*4+j] += v[k*4+j] * other.v[i*4+k];
+            }
+        }
+    }
+    return m;
+}
+
+m41 m44::operator*(const m41& other) {
+    m41 m;
+    m.v[0] = (v[0]*other.v[0]) + (v[4]*other.v[1]) + (v[8]*other.v[2]) + (v[12]*other.v[3]);
+    m.v[1] = (v[1]*other.v[0]) + (v[5]*other.v[1]) + (v[9]*other.v[2]) + (v[13]*other.v[3]);
+    m.v[2] = (v[2]*other.v[0]) + (v[6]*other.v[1]) + (v[10]*other.v[2]) + (v[14]*other.v[3]);
+    m.v[3] = (v[3]*other.v[0]) + (v[7]*other.v[1]) + (v[11]*other.v[2]) + (v[15]*other.v[3]);
+    return m;
+}
+
+m44 m44::operator+(const m44& other) {
+    m44 m;
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            m.v[i*4+j] = v[i*4+j] + other.v[i*4+j];
+        }
+    }
+    return m;
+}
+
+m44 m44::transpose() {
+    m44 m;
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            m.v[j*4+i] = v[i*4+j];
+    return m;
+}
+
+m44 m44::identity() {
+    m44 mi;
+    mi.v[0] = 1.0f;
+    mi.v[1] = 0.0f;
+    mi.v[2] = 0.0f;
+    mi.v[3] = 0.0f;
+    mi.v[4] = 0.0f;
+    mi.v[5] = 1.0f;
+    mi.v[6] = 0.0f;
+    mi.v[7] = 0.0f;
+    mi.v[8] = 0.0f;
+    mi.v[9] = 0.0f;
+    mi.v[10] = 1.0f;
+    mi.v[11] = 0.0f;
+    mi.v[12] = 0.0f;
+    mi.v[13] = 0.0f;
+    mi.v[14] = 0.0f;
+    mi.v[15] = 1.0f;
+    return mi;
+}
+
+m44 m44::scaling(float scale_factor) {
+    m44 m = m44::identity();
+    m.v[0] = scale_factor;
+    m.v[5] = scale_factor;
+    m.v[10] = scale_factor;
+    return m;
+}
+
+m44 m44::translation(Vec3f translation) {
+    m44 m = m44::identity();
+    m.v[12] = translation.raw[0];
+    m.v[13] = translation.raw[1];
+    m.v[14] = translation.raw[2];
+    return m;
+}
+
 // mallocs the data buffer. free with `destroy()`
 FloatBuffer::FloatBuffer(int w, int h) : data(NULL), width(w), height(h) {
     data = (float*)malloc(width * height * sizeof(float));
@@ -87,9 +164,9 @@ namespace gl {
     // mapping every point in the original 3 dimensional cube with ranges[-1, 1] * [-1, 1] * [-1, 1]
     // onto the screen cube [x, x + w] * [y, y + h] * [0, d], where d is the depth (and resolution) of the z-buffer and of value 255.
     // opengl calls this the viewport matrix
-    Matrix viewport(int x, int y, int w, int h, int depth) {
+    m44 viewport(int x, int y, int w, int h, int depth) {
 
-        Matrix m = Matrix::identity(4);
+        m44 m = m44::identity();
         
         // 1 0 0 translation_x
         // 0 1 0 translation_y
@@ -100,9 +177,9 @@ namespace gl {
         float translation_y = y + (h / 2.f);
         float translation_z = depth / 2.f;
 
-        m[0][3] = translation_x;
-        m[1][3] = translation_y;
-        m[2][3] = translation_z;
+        m.v[12] = translation_x;
+        m.v[13] = translation_y;
+        m.v[14] = translation_z;
 
         // scale_x 0       0       0
         // 0       scale_y 0       0
@@ -113,9 +190,9 @@ namespace gl {
         float scale_y = h / 2.f;
         float scale_z = depth / 2.f;
 
-        m[0][0] = scale_x;
-        m[1][1] = scale_y;
-        m[2][2] = scale_z;
+        m.v[0] = scale_x;
+        m.v[5] = scale_y;
+        m.v[10] = scale_z;
 
         // resulting in matrix m...
         // w/2     0       0       x+(w/2)
@@ -136,15 +213,15 @@ namespace gl {
     //     float c = -1 / (camera.looking_at - camera.position).norm();
     //     projection(c);
     // 
-    Matrix projection(float coeff) {
-        Matrix m = Matrix::identity();
-        m[3][2] = coeff;
+    m44 projection(float coeff) {
+        m44 m = m44::identity();
+        m.v[11] = coeff;
         // projection_matrix = m;
         return m;
     }
 
     // This is here just for reference. It contains details on how projection matrix is built.
-    Matrix get_projection_on_plane_xy_and_camera_on_axis_z(float distance_from_origin) {
+    m44 get_projection_on_plane_xy_and_camera_on_axis_z(float distance_from_origin) {
 
         // the camera will be in the axis z
         Vec3f camera(0.f, 0.f, distance_from_origin);
@@ -165,8 +242,8 @@ namespace gl {
 
         float c = camera.z;
 
-        Matrix projection = Matrix::identity(4);
-        projection[3][2] = -1/c;
+        m44 projection = m44::identity();
+        projection.v[11] = -1/c;
 
         return projection;
     }
@@ -181,7 +258,7 @@ namespace gl {
     // https://github.com/ssloy/tinyrenderer/blob/f037c7a0517a632c7391b35131f9746a8f8bb235/our_gl.cpp
     // https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function
     // https://github.com/HandmadeMath/HandmadeMath/blob/master/HandmadeMath.h
-    Matrix lookat(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
+    m44 lookat(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
 
         // just in case, normalize the up direction
         up.normalize();
@@ -191,22 +268,22 @@ namespace gl {
         Vec3f x = (up ^ z).normalized();
         Vec3f y = (z ^ x).normalized();
 
-        Matrix transformation_matrix = Matrix::identity();
-        transformation_matrix[0][0] = x.x;
-        transformation_matrix[0][1] = x.y;
-        transformation_matrix[0][2] = x.z;
-        
-        transformation_matrix[1][0] = y.x;
-        transformation_matrix[1][1] = y.y;
-        transformation_matrix[1][2] = y.z;
-        
-        transformation_matrix[2][0] = z.x;
-        transformation_matrix[2][1] = z.y;
-        transformation_matrix[2][2] = z.z;
-        
-        transformation_matrix[0][3] = point_looked_at.raw[0] * -1;
-        transformation_matrix[1][3] = point_looked_at.raw[1] * -1;
-        transformation_matrix[2][3] = point_looked_at.raw[2] * -1;
+        m44 transformation_matrix = m44::identity();
+        transformation_matrix.v[0] = x.x;
+        transformation_matrix.v[1] = x.y;
+        transformation_matrix.v[2] = x.z;
+
+        transformation_matrix.v[4] = y.x;
+        transformation_matrix.v[5] = y.y;
+        transformation_matrix.v[6] = y.z;
+
+        transformation_matrix.v[8] = z.x;
+        transformation_matrix.v[9] = z.y;
+        transformation_matrix.v[10] = z.z;
+
+        transformation_matrix.v[12] = point_looked_at.raw[0] * -1;
+        transformation_matrix.v[13] = point_looked_at.raw[1] * -1;
+        transformation_matrix.v[14] = point_looked_at.raw[2] * -1;
 
         return transformation_matrix;
     }
@@ -294,7 +371,7 @@ namespace gl {
 //      -dot(xaxis, eye)   -dot(yaxis, eye)   -dot(zaxis, eye)  1
 // 
 
-    Matrix lookat2(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
+    m44 lookat2(Vec3f camera_location, Vec3f point_looked_at, Vec3f up) {
 
         // https://stackoverflow.com/questions/349050/calculating-a-lookat-matrix
         // > # Note the example given is a left-handed, row major matrix.
@@ -338,21 +415,22 @@ namespace gl {
         Vec3f y = (z ^ x).normalized();
 
         // AKA change of basis matrix
-        Matrix rotation_matrix = Matrix::identity();
-        rotation_matrix[0][0] = x.x;
-        rotation_matrix[0][1] = x.y;
-        rotation_matrix[0][2] = x.z;
+        m44 rotation_matrix = m44::identity();
+        rotation_matrix.v[0] = x.x;
+        rotation_matrix.v[4] = x.y;
+        rotation_matrix.v[8] = x.z;
 
-        rotation_matrix[1][0] = y.x;
-        rotation_matrix[1][1] = y.y;
-        rotation_matrix[1][2] = y.z;
+        rotation_matrix.v[1] = y.x;
+        rotation_matrix.v[5] = y.y;
+        rotation_matrix.v[9] = y.z;
 
-        rotation_matrix[2][0] = z.x;
-        rotation_matrix[2][1] = z.y;
-        rotation_matrix[2][2] = z.z;
+        rotation_matrix.v[2] = z.x;
+        rotation_matrix.v[6] = z.y;
+        rotation_matrix.v[10] = z.z;
         
-        // translate the world to the location of the camera and rotate it
-        return rotation_matrix * Matrix::t(camera_location * -1.0f);
+        // translate the world to the location of the camera and then rotate it
+        // The order of this multiplication is relevant!
+        return rotation_matrix * m44::translation(camera_location * -1.0f);
     }
 
     // Retro-project a point in "4d" back into "3d"
@@ -362,16 +440,14 @@ namespace gl {
     //     | z |    | z/w |
     //     | w |         
     //
-    Vec3f retro_project_back_into_3d(Matrix m) {
-        if (m.ncols() != 1) {int a=1;a=a/0;}
-        if (m.nrows() != 4) {int a=1;a=a/0;}
+    Vec3f retro_project_back_into_3d(m41 m) {
         return Vec3f(
             // x / w
-            m[0][0]/m[3][0],
+            m.v[0]/m.v[3],
             // y / w
-            m[1][0]/m[3][0],
+            m.v[1]/m.v[3],
             // z / w
-            m[2][0]/m[3][0]
+            m.v[2]/m.v[3]
         );
     }
 
@@ -382,12 +458,12 @@ namespace gl {
     //     | z |    | z |
     //              | 1 |
     //     
-    Matrix embed_in_4d(Vec3f p) {
-        Matrix m(4, 1);
-        m[0][0] = p.x;
-        m[1][0] = p.y;
-        m[2][0] = p.z;
-        m[3][0] = 1.f;
+    m41 embed_in_4d(Vec3f p) {
+        m41 m;
+        m.v[0] = p.x;
+        m.v[1] = p.y;
+        m.v[2] = p.z;
+        m.v[3] = 1.f;
         return m;
     }
 

@@ -16,6 +16,24 @@
 #define u32rgba(r,g,b,a) pack_4_u8_in_a_single_u32(a,r,g,b)
 #define u32rgba_unpack(input,r,g,b,a) unpack_single_u32_in_4_u8(input,a,r,g,b)
 
+// Column major 4 x 4 matrix
+struct m41 {
+    float v[4];
+};
+
+// Column major 4 x 4 matrix
+struct m44 {
+    float v[16];
+    m44 operator*(const m44& other);
+    m41 operator*(const m41& other);
+    m44 operator+(const m44& other);
+    m44 transpose();
+    static m44 identity();
+    static m44 scaling(float scale_factor);
+    static m44 translation(Vec3f translation);
+};
+
+
 struct FloatBuffer {
 
     float* data;
@@ -72,10 +90,10 @@ struct camera {
 
 namespace gl {
 
-    Matrix viewport(int x, int y, int w, int h, int depth = 255);
-    Matrix projection(float coeff = 0.f);
-    Matrix lookat(Vec3f eye, Vec3f center, Vec3f up);
-    Matrix lookat2(Vec3f eye, Vec3f center, Vec3f up);
+    m44 viewport(int x, int y, int w, int h, int depth = 255);
+    m44 projection(float coeff = 0.f);
+    m44 lookat(Vec3f eye, Vec3f center, Vec3f up);
+    m44 lookat2(Vec3f eye, Vec3f center, Vec3f up);
 
     // Retro-project a point in "4d" back into "3d"
     //     
@@ -84,7 +102,7 @@ namespace gl {
     //     | z |    | z/w |
     //     | w |         
     //
-    Vec3f retro_project_back_into_3d(Matrix point_4d);
+    Vec3f retro_project_back_into_3d(m41 point_4d);
     
     // Embed the point into "4D" by augmenting it with 1, so that we can work with it.
     // 
@@ -93,7 +111,7 @@ namespace gl {
     //     | z |    | z |
     //              | 1 |
     //     
-    Matrix embed_in_4d(Vec3f point);
+    m41 embed_in_4d(Vec3f point);
 
     Vec3f barycentric(Vec2f abc[3], Vec2f p);
     Vec3f barycentric(Vec2i abc[3], Vec2i p);
