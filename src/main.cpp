@@ -64,7 +64,7 @@ struct TextureQuadShader : public gl::IShader {
     // Invariants (written by vertex shader, read by fragment shader)
     Vec2f text_uvs[3];
 
-    virtual Vec3f vertex(int iface, int nthvert) {
+    virtual bool vertex(int iface, int nthvert, Vec3f* screen_position) {
         int offset = (iface * 3 * 5) + (5 * nthvert);
         Vec3f vertex_position(
             vertex_buffer[offset + 0],
@@ -76,7 +76,8 @@ struct TextureQuadShader : public gl::IShader {
             vertex_buffer[offset + 4]
         );
         text_uvs[nthvert] = vertex_uv;
-        return vertex_position;
+        *screen_position = vertex_position;
+        return false;
     }
 
     virtual bool fragment(Vec3f bar, uint32_t* out_color) {
@@ -99,18 +100,15 @@ struct GouraudShader : public gl::IShader {
 
     // vertex shader params
     // precomputed: viewport_matrix * projection_matrix * view_matrix * model_matrix
-    m44 transformations_matrix;
+    m44 viewport_matrix;
+    m44 projection_matrix;
     m44 view_model_matrix;
     Vec3f light_source;
 
     // resources used during fragment shader
     PixelBuffer texture;
 
-    // debugging
-    Vec3f world_position;
-    Vec3f light_direction;
-
-    virtual Vec3f vertex(int iface, int nthvert) {
+    virtual bool vertex(int iface, int nthvert, Vec3f* screen_position) {
 
         int offset = (iface * 3 * 8) + (8 * nthvert);
 
@@ -119,25 +117,32 @@ struct GouraudShader : public gl::IShader {
             vertex_buffer[offset + 1],
             vertex_buffer[offset + 2]
         );
-        Vec2f vertex_uv(
-            vertex_buffer[offset + 3] * texture.width,
-            vertex_buffer[offset + 4] * texture.height
-        );
+        Vec3f world_position = gl::retro_project_back_into_3d(view_model_matrix * gl::embed_in_4d(vertex_position));
+        Vec3f clip_position = gl::retro_project_back_into_3d(projection_matrix * gl::embed_in_4d(world_position));
+
+        if (clip_position.x >= 1.0f || clip_position.x <= -1.0f || clip_position.y >= 1.0f || clip_position.y <= -1.0f || clip_position.z >= 1.0f || clip_position.z <= -1.0f) {
+            // If the triangle is not fully visible, skip it
+            return true;
+        }
+
+        *screen_position = gl::retro_project_back_into_3d(viewport_matrix * gl::embed_in_4d(clip_position));
+        
         Vec3f vertex_normal(
             vertex_buffer[offset + 5],
             vertex_buffer[offset + 6],
             vertex_buffer[offset + 7]
         );
         vertex_normal.normalize();
-
-        world_position = gl::retro_project_back_into_3d(view_model_matrix * gl::embed_in_4d(vertex_position));
-        Vec3f screen_position = gl::retro_project_back_into_3d(transformations_matrix * gl::embed_in_4d(world_position));
-        
-        light_direction = (light_source - world_position).normalized();
+        Vec3f light_direction = (light_source - world_position).normalized();
         light_intensities[nthvert] = MIN(MAX(0.f, vertex_normal * light_direction), 1.f);
+
+        Vec2f vertex_uv(
+            vertex_buffer[offset + 3] * texture.width,
+            vertex_buffer[offset + 4] * texture.height
+        );
         text_uvs[nthvert] = vertex_uv;
 
-        return screen_position;
+        return false;
     }
 
     virtual bool fragment(Vec3f bar, uint32_t* out_color) {
@@ -257,10 +262,13 @@ void render_text(PixelBuffer pixel_buffer, Vec2i pos, uint32_t color, const char
 
     TextureQuadShader shader(vertices, texture);
     for (int i = 0; i < text_size*2; i++) {
+        bool skip = false;
         Vec3f screen_coords[3];
         for (int j=0; j<3; j++) {
-            screen_coords[j] = shader.vertex(i, j);
+            skip = shader.vertex(i, j, &screen_coords[j]);
+            if (skip) break;
         }
+        if (skip) continue;
         gl::triangle(pixel_buffer, screen_coords, &shader);
     }
 }
@@ -276,9 +284,13 @@ void render_dot(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, V
 }
 
 void render_line(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera, Vec3f start, Vec3f end, uint32_t color) {
-    Vec3f start_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(start));
-    Vec3f end_real = gl::retro_project_back_into_3d(viewport_matrix * projection_matrix * view_matrix * gl::embed_in_4d(end));
-    
+    Vec3f start_clip = gl::retro_project_back_into_3d(projection_matrix * view_matrix * gl::embed_in_4d(start));
+    if (start_clip.x <= -1 || start_clip.y <= -1 || start_clip.z <= -1 || start_clip.x >= 1 || start_clip.y >= 1 || start_clip.z >= 1) return;
+    Vec3f end_clip = gl::retro_project_back_into_3d(projection_matrix * view_matrix * gl::embed_in_4d(end));
+    if (end_clip.x <= -1 || end_clip.y <= -1 || end_clip.z <= -1 || end_clip.x >= 1 || end_clip.y >= 1 || end_clip.z >= 1) return;
+
+    Vec3f start_real = gl::retro_project_back_into_3d(viewport_matrix * gl::embed_in_4d(start_clip));
+    Vec3f end_real = gl::retro_project_back_into_3d(viewport_matrix * gl::embed_in_4d(end_clip));
     gl::line(pixel_buffer, z_buffer, start_real, end_real, color);
 }
 
@@ -286,15 +298,19 @@ void render_model(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera,
     GouraudShader shader;
     shader.view_model_matrix = view_matrix * m44::translation(pos) * m44::scaling(scale_factor);
     shader.vertex_buffer = vertex_buffer;
-    shader.transformations_matrix = viewport_matrix * projection_matrix;
+    shader.projection_matrix = projection_matrix;
+    shader.viewport_matrix = viewport_matrix;
     shader.texture = texture_data;
     shader.light_source = gl::retro_project_back_into_3d(view_matrix * gl::embed_in_4d(light_source));
 
     for (int i = 0; i < faces; i++) {
+        bool skip = false;
         Vec3f screen_coords[3];
         for (int j=0; j<3; j++) {
-            screen_coords[j] = shader.vertex(i, j);
+            skip = shader.vertex(i, j, &screen_coords[j]);
+            if (skip) break;
         }
+        if (skip) continue;
         gl::triangle2(pixel_buffer, z_buffer, screen_coords, &shader);
     }
 
@@ -303,8 +319,8 @@ void render_model(PixelBuffer pixel_buffer, FloatBuffer z_buffer, camera camera,
 bool onUpdate(double dt_ms, unsigned long long fps) {
 
     auto wc = win32::GetWindowContext();
-    static int render_width = 800;
-    static int render_height = 800;
+    static int render_width = 200;
+    static int render_height = 200;
     static const char* render_name = "textured.tga";
     
     /* setup the window */ {
@@ -547,9 +563,9 @@ int main(int argc, char** argv) {
     /* window scope */ {
         int w = 100, h = 100;
         int x = 1920 + 1920 - 500;
-        x = 100;
+        // x = 100;
         int y = 1080 - 500;
-        y = 100;
+        // y = 100;
         auto window = win32::NewWindow("myWindow", "tinyrenderer", x, y, w, h, &window_callback);
         defer _([window]() { win32::CleanWindow("myWindow", window); });
 

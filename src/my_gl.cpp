@@ -818,6 +818,7 @@ namespace gl {
                 // barycentric coordinates for `z-buffer` and `texture sampling`
                 Vec3f bar = barycentric(screen, Vec2i(x, y));
 
+                // TODO I need to get trid of this, this shouldn't event be a possibility to start with lol
                 if (bar.x < 0 || bar.y < 0 || bar.z < 0 || bar.x > 1.0 || bar.y > 1.0 || bar.z > 1.0) continue; //{ int a=1;a=a/0; }
 
                 // > the idea is to take the barycentric coordinates version of triangle rasterization,
@@ -835,8 +836,6 @@ namespace gl {
                 z += depth.raw[0] * bar.w;
                 z += depth.raw[1] * bar.u;
                 z += depth.raw[2] * bar.v;
-
-                if (x < 0 || x >= image.width || y < 0 || y >= image.height || z < 0) continue;
 
                 // calculate z-buffer value's index
                 int idx = int(x + y * image_witdth);

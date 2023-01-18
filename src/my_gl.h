@@ -119,7 +119,7 @@ namespace gl {
     Vec3f barycentric_inverse(Vec3f triangle[3], Vec3f barycentric);
 
     struct IShader {
-        virtual Vec3f vertex(int iface, int nthvert) = 0;
+        virtual bool vertex(int iface, int nthvert, Vec3f* screen_position) = 0;
         virtual bool fragment(Vec3f bar, uint32_t* out_color) = 0;
     };
 
