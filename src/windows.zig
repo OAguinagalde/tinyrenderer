@@ -1,6 +1,9 @@
 const std = @import("std");
-const win32 = @import("win32").everything;
-const win32_false: i32 = 0;
+const win32 = struct {
+    usingnamespace @import("win32").everything;
+    const falsei32: i32 = 0;
+    const call_convention = std.os.windows.WINAPI;
+};
 
 const Pixel = u32;
 const State = struct {
@@ -25,8 +28,7 @@ var state = State {
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
-
-    const instance_handle = win32.GetModuleHandleA(null);
+    const instance_handle = win32.GetModuleHandleW(null);
     const window_class_name = win32.L("doesntmatter");
     const window_class = win32.WNDCLASSW {
         .style = @intToEnum(win32.WNDCLASS_STYLES, 0),
@@ -102,7 +104,7 @@ pub fn main() !void {
 
             { // windows message loop
                 var message: win32.MSG = undefined;
-                while (win32.PeekMessageW(&message, null,  0, 0, .REMOVE) != win32_false) {
+                while (win32.PeekMessageW(&message, null,  0, 0, .REMOVE) != win32.falsei32) {
                     _ = win32.TranslateMessage(&message);
                     _ = win32.DispatchMessageW(&message);
 
@@ -147,7 +149,7 @@ pub fn main() !void {
 
 }
 
-fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32.WPARAM, l_param: win32.LPARAM) callconv(std.os.windows.WINAPI) win32.LRESULT {
+fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32.WPARAM, l_param: win32.LPARAM) callconv(win32.call_convention) win32.LRESULT {
     
     switch (message_type) {
 
