@@ -227,11 +227,72 @@ fn rgba(r: u8, g: u8, b: u8, a: u8) Pixel {
     });
 }
 
+/// top = y = window height, bottom = y = 0
 fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pixel) void {
+    
+    if (a.x == b.x and a.y == b.y) {
+        // a point
+        buffer[@intCast(usize, buffer_width * a.y + a.x)] = color;
+        return;
+    }
+
     const delta = a.substract(b);
+
+    if (delta.x == 0) {
+        // vertical line drawn bottom to top
+        var top = &a;
+        var bottom = &b;
+        if (delta.y < 0) {
+            top = &b;
+            bottom = &a;
+        }
+
+        const x = a.x;
+        var y = bottom.y;
+        while (y != top.y + 1) : (y += 1) {
+            buffer[@intCast(usize, buffer_width * y + x)] = color;
+        }
+        return;
+    }
+    else if (delta.y == 0) {
+        // horizontal line drawn left to right
+        var left = &a;
+        var right = &b;
+        if (delta.x > 0) {
+            left = &b;
+            right = &a;
+        }
+
+        const y = a.y;
+        var x = left.x;
+        while (x != right.x + 1) : (x += 1) {
+            buffer[@intCast(usize, buffer_width * y + x)] = color;
+        }
+        return;
+    }
+
     const delta_x_abs = std.math.absInt(delta.x) catch unreachable;
     const delta_y_abs = std.math.absInt(delta.y) catch unreachable;
 
+    if (delta_x_abs == delta_y_abs) {
+        // draw diagonal line
+        var bottom_left = &a;
+        var top_right = &b;
+        if (a.x < b.x and a.y < b.y) {} else {
+            bottom_left = &b;
+            top_right = &a;
+        }
+
+        var x = bottom_left.x;
+        var y = bottom_left.y;
+        while (x != top_right.x) {
+            buffer[@intCast(usize, buffer_width * y + x)] = color;
+            x += 1;
+            y += 1;
+        }
+        return;
+    }
+    
     if (delta_x_abs > delta_y_abs) {
         // draw horizontally
         
@@ -254,7 +315,7 @@ fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pix
             percentage_of_line_done += increment;
         }
     }
-    else {
+    else if (delta_x_abs < delta_y_abs) {
         // draw vertically
 
         var top = &a;
@@ -276,9 +337,7 @@ fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pix
         }
 
     }
-
-    buffer[@intCast(usize, a.x + a.y*buffer_width)] = rgb(0, 255, 0);
-    buffer[@intCast(usize, b.x + b.y*buffer_width)] = rgb(255, 0, 0);
+    else unreachable;
 }
 
 const State = struct {
@@ -391,6 +450,11 @@ pub fn main() !void {
                 }
             }
 
+            var rect: win32.RECT = undefined;
+            _ = win32.GetClientRect(window_handle, &rect);
+            const client_width = rect.right - rect.left;
+            const client_height = rect.bottom - rect.top;
+
             var app_close_requested = false;
             { // tick / update
                 
@@ -408,21 +472,27 @@ pub fn main() !void {
                 const red = rgb(255, 0, 0);
                 const green = rgb(0, 255, 0);
                 const blue = rgb(0, 0, 255);
-                line(state.pixel_buffer, state.w, Vector2i { .x = 1, .y = 1 }, Vector2i { .x = 100, .y = 1 }, red); 
-                line(state.pixel_buffer, state.w, Vector2i { .x = 1, .y = 1 }, Vector2i { .x = 100, .y = 50 }, green);
-                line(state.pixel_buffer, state.w, Vector2i { .x = 1, .y = 1 }, Vector2i { .x = 50, .y = 100 }, blue);
-                line(state.pixel_buffer, state.w, Vector2i { .x = 1, .y = 1 }, Vector2i { .x = 1, .y = 100 }, white);
+                const turquoise = rgb(0, 255, 255);
+                
+                line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red); 
+                line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 50 }, green);
+                line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 50, .y = 100 }, blue);
+                line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 1, .y = 100 }, white);
+                line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 100 }, turquoise);
 
+                line(state.pixel_buffer, state.w, Vector2i { .x = client_width-1, .y = client_height-1 }, Vector2i { .x = 100, .y = 1 }, red); 
+                line(state.pixel_buffer, state.w, Vector2i { .x = client_width-1, .y = client_height-1 }, Vector2i { .x = 100, .y = 50 }, green);
+                line(state.pixel_buffer, state.w, Vector2i { .x = client_width-1, .y = client_height-1 }, Vector2i { .x = 50, .y = 100 }, blue);
+                line(state.pixel_buffer, state.w, Vector2i { .x = client_width-1, .y = client_height-1 }, Vector2i { .x = 1, .y = 100 }, white);
+                line(state.pixel_buffer, state.w, Vector2i { .x = client_width-1, .y = client_height-1 }, Vector2i { .x = 100, .y = 100 }, turquoise);
+
+                line(state.pixel_buffer, state.w, Vector2i { .x = 70, .y = 10 }, Vector2i { .x = 70, .y = 10 }, white);
             }
 
             state.running = state.running and !app_close_requested;
             if (state.running == false) continue;
 
             { // render
-                var rect: win32.RECT = undefined;
-                _ = win32.GetClientRect(window_handle, &rect);
-                const client_width = rect.right - rect.left;
-                const client_height = rect.bottom - rect.top;
                 const device_context_handle = win32.GetDC(window_handle).?;
                 _ = win32.StretchDIBits(
                     device_context_handle,
