@@ -204,6 +204,14 @@ const M44 = struct {
         result.data[14] = t.z;
         return result;
     }
+
+    pub fn scale(factor: f32) M44 {
+        var result = M44.identity();
+        result.data[0] = factor;
+        result.data[5] = factor;
+        result.data[10] = factor;
+        return result;
+    }
     
 };
 
@@ -340,12 +348,105 @@ fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pix
     else unreachable;
 }
 
+/// top = y = window height, bottom = y = 0
+fn triangle(buffer: []Pixel, buffer_width: i32, tri: [3]Vector3f, z_buffer: []f32, comptime fragment_shader: fn (u:f32, v:f32, w:f32, x: i32, y: i32, z: f32) ?Pixel) void {
+    
+    const a = &tri[0];
+    const b = &tri[1];
+    const c = &tri[2];
+
+    const buffer_height = @divExact(@intCast(i32, buffer.len), buffer_width);
+
+    // calculate the bounding of the triangle's projection on the screen
+    const left: i32 = @floatToInt(i32, std.math.min(a.x, std.math.min(b.x, c.x)));
+    const top: i32 = @floatToInt(i32, std.math.min(a.y, std.math.min(b.y, c.y)));
+    const right: i32 = @floatToInt(i32, std.math.max(a.x, std.math.max(b.x, c.x)));
+    const bottom: i32 = @floatToInt(i32, std.math.max(a.y, std.math.max(b.y, c.y)));
+
+    if (false) std.debug.print("left   {?}\n", .{ left });
+    if (false) std.debug.print("top    {?}\n", .{ top });
+    if (false) std.debug.print("bottom {?}\n", .{ bottom });
+    if (false) std.debug.print("right  {?}\n", .{ right });
+
+    // if the triangle is not fully inside the buffer, discard it straight away
+    if (left < 0 or top < 0 or right >= buffer_width or bottom >= buffer_height) return;
+
+    if (false) std.debug.print("visible\n", .{ });
+
+    // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
+    // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
+    // test it just in case
+
+    // bottom to top
+    var y: i32 = bottom;
+    while (y >= top) : (y -= 1) {
+        
+        // left to right
+        var x: i32 = left;
+        while (x <= right) : (x += 1) {
+            
+            // pixel by pixel check if its inside the triangle
+            
+            // barycentric coordinates of the current pixel, used to...
+            // ... determine if a pixel is in fact part of the triangle,
+            // ... calculate the pixel's z value
+            // ... for texture sampling
+            // TODO make const
+            var u: f32 = undefined;
+            var v: f32 = undefined;
+            var w: f32 = undefined;
+            {
+                const pixel = Vector3f { .x = @intToFloat(f32, x), .y = @intToFloat(f32, y), .z = 0 };
+
+                const ab = b.subtract(a.*);
+                const ac = c.subtract(a.*);
+                const ap = pixel.subtract(a.*);
+                const bp = pixel.subtract(b.*);
+                const ca = a.subtract(c.*);
+
+                // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
+                // the magnitude of the cross product can be interpreted as the area of the parallelogram.
+                const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+                const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
+                const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
+
+                u = paralelogram_area_cap / paralelogram_area_abc;
+                v = paralelogram_area_abp / paralelogram_area_abc;
+                w = (1 - u - v);
+            }
+
+            if (false) std.debug.print("u {} v {} w {}\n", .{ u, v, w });
+
+            // determine if a pixel is in fact part of the triangle
+            if (u < 0 or u >= 1) continue;
+            if (v < 0 or v >= 1) continue;
+            if (w < 0 or w >= 1) continue;
+
+            if (false) std.debug.print("inside\n", .{ });
+
+            // interpolate the z of this pixel to find out its depth
+            const z = a.z * w + b.z * u + c.z * v;
+
+            const pixel_index = @intCast(usize, x + y * buffer_width);
+            if (z_buffer[pixel_index] < z) {
+                if (fragment_shader(u, v, w, x, y, z)) |color| {
+                    z_buffer[pixel_index] = z;
+                    buffer[pixel_index] = color;
+                }
+            }
+
+        }
+    }
+
+}
+
 const State = struct {
     x: i32,
     y: i32,
     w: i32,
     h: i32,
     render_target: win32.BITMAPINFO,
+    z_buffer: []f32,
     pixel_buffer: []Pixel,
     running: bool,
 };
@@ -357,6 +458,7 @@ var state = State {
     .h = 300,
     .render_target = undefined,
     .pixel_buffer = undefined,
+    .z_buffer = undefined,
     .running = true,
 };
 
@@ -390,7 +492,9 @@ pub fn main() !void {
     state.render_target.bmiHeader.biCompression = win32.BI_RGB;
 
     state.pixel_buffer = try allocator.alloc(Pixel, @intCast(usize, state.w * state.h));
+    state.z_buffer = try allocator.alloc(f32, @intCast(usize, state.w * state.h));
     defer allocator.free(state.pixel_buffer);
+    defer allocator.free(state.z_buffer);
 
     _ = win32.RegisterClassW(&window_class);
     defer _ = win32.UnregisterClassW(window_class_name, instance_handle);
@@ -467,6 +571,7 @@ pub fn main() !void {
                 _ = counted_since_start;
                 // Clear the screen blue
                 for (state.pixel_buffer) |*pixel| { pixel.* = rgb(0, 0, 0); }
+                for (state.z_buffer) |*value| { value.* = 0; }
 
                 const white = rgb(255, 255, 255);
                 const red = rgb(255, 0, 0);
@@ -480,13 +585,44 @@ pub fn main() !void {
                 line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 1, .y = 100 }, white);
                 line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 100 }, turquoise);
 
-                line(state.pixel_buffer, state.w, Vector2i { .x = client_width-1, .y = client_height-1 }, Vector2i { .x = 100, .y = 1 }, red); 
-                line(state.pixel_buffer, state.w, Vector2i { .x = client_width-1, .y = client_height-1 }, Vector2i { .x = 100, .y = 50 }, green);
-                line(state.pixel_buffer, state.w, Vector2i { .x = client_width-1, .y = client_height-1 }, Vector2i { .x = 50, .y = 100 }, blue);
-                line(state.pixel_buffer, state.w, Vector2i { .x = client_width-1, .y = client_height-1 }, Vector2i { .x = 1, .y = 100 }, white);
-                line(state.pixel_buffer, state.w, Vector2i { .x = client_width-1, .y = client_height-1 }, Vector2i { .x = 100, .y = 100 }, turquoise);
+                line(state.pixel_buffer, state.w, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 1 }, red); 
+                line(state.pixel_buffer, state.w, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 50 }, green);
+                line(state.pixel_buffer, state.w, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 50, .y = 100 }, blue);
+                line(state.pixel_buffer, state.w, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 1, .y = 100 }, white);
+                line(state.pixel_buffer, state.w, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 100 }, turquoise);
 
                 line(state.pixel_buffer, state.w, Vector2i { .x = 70, .y = 10 }, Vector2i { .x = 70, .y = 10 }, white);
+
+                const fragment_shader_a = struct {
+                    fn shader(u:f32, v:f32, w:f32, x: i32, y: i32, z: f32) ?Pixel {
+                        _ = u; _ = v; _ = w; _ = x; _ = y;
+                        return rgb(@floatToInt(u8, z*255), @floatToInt(u8, z*255), @floatToInt(u8, z*255));
+                    }
+                }.shader;
+
+                triangle(
+                    state.pixel_buffer,
+                    state.w,
+                    [3]Vector3f {
+                        Vector3f { .x = 33, .y = 20, .z = 0 },
+                        Vector3f { .x = 133, .y = 27, .z = 0.5 },
+                        Vector3f { .x = 70, .y = 212, .z = 1 },
+                    },
+                    state.z_buffer,
+                    fragment_shader_a
+                );
+
+                triangle(
+                    state.pixel_buffer,
+                    state.w,
+                    [3]Vector3f {
+                        Vector3f { .x = 33, .y = 50, .z = 1 },
+                        Vector3f { .x = 200, .y = 79, .z = 0 },
+                        Vector3f { .x = 130, .y = 180, .z = 0.5 },
+                    },
+                    state.z_buffer,
+                    fragment_shader_a
+                );
             }
 
             state.running = state.running and !app_close_requested;
