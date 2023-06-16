@@ -97,7 +97,7 @@ const Vector3f = struct {
         return Vector3f { .x = self.x + other.x, .y = self.y + other.y, .z = self.z + other.z };
     }
 
-    pub fn subtract(self: Vector3f, other: Vector3f) Vector3f {
+    pub fn substract(self: Vector3f, other: Vector3f) Vector3f {
         return Vector3f { .x = self.x - other.x, .y = self.y - other.y, .z = self.z - other.z };
     }
 
@@ -166,6 +166,41 @@ const M44 = struct {
         return result;
     }
 
+    pub fn apply_to_point(self: M44, point: Vector3f) Vector3f {
+        // Embed the `point` into "4D" by augmenting it with 1, so that we can work with it.
+        // 
+        //     | x |    | x |
+        //     | y | => | y |
+        //     | z |    | z |
+        //              | 1 |
+        //     
+        // Essentially creating a Matrix41 where its "new" 4th element is 1.0f
+        const point4d = Vector4f { .x = point.x, .y = point.y, .z = point.z, .w = 1 };
+
+        // Then do a standard Matrix multiplication M44 * M41 => M41 (AKA Vector4f)
+        // 
+        //     point_transformed = self * point4d
+        // 
+        var point_transformed: Vector4f = undefined;
+        point_transformed.x = self.data[0] * point4d.x + self.data[4] * point4d.y + self.data[8] * point4d.z + self.data[12] * point4d.w;
+        point_transformed.y = self.data[1] * point4d.x + self.data[5] * point4d.y + self.data[9] * point4d.z + self.data[13] * point4d.w;
+        point_transformed.z = self.data[2] * point4d.x + self.data[6] * point4d.y + self.data[10] * point4d.z + self.data[14] * point4d.w;
+        point_transformed.w = self.data[3] * point4d.x + self.data[7] * point4d.y + self.data[11] * point4d.z + self.data[15] * point4d.w;
+
+        // Finally we project (retro-project*) the resulting point back in a 3D space
+        //     
+        //     | x |    | x/w |
+        //     | y | => | y/w |
+        //     | z |    | z/w |
+        //     | w |         
+        //
+        return Vector3f {
+            .x = point_transformed.x / point_transformed.w,
+            .y = point_transformed.y / point_transformed.w,
+            .z = point_transformed.z / point_transformed.w,
+        };
+    }
+
     pub fn transposed(self: M44) M44 {
         var result: M44 = undefined;
         for (0..4) |row| {
@@ -213,6 +248,217 @@ const M44 = struct {
         return result;
     }
     
+    pub fn lookat_right_handed(camera_location: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
+        
+        { // Some notes and articles, this things can be confusing lol
+
+            // https://stackoverflow.com/questions/349050/calculating-a-lookat-matrix
+            // > # Note the example given is a left-handed, row major matrix.
+            // > 
+            // > So the operation is: Translate to the origin first (move by -eye),
+            // > then rotate so that the vector from eye to At lines up with +z:
+            // > 
+            // > Basically you get the same result if you pre-multiply the rotation matrix by a translation -eye:
+            // > 
+            // >     [      1       0       0   0 ]   [ xaxis.x  yaxis.x  zaxis.x 0 ]
+            // >     [      0       1       0   0 ] * [ xaxis.y  yaxis.y  zaxis.y 0 ]
+            // >     [      0       0       1   0 ]   [ xaxis.z  yaxis.z  zaxis.z 0 ]
+            // >     [ -eye.x  -eye.y  -eye.z   1 ]   [       0        0        0 1 ]
+            // >     
+            // >       [         xaxis.x          yaxis.x          zaxis.x  0 ]
+            // >     = [         xaxis.y          yaxis.y          zaxis.y  0 ]
+            // >       [         xaxis.z          yaxis.z          zaxis.z  0 ]
+            // >       [ dot(xaxis,-eye)  dot(yaxis,-eye)  dot(zaxis,-eye)  1 ]
+            // > 
+            // > ## Additional notes:
+            // > 
+            // > Note that a viewing transformation is (intentionally) inverted: you multiply every vertex by
+            // > this matrix to "move the world" so that the portion you want to see ends up in the canonical view volume.
+            // > 
+            // > Also note that the rotation matrix (call it R) component of the LookAt
+            // > matrix is an inverted change of basis matrix where the rows of R are the new basis vectors in
+            // > terms of the old basis vectors (hence the variable names xaxis.x, .. xaxis is the new x axis
+            // > after the change of basis occurs). Because of the inversion, however, the rows and columns are transposed.
+            // > 
+            // > This would imply that the LookAt matrix is an orthonormal basis (they are all unit vectors and orthogonal to each other)
+            // > otherwise the transpose would not be equal to it's inverse
+
+            // http://davidlively.com/programming/graphics/opengl-matrices/row-major-vs-column-major/
+            // > # Row Major VS. Column Major
+            // > 
+            // > ## Column-Major
+            // > 
+            // > - Standard widely used for OpenGL.
+            // > - Values are stored in column-first order (see below)
+            // > - Transpose of row-major.
+            // > - The matrix must be to the LEFT of the multiply operator
+            // > - The vertex or vector must to the RIGHT of the operator
+            // > 
+            // > Given a matrix:
+            // > 
+            // >     a00 a01 a02 a03
+            // >     a10 a11 a12 a13
+            // >     a20 a21 a22 a23
+            // >     a30 a31 a32 a33
+            // > 
+            // > The values would be stored in memory in the order
+            // > 
+            // >     a00, a10, a20, a30, a01, a11, a21, a31, a02, a12, a22, a32, a03, a13, a23, a33
+            // > 
+            // > Translation matrix:
+            // > 
+            // >     | 1 0 0 tx |   | x |     | x+w*tx |
+            // >     | 0 1 0 ty |   | y |  =  | y+w*ty |
+            // >     | 0 0 1 tz |   | z |     | z+w*tz |
+            // >     | 0 0 0 tw |   | 1 |     |   tw   |
+            // > 
+            // > 
+            // > ## Row-Major
+            // > 
+            // > - Used in DirectX and HLSL
+            // > - Values are stored in row-first order
+            // > - Transpose of column-major
+            // > - The matrix must be to the RIGHT of the multiply operator
+            // > - The vertex or vector must to the LEFT of the operator
+            // > - When using the row-major convention, the matrix:
+            // > 
+            // > Given a matrix:
+            // > 
+            // >     a00 a01 a02 a03
+            // >     a10 a11 a12 a13
+            // >     a20 a21 a22 a23
+            // >     a30 a31 a32 a33
+            // > 
+            // > The values would be stored in memory in the order
+            // > 
+            // >     a00, a01, a02, a03, a10, a11, a12, a13, a20, a21, a22, a23, a30, a31, a32, a33
+            // >  
+            // > Translation matrix:
+            // >  
+            // >                     | 0  0  0  0  |
+            // >     | x, y, z, 1 |  | 0  0  0  0  |  =  | x+w∗tx, y+w∗ty, z+w∗tz, tw |
+            // >                     | 0  0  0  0  | 
+            // >                     | tx ty tz tw |
+            // > 
+            // > https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3dxmatrixlookatlh
+            // > https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3dxmatrixlookatrh
+            // > 
+            // > From D3D9, Left Handed Look At
+            // > 
+            // >     zaxis = normal(At - Eye)
+            // >     xaxis = normal(cross(Up, zaxis))
+            // >     yaxis = cross(zaxis, xaxis)
+            // >     
+            // >      xaxis.x           yaxis.x           zaxis.x          0
+            // >      xaxis.y           yaxis.y           zaxis.y          0
+            // >      xaxis.z           yaxis.z           zaxis.z          0
+            // >     -dot(xaxis, eye)  -dot(yaxis, eye)  -dot(zaxis, eye)  1
+            // > 
+            // > From D3D9, Right Handed Look At
+            // > 
+            // >     zaxis = normal(Eye - At)
+            // >     xaxis = normal(cross(Up, zaxis))
+            // >     yaxis = cross(zaxis, xaxis)
+            // >     
+            // >      xaxis.x            yaxis.x            zaxis.x           0
+            // >      xaxis.y            yaxis.y            zaxis.y           0
+            // >      xaxis.z            yaxis.z            zaxis.z           0
+            // >      -dot(xaxis, eye)   -dot(yaxis, eye)   -dot(zaxis, eye)  1
+            // > 
+        }
+
+        // just in case, normalize the up direction
+        up.normalize();
+        
+        // here z is technically -z
+        const z: Vector3f = camera_location.substract(point_looked_at).normalized();
+        const x: Vector3f = up.cross_product(z).normalized();
+        const y: Vector3f = z.cross_product(x).normalized();
+
+        // AKA change of basis matrix
+        const rotation_matrix = M44.identity();
+        rotation_matrix.data[0] = x.x;
+        rotation_matrix.data[4] = x.y;
+        rotation_matrix.data[8] = x.z;
+
+        rotation_matrix.data[1] = y.x;
+        rotation_matrix.data[5] = y.y;
+        rotation_matrix.data[9] = y.z;
+
+        rotation_matrix.data[2] = z.x;
+        rotation_matrix.data[6] = z.y;
+        rotation_matrix.data[10] = z.z;
+
+        // translate the world to the location of the camera and then rotate it
+        // The order of this multiplication is relevant!
+        // 
+        //     rotation_matrix * translation_matrix(-camera_location)
+        // 
+        return rotation_matrix.multiply(M44.translation(camera_location.scale(-1)));
+    }
+    
+    /// This should probably go something like...
+    /// 
+    ///     float c = -1 / (camera.looking_at - camera.position).norm();
+    ///     projection(c);
+    /// 
+    pub fn projection(coefficient: f32) M44 {
+        const projection_matrix = M44.identity();
+        projection_matrix.data[11] = coefficient;
+        return projection_matrix;
+    }
+    
+    /// Builds a "viewport" (as its called in opengl) matrix, a matrix that
+    /// will map a point in the 3-dimensional cube [-1, 1]*[-1, 1]*[-1, 1]
+    /// onto the screen cube [x, x+w]*[y, y+h]*[0, d],
+    /// where d is the depth/resolution of the z-buffer
+    pub fn viewport(x: i32, y: i32, w: i32, h: i32, depth: i32) M44 {
+        var matrix = M44.identity();
+
+        const xf = @intToFloat(f32, x);
+        const yf = @intToFloat(f32, y);
+        const wf = @intToFloat(f32, w);
+        const hf = @intToFloat(f32, h);
+        const depthf = @intToFloat(f32, depth);
+        
+        // 1 0 0 translation_x
+        // 0 1 0 translation_y
+        // 0 0 1 translation_z
+        // 0 0 0 1
+
+        const translation_x: f32 = xf + (wf / 2);
+        const translation_y: f32 = yf + (hf / 2);
+        const translation_z: f32 = depthf / 2;
+
+        matrix.data[12] = translation_x;
+        matrix.data[13] = translation_y;
+        matrix.data[14] = translation_z;
+
+        // scale_x 0       0       0
+        // 0       scale_y 0       0
+        // 0       0       scale_z 0
+        // 0       0       0       1
+        
+        const scale_x: f32 = wf / 2;
+        const scale_y: f32 = hf / 2;
+        const scale_z: f32 = depthf / 2;
+
+        matrix.data[0] = scale_x;
+        matrix.data[5] = scale_y;
+        matrix.data[10] = scale_z;
+
+        // resulting in matrix...
+        // w/2     0       0       x+(w/2)
+        // 0       h/2     0       y+(h/w)
+        // 0       0       d/2     d/2
+        // 0       0       0       1
+
+        // https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera#viewport
+        // > In this function, we are basically mapping a cube [-1,1]*[-1,1]*[-1,1] onto the screen cube [x,x+w]*[y,y+h]*[0,d]
+        // > Its a cube (and not a rectangle) since there is a `d`epth variable to it, which acts as the resolution of the z-buffer.
+
+        return matrix;
+    }
 };
 
 const Pixel = u32;
@@ -440,15 +686,41 @@ fn triangle(buffer: []Pixel, buffer_width: i32, tri: [3]Vector3f, z_buffer: []f3
 
 }
 
+const Camera = struct {
+    position: Vector3f,
+    direction: Vector3f,
+    looking_at: Vector3f,
+    up: Vector3f,
+};
+
+const BufferRgb = struct {
+    buffer: []Pixel,
+    width: i32
+};
+
+const BufferVertex = struct {
+    buffer: []f32,
+    faces: i32
+};
+
 const State = struct {
     x: i32,
     y: i32,
     w: i32,
     h: i32,
     render_target: win32.BITMAPINFO,
-    z_buffer: []f32,
     pixel_buffer: []Pixel,
     running: bool,
+    mouse: Vector2i,
+    
+    z_buffer: []f32,
+    texture: BufferRgb,
+    model: BufferVertex,
+    camera: Camera,
+    view_matrix: M44,
+    viewport_matrix: M44,
+    projection_matrix: M44,
+    time: f64,
 };
 
 var state = State {
@@ -458,8 +730,17 @@ var state = State {
     .h = 300,
     .render_target = undefined,
     .pixel_buffer = undefined,
-    .z_buffer = undefined,
     .running = true,
+    .mouse = undefined,
+    
+    .z_buffer = undefined,
+    .texture = undefined,
+    .model = undefined,
+    .camera = undefined,
+    .view_matrix = undefined,
+    .viewport_matrix = undefined,
+    .projection_matrix = undefined,
+    .time = undefined,
 };
 
 pub fn main() !void {
@@ -492,9 +773,7 @@ pub fn main() !void {
     state.render_target.bmiHeader.biCompression = win32.BI_RGB;
 
     state.pixel_buffer = try allocator.alloc(Pixel, @intCast(usize, state.w * state.h));
-    state.z_buffer = try allocator.alloc(f32, @intCast(usize, state.w * state.h));
     defer allocator.free(state.pixel_buffer);
-    defer allocator.free(state.z_buffer);
 
     _ = win32.RegisterClassW(&window_class);
     defer _ = win32.UnregisterClassW(window_class_name, instance_handle);
@@ -509,9 +788,31 @@ pub fn main() !void {
     );
     
     if (window_handle_maybe) |window_handle| {
-        defer _ = win32.DestroyWindow(window_handle);
         _ = win32.ShowWindow(window_handle, .SHOW);
+        defer _ = win32.DestroyWindow(window_handle);
 
+        { // Initialize the application state
+            // Create the z-buffer
+            state.z_buffer = try allocator.alloc(f32, @intCast(usize, state.w * state.h));
+
+            // Load the diffuse texture data
+            state.texture = TGA.from_file(allocator, "res/african_head_diffuse.tga").to_rgb_buffer();
+            state.model = OBJ.from_file(allocator, "res/african_head.obj").to_vertex_buffer();
+
+            // Set the camera
+            state.camera.position = Vector3f { .x = 1, .y = 1, .z = 3 };
+            state.camera.up = Vector3f { .x = 0, .y = 1, .z = 0 };
+            state.camera.direction = Vector3f { .x = 0, .y = 0, .z = 1 };
+
+            state.time = 0;
+        }
+
+        defer { // Deinitialize the application state
+            allocator.free(state.z_buffer);
+            allocator.free(state.texture.buffer);
+            allocator.free(state.model.buffer);
+        }
+        
         var cpu_counter: i64 = blk: {
             var counter: win32.LARGE_INTEGER = undefined;
             _ = win32.QueryPerformanceCounter(&counter);
@@ -523,6 +824,8 @@ pub fn main() !void {
             _ = win32.QueryPerformanceFrequency(&performance_frequency);
             break :blk performance_frequency.QuadPart;
         };
+
+        state.mouse = Vector2i { .x = 0, .y = 0 };
 
         while (state.running) {
 
@@ -559,25 +862,61 @@ pub fn main() !void {
             const client_width = rect.right - rect.left;
             const client_height = rect.bottom - rect.top;
 
+            const mouse_previous = state.mouse;
+            var mouse_current: win32.POINT = undefined;
+            win32.GetCursorPos(&mouse_current);
+            const factor: f32 = 0.02f;
+            const mouse_dx = @intToFloat(f32, mouse_current.x - mouse_previous.x) * factor;
+            const mouse_dy = @intToFloat(f32, mouse_current.y - mouse_previous.y) * factor;
+            state.mouse.x = mouse_current.x;
+            state.mouse.y = mouse_current.y;
+
             var app_close_requested = false;
             { // tick / update
                 
-                // TODO The actual application code
-                
-                // for (state.pixel_buffer, 0..) |*pixel, i| {
-                //     pixel.* = @intCast(Pixel, i + @intCast(usize, counted_since_start));
-                // }
-
-                _ = counted_since_start;
-                // Clear the screen blue
-                for (state.pixel_buffer) |*pixel| { pixel.* = rgb(0, 0, 0); }
-                for (state.z_buffer) |*value| { value.* = 0; }
-
                 const white = rgb(255, 255, 255);
                 const red = rgb(255, 0, 0);
                 const green = rgb(0, 255, 0);
                 const blue = rgb(0, 0, 255);
                 const turquoise = rgb(0, 255, 255);
+                
+                // Clear the screen and the zbuffer
+                for (state.pixel_buffer) |*pixel| { pixel.* = rgb(0, 0, 0); }
+                for (state.z_buffer) |*value| { value.* = -9999; }
+
+                if (state.keys.T) state.time += ms;
+
+                // move camera direction based on mouse movement
+                const up = Vector3f {.x = 0, .y = 1, .z = 0 };
+                const real_right = state.camera.direction.cross_product(up).normalized();
+                const real_up = state.camera.direction.cross_product(real_right).normalized().scale(-1);
+                if (mouse_dx != 0 or mouse_dy != 0) {
+                    state.camera.direction = state.camera.direction.add(real_right.scale(mouse_dx));
+                    if (state.camera.direction.y < 0.95 and state.camera.direction.y > -0.95) {
+                        state.camera.direction = state.camera.direction.add(real_up.scale(mouse_dy));
+                    }
+                    state.camera.direction.normalize();
+                }
+                
+                // move the camera position based on WASD and QE
+                if (state.keys.W) state.camera.position = state.camera.position.add(cam.direction.scale(0.02));
+                if (state.keys.S) state.camera.position = state.camera.position.add(cam.direction.scale(0.02)).scale(-1);
+                if (state.keys.A) state.camera.position = state.camera.position.add(real_right.scale(0.02)).scale(-1);
+                if (state.keys.D) state.camera.position = state.camera.position.add(real_right.scale(0.02));
+                if (state.keys.Q) state.camera.position.y += factor1;
+                if (state.keys.E) state.camera.position.y -= factor1;
+
+                // calculate camera's look-at
+                state.camera.looking_at = state.camera.position.add(state.camera.direction);
+                
+                state.view_matrix = M44.lookat_right_handed(state.camera.position, state.camera.looking_at, state.camera.up);
+                state.viewport_matrix = M44.viewport(0, 0, state.w, state.h, 255);
+                state.projection_matrix = M44.projection(-1 / state.camera.position.substract(state.camera.looking_at).magnitude());
+
+                if (state.keys.P) state.projection_matrix = M44.identity();
+                if (state.keys.V) state.viewport_matrix = M44.identity();
+
+                const horizontally_spinning_position = Vector3f { .x = std.math.cos(time / 2000), .y = 0, .z = std.math.sin(time / 2000) };
                 
                 line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red); 
                 line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 50 }, green);
@@ -599,6 +938,73 @@ pub fn main() !void {
                         return rgb(@floatToInt(u8, z*255), @floatToInt(u8, z*255), @floatToInt(u8, z*255));
                     }
                 }.shader;
+
+                const gouraud_shader = struct {
+                    
+                    /// A struct containing all the resources that the Gouraud shader requires in order to work
+                    const Resources = struct {
+                        view_model_matrix: M44,
+                        vertex_buffer: BufferVertex,
+                        projection_matrix: M44,
+                        viewport_matrix: M44,
+                        texture: BufferRgb,
+                        light_source: Vector3f,
+                    };
+                    
+                    fn vertex_shader(vertex: Vector3f, resources: Resources) ?Vector3f {
+                        
+                    }
+
+                    fn fragment(u:f32, v:f32, w:f32, x: i32, y: i32, z: f32) ?Pixel {
+                        _ = u; _ = v; _ = w; _ = x; _ = y;
+                        return rgb(@floatToInt(u8, z*255), @floatToInt(u8, z*255), @floatToInt(u8, z*255));
+                    }
+
+                };
+
+                // TODO I think windows is rendering upside down, (or me, lol) so invert it
+                
+                const resources = gouraud_shader.Resources {
+                    .view_model_matrix = state.view_matrix.multiply(M44.translation(Vector3f { .x = 0, .y = 0, .z = -1 }).multiply(M44.scale(1))),
+                    .light_source = state.view_matrix.apply_to_point(horizontally_spinning_position),
+                    .vertex_buffer = state.model,
+                    .projection_matrix = state.projection_matrix,
+                    .viewport_matrix = state.viewport_matrix,
+                    .texture = state.texture,
+                };
+
+                var face_index = 0;
+                while (face_index < state.model.faces) : (face_index += 1) {
+                    
+                    const triangle: [3]Vector3f = undefined;
+                    
+                    // pass all 3 vertices of this face through the vertex shader
+                    inline for(0..3) |i| {
+
+                        const vertex = Vector3f {
+                            .x = state.model.buffer[face_index*3+i*3+0],
+                            .y = state.model.buffer[face_index*3+i*3+1],
+                            .z = state.model.buffer[face_index*3+i*3+2],
+                        };
+
+                        if (gouraud_shader.vertex_shader(vertex, resources)) |resulting_vertex| {
+                            triangle[i] = resulting_vertex;
+                        }
+                        else continue;
+                    }
+
+                    // TODO write the vertex shader for gouraud
+                    // TODO write the fragment shader for gouraud
+                    // TODO implement TGA and OBJ file readers
+                    
+                    triangle(
+                        state.pixel_buffer,
+                        state.w,
+                        triangle,
+                        state.z_buffer,
+                        fragment_shader_a
+                    );
+                }
 
                 triangle(
                     state.pixel_buffer,
