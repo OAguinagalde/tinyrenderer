@@ -4,6 +4,33 @@ const win32 = struct {
     usingnamespace @import("win32").everything;
     const falsei32: i32 = 0;
     const call_convention = std.os.windows.WINAPI;
+    
+    const Pixel = extern union {
+        rgba: win32.RGBA,
+        pixel: u32,
+    };
+
+    comptime { std.debug.assert(@sizeOf(win32.RGBA) == @sizeOf(u32)); }
+
+    /// In windows pixels are stored as BGRA
+    const RGBA = extern struct {
+        b: u8,
+        g: u8,
+        r: u8,
+        /// 255 for solid and 0 for transparent
+        a: u8,
+    };
+
+    fn rgb(r: u8, g: u8, b: u8) win32.Pixel {
+        return rgba(r,g,b,255);
+    }
+
+    fn rgba(r: u8, g: u8, b: u8, a: u8) win32.Pixel {
+        return win32.RGBA {
+            .a = a, .r = r, .g = g, .b = b
+        };
+    }
+
 };
 
 const Vector2i = struct {
@@ -461,32 +488,527 @@ const M44 = struct {
     }
 };
 
-const Pixel = u32;
+const Camera = struct {
+    position: Vector3f,
+    direction: Vector3f,
+    looking_at: Vector3f,
+    up: Vector3f,
+};
 
-fn rgb(r: u8, g: u8, b: u8) Pixel {
-    return rgba(r,g,b,255);
-}
+const RGBA = struct {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+    fn scale(self: RGBA, factor: f32) RGBA {
+        return RGBA {
+            .r = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.r) * factor))),
+            .g = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.g) * factor))),
+            .b = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.b) * factor))),
+            .a = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.a) * factor))),
+        };
+    }
+};
 
-fn rgba(r: u8, g: u8, b: u8, a: u8) Pixel {
-    // In windows pixels are stored as BGRA
-    const Win32PixelStructure = extern struct {
-        b: u8,
-        g: u8,
-        r: u8,
-        /// 255 for solid and 0 for transparent
-        a: u8,
+const RGB = struct {
+    r: u8,
+    g: u8,
+    b: u8,
+    fn scale(self: RGB, factor: f32) RGB {
+        return RGB {
+            .r = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.r) * factor))),
+            .g = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.g) * factor))),
+            .b = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.b) * factor))),
+        };
+    }
+};
+
+const ElementType = enum {
+    rgb,
+    rgba,
+    win32_rgba,
+    f32,
+};
+
+const AnyElement = union(ElementType) {
+    rgb: RGB,
+    rgba: RGBA,
+    win32_rgba: win32.Pixel,
+    f32: f32,
+};
+
+const AnyBuffer2D = union(ElementType) {
+    rgb: Buffer2D(RGB),
+    rgba: Buffer2D(RGBA),
+    win32_rgba: Buffer2D(win32.Pixel),
+    f32: Buffer2D(f32),
+};
+
+fn Buffer2D(comptime T: type) type {
+    return struct {
+        
+        const Self = @This();
+        
+        data: []T,
+        width: usize,
+        
+        fn init(data: []T, width: usize) Self {
+            return .{
+                .data = data,
+                .width = width
+            };
+        }
+
+        fn height(self: Self) usize {
+            return @divExact(self.data.len, self.width);
+        }
+
+        fn set(self: *Self, x: i32, y: i32, item: T) void {
+            self.data[x + self.width * y] = item;
+        }
+        
+        fn get(self: Self, x: usize, y: usize) T {
+            return self.data[x + self.width*y];
+        }
+        
+        fn at(self: Self, x: usize, y: usize) *T {
+            return &self.data[x + self.width*y];
+        }
+
     };
-    return @bitCast(u32 , Win32PixelStructure {
-        .a = a, .r = r, .g = g, .b = b
-    });
 }
+
+const OBJ = struct {
+    
+    /// This OBJ reader is very barebones and will crash if the OBJ doesn't meet a number of things I expect it to
+    /// lines must have shape of `v f32 f32 f32`, `vt f32 f32`, `vn f32 f32 f32` or `f u32/u32/u32 u32/u32/u32 u32/u32/u32`.
+    /// even tho technically OBJ allows for some variance there.
+    /// Returns a []f32 buffer that must be freed by the caller.
+    /// The layout of the buffer returned is as follows:
+    /// [ location_x, location_y, location_z, texture_u, texture_v, normal_x, normal_y, normal_z ] x 3 x number of triangles
+    /// `const number_of_triangles = @divExacty(buffer.len, 8*3)`
+    fn from_file(allocator: std.mem.Allocator, file_path: [] const u8) ![]f32 {
+        
+        const Face = struct {
+            var vertex_indices: [3]u32 = undefined;
+            var uv_indices: [3]u32 = undefined;
+            var normal_indices: [3]u32 = undefined;
+        };
+
+        // the obj file will be read and the data put into these arrays
+        var vertices = std.ArrayList(Vector3f).init(allocator);
+        defer vertices.deinit();
+        var normals = std.ArrayList(Vector3f).init(allocator);
+        defer normals.deinit();
+        var uvs = std.ArrayList(Vector3f).init(allocator);
+        defer uvs.deinit();
+        var faces = std.ArrayList(Face).init(allocator);
+        defer faces.deinit();
+
+        var file = std.fs.cwd().openFile(file_path, .{}) catch return error.CantOpenFile;
+        defer file.close();
+        var buf_reader = std.io.bufferedReader(file.reader());
+        
+        // line by line read the obj file and parse its content
+        var current_line_buffer: [1024]u8 = undefined;
+        while (try buf_reader.reader().readUntilDelimiterOrEof(&current_line_buffer, '\n')) |line_content| {
+            if (line_content[line_content.len-1] == '\r') return error.LineTerminatorErrorAaaaah;
+            // skip empty lines
+            if (line_content.len == 0) continue;
+            // skip comments
+            if (line_content[0] == '#') continue;
+            
+            if (std.mem.eql(u8, line_content[0..2], "v ")) {
+                // vertex
+                // List of geometric vertices, with (x, y, z, [w]) coordinates, w is optional and defaults to 1.0.
+                // example: v 0.123 0.234 0.345 1.0
+                var values: [3]f32 = undefined;
+                var i: usize = 2;
+                var start = i;
+                for (0..3) |j| {
+                    while (line_content[i] != ' ') : (i += 1) {}
+                    const f32_string = line_content[start..i];
+                    const f32_value = try std.fmt.parseFloat(f32, f32_string);
+                    values[j] = f32_value;
+                    start = i+1;
+                    i = start;
+                }
+                const vertex = Vector3f { .x = values[0], .y = values[1], .z = values[2] };
+                try vertices.append(vertex);
+            }
+            else if (std.mem.eql(u8, line_content[0..3], "vt ")) {
+                // UVs
+                // List of texture coordinates, in (u, [v, w]) coordinates, these will vary between 0 and 1. v, w are optional and default to 0.
+                // example: vt 0.500 1 [0]
+                var values: [2]f32 = undefined;
+                var i: usize = 3;
+                var start = i;
+                for (0..2) |j| {
+                    while (line_content[i] != ' ') : (i += 1) {}
+                    const f32_string = line_content[start..i];
+                    const f32_value = try std.fmt.parseFloat(f32, f32_string);
+                    values[j] = f32_value;
+                    start = i+1;
+                    i = start;
+                }
+                const uv = Vector2f { .x = values[0], .y = values[1] };
+                try uvs.append(uv);
+            }
+            else if (std.mem.eql(u8, line_content[0..3], "vn ")) {
+                // normals
+                // List of vertex normals in (x,y,z) form; normals might not be unit vectors.
+                // example: vn 0.707 0.000 0.707
+                var values: [3]f32 = undefined;
+                var i: usize = 3;
+                var start = i;
+                for (0..3) |j| {
+                    while (line_content[i] != ' ') : (i += 1) {}
+                    const f32_string = line_content[start..i];
+                    const f32_value = try std.fmt.parseFloat(f32, f32_string);
+                    values[j] = f32_value;
+                    start = i+1;
+                    i = start;
+                }
+                const normal = Vector3f { .x = values[0], .y = values[1], .z = values[2] };
+                try normals.append(normal);
+            }
+            else if (std.mem.eql(u8, line_content[0..2], "f ")) {
+                // face
+                // Polygonal face element (see below)
+                // example: f 6/4/1 3/5/3 7/6/5
+                // f loc_idx/text_idx/normal_idx loc_idx/text_idx/normal_idx loc_idx/text_idx/normal_idx
+                
+                var vertex_indices: [3]u32 = undefined;
+                var uv_indices: [3]u32 = undefined;
+                var normal_indices: [3]u32 = undefined;
+                
+                var i: usize = 2;
+                var start = i;
+                for (0..3) |j| {
+                    while (line_content[i] != ' ') : (i += 1) {}
+                    const index_trio_string = line_content[start..i];
+                    
+                    var i_2: usize = 0;
+                    var start_2 = i_2;
+                    for (0..3) |k| {
+                        while (index_trio_string[i_2] != '/') : (i_2 += 1) {}
+                        const index_of_slash = i_2;
+                        const u32_string = index_trio_string[start_2..index_of_slash];
+                        const u32_value = try std.fmt.parseUnsigned(u32, u32_string);
+                        switch (k) {
+                            // in wavefront obj all indices start at 1, not zero, so substract 1 from every index
+                            0 => vertex_indices[j] = u32_value - 1,
+                            1 => uv_indices[j] = u32_value - 1,
+                            2 => normal_indices[j] = u32_value - 1,
+                        }
+                        start_2 = i_2 + 1;
+                        i_2 = start_2;
+                    }
+
+                    start = i+1;
+                    i = start;
+                }
+
+                const face = Face { .vertex_indices = vertex_indices, .uv_indices = uv_indices, .normal_indices = normal_indices };
+                try faces.append(face);
+            }
+            
+        }
+
+        const VertexRaw = packed struct {
+            location_x: f32,
+            location_y: f32,
+            location_z: f32,
+            texture_u: f32,
+            texture_v: f32,
+            normal_x: f32,
+            normal_y: f32,
+            normal_z: f32,
+        };
+        const FaceRaw = packed struct {
+            a: VertexRaw,
+            b: VertexRaw,
+            c: VertexRaw,
+        };
+        comptime std.debug.assert(@sizeOf(VertexRaw) == @sizeOf(f32)*8);
+        comptime std.debug.assert(@sizeOf(FaceRaw) == @sizeOf(VertexRaw)*3);
+        var vertex_buffer = allocator.alloc(FaceRaw, faces.items.len);
+        for (faces.items, 0..) |face, face_index| {
+            vertex_buffer[face_index] = FaceRaw {
+                .a = VertexRaw {
+                    .location_x = vertices.items[face.vertex_indices[0]].x,
+                    .location_y = vertices.items[face.vertex_indices[0]].y,
+                    .location_z = vertices.items[face.vertex_indices[0]].z,
+                    .texture_u = uvs.items[face.uv_indices[0]].x,
+                    .texture_v = uvs.items[face.uv_indices[0]].y,
+                    .normal_x = normals.items[face.normal_indices[0]].x,
+                    .normal_y = normals.items[face.normal_indices[0]].y,
+                    .normal_z = normals.items[face.normal_indices[0]].z,
+                },
+                .b = VertexRaw {
+                    .location_x = vertices.items[face.vertex_indices[1]].x,
+                    .location_y = vertices.items[face.vertex_indices[1]].y,
+                    .location_z = vertices.items[face.vertex_indices[1]].z,
+                    .texture_u = uvs.items[face.uv_indices[1]].x,
+                    .texture_v = uvs.items[face.uv_indices[1]].y,
+                    .normal_x = normals.items[face.normal_indices[1]].x,
+                    .normal_y = normals.items[face.normal_indices[1]].y,
+                    .normal_z = normals.items[face.normal_indices[1]].z,
+                },
+                .c = VertexRaw {
+                    .location_x = vertices.items[face.vertex_indices[2]].x,
+                    .location_y = vertices.items[face.vertex_indices[2]].y,
+                    .location_z = vertices.items[face.vertex_indices[2]].z,
+                    .texture_u = uvs.items[face.uv_indices[2]].x,
+                    .texture_v = uvs.items[face.uv_indices[2]].y,
+                    .normal_x = normals.items[face.normal_indices[2]].x,
+                    .normal_y = normals.items[face.normal_indices[2]].y,
+                    .normal_z = normals.items[face.normal_indices[2]].z,
+                },
+            };
+        }
+        return @ptrCast(f32, vertex_buffer);
+    }
+};
+
+const TGA = struct {
+
+    const BitsPerPixel = enum(u8) {
+        RGB = 24,
+        RGBA = 32
+    };
+
+    const DataTypeCode = enum(u8) {
+        UncompressedRgb = 2,
+    };
+    
+    const ColorMapSpecification = packed struct {
+        /// index of first color map entry
+        origin: i16,
+        /// count of color map entries
+        length: i16,
+        /// Number of bits in color map entry - same as `bits_per_pixel`
+        entry_size: u8,
+    };
+
+    const ImageDescriptorByte = packed struct {
+        /// number of attribute bits associated with each
+        /// pixel.  For the Targa 16, this would be 0 or
+        /// 1.  For the Targa 24, it should be 0.  For
+        /// Targa 32, it should be 8.
+        attribute_bits_per_pixel: u4,
+        /// must be 0
+        reserved: u1,
+        /// 0 = Origin in lower left-hand corner
+        /// 1 = Origin in upper left-hand corner
+        screen_origin_bit: u1,
+        /// 00 = non-interleaved.                        
+        /// 01 = two-way (even/odd) interleaving.        
+        /// 10 = four way interleaving.                  
+        /// 11 = reserved.                               
+        interleaving: u2,
+    };
+
+    const ImageSpecification = packed struct {
+        /// X coordinate of the lower left corner
+        x_origin: i16,
+        /// Y coordinate of the lower left corner
+        y_origin: i16,
+        /// width of the image in pixels
+        width: i16,
+        /// height of the image in pixels
+        height: i16,
+        /// number of bits in a pixel
+        bits_per_pixel: BitsPerPixel,
+        image_descriptor: ImageDescriptorByte,
+    };
+
+    const Header = packed struct {
+        id_length: u8,
+        color_map_type: u8,
+        data_type: DataTypeCode,
+        color_map_spec: ColorMapSpecification,
+        image_spec: ImageSpecification,
+    };
+
+    comptime { std.debug.assert(@sizeOf(Header) == 18); }
+
+    /// This can only read TGA files of data type 2 (unmapped, uncompressed, rgb(a) images)
+    fn from_file(allocator: std.mem.Allocator, file_path: [] const u8) !AnyBuffer2D {
+
+        { // specification
+
+            // Version 1.0 of TGA Spec
+            // http://www.paulbourke.net/dataformats/tga/
+            // https://www.gamers.org/dEngine/quake3/TGA.txt
+            // 
+            //     ________________________________________________________________________________
+            //     | Offset | Length |                     Description                            |
+            //     |--------|--------|------------------------------------------------------------|
+            //     |    0   |     1  |  Number of Characters in Identification Field.             |
+            //     |        |        |                                                            |
+            //     |        |        |  This field is a one-byte unsigned integer, specifying     |
+            //     |        |        |  the length of the Image Identification Field.  Its value  |
+            //     |        |        |  is 0 to 255.  A value of 0 means that no Image            |
+            //     |        |        |  Identification Field is included.                         |
+            //     |--------|--------|------------------------------------------------------------|
+            //     |    1   |     1  |  Color Map Type.                                           |
+            //     |        |        |                                                            |
+            //     |        |        |  This field contains either 0 or 1.  0 means no color map  |
+            //     |        |        |  is included.  1 means a color map is included, but since  |
+            //     |        |        |  this is an unmapped image it is usually ignored.  TIPS    |
+            //     |        |        |  ( a Targa paint system ) will set the border color        |
+            //     |        |        |  the first map color if it is present.                     |
+            //     |--------|--------|------------------------------------------------------------|
+            //     |    2   |     1  |  Image Type Code.                                          |
+            //     |        |        |                                                            |
+            //     |        |        |  This field will always contain a binary 2.                |
+            //     |        |        |  ( That's what makes it Data Type 2 ).                     |
+            //     |--------|--------|------------------------------------------------------------|
+            //     |    3   |     5  |  Color Map Specification.                                  |
+            //     |        |        |                                                            |
+            //     |        |        |  Ignored if Color Map Type is 0; otherwise, interpreted    |
+            //     |        |        |  as follows:                                               |
+            //     |    3   |     2  |  Color Map Origin.                                         |
+            //     |        |        |  Integer ( lo-hi ) index of first color map entry.         |
+            //     |    5   |     2  |  Color Map Length.                                         |
+            //     |        |        |  Integer ( lo-hi ) count of color map entries.             |
+            //     |    7   |     1  |  Color Map Entry Size.                                     |
+            //     |        |        |  Number of bits in color map entry.  16 for the Targa 16,  |
+            //     |        |        |  24 for the Targa 24, 32 for the Targa 32.                 |
+            //     |--------|--------|------------------------------------------------------------|
+            //     |    8   |    10  |  Image Specification.                                      |
+            //     |        |        |                                                            |
+            //     |    8   |     2  |  X Origin of Image.                                        |
+            //     |        |        |  Integer ( lo-hi ) X coordinate of the lower left corner   |
+            //     |        |        |  of the image.                                             |
+            //     |   10   |     2  |  Y Origin of Image.                                        |
+            //     |        |        |  Integer ( lo-hi ) Y coordinate of the lower left corner   |
+            //     |        |        |  of the image.                                             |
+            //     |   12   |     2  |  Width of Image.                                           |
+            //     |        |        |  Integer ( lo-hi ) width of the image in pixels.           |
+            //     |   14   |     2  |  Height of Image.                                          |
+            //     |        |        |  Integer ( lo-hi ) height of the image in pixels.          |
+            //     |   16   |     1  |  Image Pixel Size.                                         |
+            //     |        |        |  Number of bits in a pixel.  This is 16 for Targa 16,      |
+            //     |        |        |  24 for Targa 24, and .... well, you get the idea.         |
+            //     |   17   |     1  |  Image Descriptor Byte.                                    |
+            //     |        |        |  Bits 3-0 - number of attribute bits associated with each  |
+            //     |        |        |             pixel.  For the Targa 16, this would be 0 or   |
+            //     |        |        |             1.  For the Targa 24, it should be 0.  For     |
+            //     |        |        |             Targa 32, it should be 8.                      |
+            //     |        |        |  Bit 4    - reserved.  Must be set to 0.                   |
+            //     |        |        |  Bit 5    - screen origin bit.                             |
+            //     |        |        |             0 = Origin in lower left-hand corner.          |
+            //     |        |        |             1 = Origin in upper left-hand corner.          |
+            //     |        |        |             Must be 0 for Truevision images.               |
+            //     |        |        |  Bits 7-6 - Data storage interleaving flag.                |
+            //     |        |        |             00 = non-interleaved.                          |
+            //     |        |        |             01 = two-way (even/odd) interleaving.          |
+            //     |        |        |             10 = four way interleaving.                    |
+            //     |        |        |             11 = reserved.                                 |
+            //     |--------|--------|------------------------------------------------------------|
+            //     |   18   | varies |  Image Identification Field.                               |
+            //     |        |        |                                                            |
+            //     |        |        |  Contains a free-form identification field of the length   |
+            //     |        |        |  specified in byte 1 of the image record.  It's usually    |
+            //     |        |        |  omitted ( length in byte 1 = 0 ), but can be up to 255    |
+            //     |        |        |  characters.  If more identification information is        |
+            //     |        |        |  required, it can be stored after the image data.          |
+            //     |--------|--------|------------------------------------------------------------|
+            //     | varies | varies |  Color map data.                                           |
+            //     |        |        |                                                            |
+            //     |        |        |  If the Color Map Type is 0, this field doesn't exist.     |
+            //     |        |        |  Otherwise, just read past it to get to the image.         |
+            //     |        |        |  The Color Map Specification describes the size of each    |
+            //     |        |        |  entry, and the number of entries you'll have to skip.     |
+            //     |        |        |  Each color map entry is 2, 3, or 4 bytes.                 |
+            //     |--------|--------|------------------------------------------------------------|
+            //     | varies | varies |  Image Data Field.                                         |
+            //     |        |        |                                                            |
+            //     |        |        |  This field specifies (width) x (height) pixels.  Each     |
+            //     |        |        |  pixel specifies an RGB color value, which is stored as    |
+            //     |        |        |  an integral number of bytes.                              |
+            //     |        |        |  The 2 byte entry is broken down as follows:               |
+            //     |        |        |  ARRRRRGG GGGBBBBB, where each letter represents a bit.    |
+            //     |        |        |  But, because of the lo-hi storage order, the first byte   |
+            //     |        |        |  coming from the file will actually be GGGBBBBB, and the   |
+            //     |        |        |  second will be ARRRRRGG. "A" represents an attribute bit. |
+            //     |        |        |  The 3 byte entry contains 1 byte each of blue, green,     |
+            //     |        |        |  and red.                                                  |
+            //     |        |        |  The 4 byte entry contains 1 byte each of blue, green,     |
+            //     |        |        |  red, and attribute.  For faster speed (because of the     |
+            //     |        |        |  hardware of the Targa board itself), Targa 24 images are  |
+            //     |        |        |  sometimes stored as Targa 32 images.                      |
+            //     --------------------------------------------------------------------------------
+            // 
+        }
+        
+        var buffer_header = allocator.alloc(u8, @sizeOf(Header)) catch return error.OutOfMemory;
+        defer allocator.free(buffer_header);
+
+        var buffer_pixel_data: []u8 = undefined;
+        
+        var file = std.fs.cwd().openFile(file_path, .{}) catch return error.CantOpenFile;
+        defer file.close();
+
+        {
+            const read_size = file.read(buffer_header) catch return error.ReadHeader;
+            if (read_size != @sizeOf(Header)) return error.ReadHeader;
+        }
+        
+        // Parse the header only to figure out the size of the pixel data
+        const header = @bitCast(Header, buffer_header);
+        
+        { // validate the file
+            // only care about RGB and RGBA images
+            switch (@enumToInt(header.image_spec.bits_per_pixel)) {
+                24, 32 => {},
+                _ => return error.FileNotSupported,
+            }
+            // only care about non color mapped, non compressed files
+            switch (@enumToInt(header.data_type)) {
+                2 => {},
+                _ => return error.FileNotSupported,
+            }
+            // if its not color mapped why does it have a color map?
+            if (header.color_map_type != 0) {
+                // const color_map_size = @intCast(usize, @intCast(i16, header.color_map_spec.entry_size) * header.color_map_spec.length);
+                return error.MalformedTgaFile;
+            }
+            // this shouldn't be a thing, probably...
+            if (header.image_spec.width <= 0 or header.image_spec.height <= 0) return error.MalformedTgaFile;
+        }
+
+        // If there is a comment/id or whatever, skip it
+        const id_length = @intCast(usize, header.id_length);
+        if (id_length > 0) {
+            file.seekTo(@sizeOf(Header) + id_length) catch return error.SeekTo;
+        }
+    
+        // Only thing left is to read the pixel data
+        const pixel_data_size = @intCast(usize, header.image_spec.width * header.image_spec.height * @intCast(i16, @divExact(@enumToInt(header.image_spec.bits_per_pixel), 8)));
+        buffer_pixel_data = allocator.alloc(u8, pixel_data_size) catch return error.OutOfMemory;
+        // allocate and let the caller handle its lifetime
+        {
+            const read_size = file.read(buffer_pixel_data) catch error.ReadPixelData;
+            if (read_size != pixel_data_size) return error.ReadPixelData;
+        }
+
+        return switch (header.image_spec.bits_per_pixel) {
+            .RGB => AnyBuffer2D { .rgb = Buffer2D(RGB).init(@ptrCast([]RGB, buffer_pixel_data), header.image_spec.width) },
+            .RGBA => AnyBuffer2D { .rgba = Buffer2D(RGBA).init(@ptrCast([]RGBA, buffer_pixel_data), header.image_spec.width)  },
+        };
+
+    }
+};
 
 /// top = y = window height, bottom = y = 0
-fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pixel) void {
+fn line(comptime pixel_type: type, buffer: Buffer2D(pixel_type), a: Vector2i, b: Vector2i, color: pixel_type) void {
     
     if (a.x == b.x and a.y == b.y) {
         // a point
-        buffer[@intCast(usize, buffer_width * a.y + a.x)] = color;
+        buffer.set(@intCast(usize, a.x), @intCast(usize, a.y), color);
         return;
     }
 
@@ -504,7 +1026,7 @@ fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pix
         const x = a.x;
         var y = bottom.y;
         while (y != top.y + 1) : (y += 1) {
-            buffer[@intCast(usize, buffer_width * y + x)] = color;
+            buffer.set(@intCast(usize, x), @intCast(usize, y), color);
         }
         return;
     }
@@ -520,7 +1042,7 @@ fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pix
         const y = a.y;
         var x = left.x;
         while (x != right.x + 1) : (x += 1) {
-            buffer[@intCast(usize, buffer_width * y + x)] = color;
+            buffer.set(@intCast(usize, x), @intCast(usize, y), color);
         }
         return;
     }
@@ -540,7 +1062,7 @@ fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pix
         var x = bottom_left.x;
         var y = bottom_left.y;
         while (x != top_right.x) {
-            buffer[@intCast(usize, buffer_width * y + x)] = color;
+            buffer.set(@intCast(usize, x), @intCast(usize, y), color);
             x += 1;
             y += 1;
         }
@@ -565,7 +1087,7 @@ fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pix
         while (x <= right.x) : (x += 1) {
             // linear interpolation to figure out `y`
             const y = left.y + @floatToInt(i32, @intToFloat(f32, right.y - left.y) * percentage_of_line_done);
-            buffer[@intCast(usize, buffer_width*y + x)] = color;
+            buffer.set(@intCast(usize, x), @intCast(usize, y), color);
             percentage_of_line_done += increment;
         }
     }
@@ -586,7 +1108,7 @@ fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pix
         var y = top.y;
         while (y <= bottom.y) : (y += 1) {
             const x = top.x + @floatToInt(i32, @intToFloat(f32, bottom.x - top.x) * percentage_of_line_done);
-            buffer[@intCast(usize, buffer_width * y + x)] = color;
+            buffer.set(@intCast(usize, x), @intCast(usize, y), color);
             percentage_of_line_done += increment;
         }
 
@@ -594,128 +1116,19 @@ fn line(buffer: []Pixel, buffer_width: i32, a: Vector2i, b: Vector2i, color: Pix
     else unreachable;
 }
 
-/// top = y = window height, bottom = y = 0
-fn triangle(buffer: []Pixel, buffer_width: i32, tri: [3]Vector3f, z_buffer: []f32, comptime fragment_shader: fn (u:f32, v:f32, w:f32, x: i32, y: i32, z: f32) ?Pixel) void {
-    
-    const a = &tri[0];
-    const b = &tri[1];
-    const c = &tri[2];
-
-    const buffer_height = @divExact(@intCast(i32, buffer.len), buffer_width);
-
-    // calculate the bounding of the triangle's projection on the screen
-    const left: i32 = @floatToInt(i32, std.math.min(a.x, std.math.min(b.x, c.x)));
-    const top: i32 = @floatToInt(i32, std.math.min(a.y, std.math.min(b.y, c.y)));
-    const right: i32 = @floatToInt(i32, std.math.max(a.x, std.math.max(b.x, c.x)));
-    const bottom: i32 = @floatToInt(i32, std.math.max(a.y, std.math.max(b.y, c.y)));
-
-    if (false) std.debug.print("left   {?}\n", .{ left });
-    if (false) std.debug.print("top    {?}\n", .{ top });
-    if (false) std.debug.print("bottom {?}\n", .{ bottom });
-    if (false) std.debug.print("right  {?}\n", .{ right });
-
-    // if the triangle is not fully inside the buffer, discard it straight away
-    if (left < 0 or top < 0 or right >= buffer_width or bottom >= buffer_height) return;
-
-    if (false) std.debug.print("visible\n", .{ });
-
-    // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
-    // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
-    // test it just in case
-
-    // bottom to top
-    var y: i32 = bottom;
-    while (y >= top) : (y -= 1) {
-        
-        // left to right
-        var x: i32 = left;
-        while (x <= right) : (x += 1) {
-            
-            // pixel by pixel check if its inside the triangle
-            
-            // barycentric coordinates of the current pixel, used to...
-            // ... determine if a pixel is in fact part of the triangle,
-            // ... calculate the pixel's z value
-            // ... for texture sampling
-            // TODO make const
-            var u: f32 = undefined;
-            var v: f32 = undefined;
-            var w: f32 = undefined;
-            {
-                const pixel = Vector3f { .x = @intToFloat(f32, x), .y = @intToFloat(f32, y), .z = 0 };
-
-                const ab = b.subtract(a.*);
-                const ac = c.subtract(a.*);
-                const ap = pixel.subtract(a.*);
-                const bp = pixel.subtract(b.*);
-                const ca = a.subtract(c.*);
-
-                // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
-                // the magnitude of the cross product can be interpreted as the area of the parallelogram.
-                const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
-                const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
-                const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
-
-                u = paralelogram_area_cap / paralelogram_area_abc;
-                v = paralelogram_area_abp / paralelogram_area_abc;
-                w = (1 - u - v);
-            }
-
-            if (false) std.debug.print("u {} v {} w {}\n", .{ u, v, w });
-
-            // determine if a pixel is in fact part of the triangle
-            if (u < 0 or u >= 1) continue;
-            if (v < 0 or v >= 1) continue;
-            if (w < 0 or w >= 1) continue;
-
-            if (false) std.debug.print("inside\n", .{ });
-
-            // interpolate the z of this pixel to find out its depth
-            const z = a.z * w + b.z * u + c.z * v;
-
-            const pixel_index = @intCast(usize, x + y * buffer_width);
-            if (z_buffer[pixel_index] < z) {
-                if (fragment_shader(u, v, w, x, y, z)) |color| {
-                    z_buffer[pixel_index] = z;
-                    buffer[pixel_index] = color;
-                }
-            }
-
-        }
-    }
-
-}
-
-const Camera = struct {
-    position: Vector3f,
-    direction: Vector3f,
-    looking_at: Vector3f,
-    up: Vector3f,
-};
-
-const BufferRgb = struct {
-    buffer: []Pixel,
-    width: i32
-};
-
-const BufferVertex = struct {
-    buffer: []f32,
-    faces: i32
-};
-
 const State = struct {
     x: i32,
     y: i32,
     w: i32,
     h: i32,
     render_target: win32.BITMAPINFO,
-    pixel_buffer: []Pixel,
+    pixel_buffer: []win32.Pixel,
     running: bool,
     mouse: Vector2i,
     
-    z_buffer: []f32,
-    texture: BufferRgb,
-    model: BufferVertex,
+    depth_buffer: Buffer2D(f32),
+    texture: AnyBuffer2D,
+    vertex_buffer: []f32,
     camera: Camera,
     view_matrix: M44,
     viewport_matrix: M44,
@@ -733,9 +1146,9 @@ var state = State {
     .running = true,
     .mouse = undefined,
     
-    .z_buffer = undefined,
+    .depth_buffer = undefined,
     .texture = undefined,
-    .model = undefined,
+    .vertex_buffer = undefined,
     .camera = undefined,
     .view_matrix = undefined,
     .viewport_matrix = undefined,
@@ -772,7 +1185,7 @@ pub fn main() !void {
     state.render_target.bmiHeader.biBitCount = 32;
     state.render_target.bmiHeader.biCompression = win32.BI_RGB;
 
-    state.pixel_buffer = try allocator.alloc(Pixel, @intCast(usize, state.w * state.h));
+    state.pixel_buffer = try allocator.alloc(win32.Pixel, @intCast(usize, state.w * state.h));
     defer allocator.free(state.pixel_buffer);
 
     _ = win32.RegisterClassW(&window_class);
@@ -793,11 +1206,14 @@ pub fn main() !void {
 
         { // Initialize the application state
             // Create the z-buffer
-            state.z_buffer = try allocator.alloc(f32, @intCast(usize, state.w * state.h));
-
+            state.depth_buffer = Buffer2D(f32) { .data = try allocator.alloc(f32, @intCast(usize, state.w * state.h)), .width = @intCast(usize, state.w) };
+            
             // Load the diffuse texture data
-            state.texture = TGA.from_file(allocator, "res/african_head_diffuse.tga").to_rgb_buffer();
-            state.model = OBJ.from_file(allocator, "res/african_head.obj").to_vertex_buffer();
+            state.texture = TGA.from_file(allocator, "res/african_head_diffuse.tga")
+                catch |err| { std.debug.print("{?}", .{err}); };
+            
+            state.vertex_buffer = OBJ.from_file(allocator, "res/african_head.obj")
+                catch |err| { std.debug.print("{?}", .{err}); };
 
             // Set the camera
             state.camera.position = Vector3f { .x = 1, .y = 1, .z = 3 };
@@ -808,9 +1224,9 @@ pub fn main() !void {
         }
 
         defer { // Deinitialize the application state
-            allocator.free(state.z_buffer);
-            allocator.free(state.texture.buffer);
-            allocator.free(state.model.buffer);
+            allocator.free(state.depth_buffer.data);
+            allocator.free(state.texture.data);
+            allocator.free(state.vertex_buffer);
         }
         
         var cpu_counter: i64 = blk: {
@@ -865,7 +1281,7 @@ pub fn main() !void {
             const mouse_previous = state.mouse;
             var mouse_current: win32.POINT = undefined;
             win32.GetCursorPos(&mouse_current);
-            const factor: f32 = 0.02f;
+            const factor: f32 = 0.02;
             const mouse_dx = @intToFloat(f32, mouse_current.x - mouse_previous.x) * factor;
             const mouse_dy = @intToFloat(f32, mouse_current.y - mouse_previous.y) * factor;
             state.mouse.x = mouse_current.x;
@@ -874,15 +1290,15 @@ pub fn main() !void {
             var app_close_requested = false;
             { // tick / update
                 
-                const white = rgb(255, 255, 255);
-                const red = rgb(255, 0, 0);
-                const green = rgb(0, 255, 0);
-                const blue = rgb(0, 0, 255);
-                const turquoise = rgb(0, 255, 255);
+                const white = win32.rgb(255, 255, 255);
+                const red = win32.rgb(255, 0, 0);
+                const green = win32.rgb(0, 255, 0);
+                const blue = win32.rgb(0, 0, 255);
+                const turquoise = win32.rgb(0, 255, 255);
                 
                 // Clear the screen and the zbuffer
-                for (state.pixel_buffer) |*pixel| { pixel.* = rgb(0, 0, 0); }
-                for (state.z_buffer) |*value| { value.* = -9999; }
+                for (state.pixel_buffer) |*pixel| { pixel.* = win32.rgb(0, 0, 0); }
+                for (state.depth_buffer.data) |*value| { value.* = -9999; }
 
                 if (state.keys.T) state.time += ms;
 
@@ -899,12 +1315,12 @@ pub fn main() !void {
                 }
                 
                 // move the camera position based on WASD and QE
-                if (state.keys.W) state.camera.position = state.camera.position.add(cam.direction.scale(0.02));
-                if (state.keys.S) state.camera.position = state.camera.position.add(cam.direction.scale(0.02)).scale(-1);
+                if (state.keys.W) state.camera.position = state.camera.position.add(state.camera.direction.scale(0.02));
+                if (state.keys.S) state.camera.position = state.camera.position.add(state.camera.direction.scale(0.02)).scale(-1);
                 if (state.keys.A) state.camera.position = state.camera.position.add(real_right.scale(0.02)).scale(-1);
                 if (state.keys.D) state.camera.position = state.camera.position.add(real_right.scale(0.02));
-                if (state.keys.Q) state.camera.position.y += factor1;
-                if (state.keys.E) state.camera.position.y -= factor1;
+                if (state.keys.Q) state.camera.position.y += 0.02;
+                if (state.keys.E) state.camera.position.y -= 0.02;
 
                 // calculate camera's look-at
                 state.camera.looking_at = state.camera.position.add(state.camera.direction);
@@ -916,119 +1332,37 @@ pub fn main() !void {
                 if (state.keys.P) state.projection_matrix = M44.identity();
                 if (state.keys.V) state.viewport_matrix = M44.identity();
 
-                const horizontally_spinning_position = Vector3f { .x = std.math.cos(time / 2000), .y = 0, .z = std.math.sin(time / 2000) };
+                const horizontally_spinning_position = Vector3f { .x = std.math.cos(counted_since_start / 2000), .y = 0, .z = std.math.sin(counted_since_start / 2000) };
                 
                 line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red); 
                 line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 50 }, green);
                 line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 50, .y = 100 }, blue);
                 line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 1, .y = 100 }, white);
                 line(state.pixel_buffer, state.w, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 100 }, turquoise);
-
                 line(state.pixel_buffer, state.w, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 1 }, red); 
                 line(state.pixel_buffer, state.w, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 50 }, green);
                 line(state.pixel_buffer, state.w, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 50, .y = 100 }, blue);
                 line(state.pixel_buffer, state.w, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 1, .y = 100 }, white);
                 line(state.pixel_buffer, state.w, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 100 }, turquoise);
-
                 line(state.pixel_buffer, state.w, Vector2i { .x = 70, .y = 10 }, Vector2i { .x = 70, .y = 10 }, white);
-
-                const fragment_shader_a = struct {
-                    fn shader(u:f32, v:f32, w:f32, x: i32, y: i32, z: f32) ?Pixel {
-                        _ = u; _ = v; _ = w; _ = x; _ = y;
-                        return rgb(@floatToInt(u8, z*255), @floatToInt(u8, z*255), @floatToInt(u8, z*255));
-                    }
-                }.shader;
-
-                const gouraud_shader = struct {
-                    
-                    /// A struct containing all the resources that the Gouraud shader requires in order to work
-                    const Resources = struct {
-                        view_model_matrix: M44,
-                        vertex_buffer: BufferVertex,
-                        projection_matrix: M44,
-                        viewport_matrix: M44,
-                        texture: BufferRgb,
-                        light_source: Vector3f,
-                    };
-                    
-                    fn vertex_shader(vertex: Vector3f, resources: Resources) ?Vector3f {
-                        
-                    }
-
-                    fn fragment(u:f32, v:f32, w:f32, x: i32, y: i32, z: f32) ?Pixel {
-                        _ = u; _ = v; _ = w; _ = x; _ = y;
-                        return rgb(@floatToInt(u8, z*255), @floatToInt(u8, z*255), @floatToInt(u8, z*255));
-                    }
-
-                };
 
                 // TODO I think windows is rendering upside down, (or me, lol) so invert it
                 
-                const resources = gouraud_shader.Resources {
+                const texture_width = switch (state.texture) { else => |buffer| buffer.width };
+                const texture_height = @divExact(switch (state.texture) { else => |buffer| buffer.data.len }, texture_width);
+                const context = GouraudShaderContext {
+                    .pixel_buffer = state.pixel_buffer,
+                    .depth_buffer = state.depth_buffer,
+                    .texture = state.texture,
+                    .texture_width = texture_width,
+                    .texture_height = texture_height,
+                    .viewport_matrix = state.viewport_matrix,
+                    .projection_matrix = state.projection_matrix,
                     .view_model_matrix = state.view_matrix.multiply(M44.translation(Vector3f { .x = 0, .y = 0, .z = -1 }).multiply(M44.scale(1))),
                     .light_source = state.view_matrix.apply_to_point(horizontally_spinning_position),
-                    .vertex_buffer = state.model,
-                    .projection_matrix = state.projection_matrix,
-                    .viewport_matrix = state.viewport_matrix,
-                    .texture = state.texture,
                 };
-
-                var face_index = 0;
-                while (face_index < state.model.faces) : (face_index += 1) {
-                    
-                    const triangle: [3]Vector3f = undefined;
-                    
-                    // pass all 3 vertices of this face through the vertex shader
-                    inline for(0..3) |i| {
-
-                        const vertex = Vector3f {
-                            .x = state.model.buffer[face_index*3+i*3+0],
-                            .y = state.model.buffer[face_index*3+i*3+1],
-                            .z = state.model.buffer[face_index*3+i*3+2],
-                        };
-
-                        if (gouraud_shader.vertex_shader(vertex, resources)) |resulting_vertex| {
-                            triangle[i] = resulting_vertex;
-                        }
-                        else continue;
-                    }
-
-                    // TODO write the vertex shader for gouraud
-                    // TODO write the fragment shader for gouraud
-                    // TODO implement TGA and OBJ file readers
-                    
-                    triangle(
-                        state.pixel_buffer,
-                        state.w,
-                        triangle,
-                        state.z_buffer,
-                        fragment_shader_a
-                    );
-                }
-
-                triangle(
-                    state.pixel_buffer,
-                    state.w,
-                    [3]Vector3f {
-                        Vector3f { .x = 33, .y = 20, .z = 0 },
-                        Vector3f { .x = 133, .y = 27, .z = 0.5 },
-                        Vector3f { .x = 70, .y = 212, .z = 1 },
-                    },
-                    state.z_buffer,
-                    fragment_shader_a
-                );
-
-                triangle(
-                    state.pixel_buffer,
-                    state.w,
-                    [3]Vector3f {
-                        Vector3f { .x = 33, .y = 50, .z = 1 },
-                        Vector3f { .x = 200, .y = 79, .z = 0 },
-                        Vector3f { .x = 130, .y = 180, .z = 0.5 },
-                    },
-                    state.z_buffer,
-                    fragment_shader_a
-                );
+                const number_of_triangles = @divExact(state.vertex_buffer.len, 8*3);
+                GouraudRenderer.render(context, state.vertex_buffer, number_of_triangles);
             }
 
             state.running = state.running and !app_close_requested;
@@ -1042,7 +1376,7 @@ pub fn main() !void {
                     0, 0, client_width, client_height,
                     state.pixel_buffer.ptr,
                     &state.render_target,
-                    win32.DIB_RGB_COLORS,
+                    win32.DIB_USAGE.RGB_COLORS,
                     win32.SRCCOPY
                 );
                 _ = win32.ReleaseDC(window_handle, device_context_handle);
@@ -1056,12 +1390,14 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
     
     switch (message_type) {
 
-        win32.WM_DESTROY, win32.WM_CLOSE => {
+        win32.WM_DESTROY,
+        win32.WM_CLOSE => {
             win32.PostQuitMessage(0);
             return 0;
         },
 
-        win32.WM_SYSKEYDOWN, win32.WM_KEYDOWN => {
+        win32.WM_SYSKEYDOWN,
+        win32.WM_KEYDOWN => {
             if (w_param == @enumToInt(win32.VK_ESCAPE)) win32.PostQuitMessage(0);
         },
 
@@ -1071,8 +1407,7 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
             _ = win32.InvalidateRect(window_handle, &rect, @enumToInt(win32.True));
         },
 
-        win32.WM_PAINT =>
-        {
+        win32.WM_PAINT => {
             var paint_struct: win32.PAINTSTRUCT = undefined;
             const handle_device_context = win32.BeginPaint(window_handle, &paint_struct);
 
@@ -1089,8 +1424,192 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
             _ = win32.EndPaint(window_handle, &paint_struct);
             return 0;
         },
+
         else => {},
     }
 
     return win32.DefWindowProcW(window_handle, message_type, w_param, l_param);
 }
+
+fn Shader(
+    comptime invariant_type: type,
+    comptime context_type: type,
+    comptime vertex_shader: fn(context: context_type, vertex_buffer: []f32, vertex_index: usize, out_invariant: *invariant_type) ?Vector3f,
+    comptime fragment_shader: fn(context: context_type, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]invariant_type) void,
+) type {
+    return struct {
+        const Self = @This();
+        fn render(context: context_type, vertex_buffer: []f32, face_count: usize) void {
+            
+            var face_index = 0;
+            while (face_index < face_count) : (face_index += 1) {
+                
+                const invariants: [3]invariant_type = undefined;
+                const tri: [3]Vector3f = undefined;
+                
+                // pass all 3 vertices of this face through the vertex shader
+                inline for(0..3) |i| {
+                    const vertex_index = face_index * 3 + i;
+                    if (vertex_shader(context, vertex_buffer, vertex_index, &invariants[i])) |result| {
+                        tri[i] = result;
+                    }
+                    else continue;
+                }
+
+                // top = y = window height, bottom = y = 0
+
+                const a = &tri[0];
+                const b = &tri[1];
+                const c = &tri[2];
+
+                // calculate the bounding of the triangle's projection on the screen
+                const left: i32 = @floatToInt(i32, std.math.min(a.x, std.math.min(b.x, c.x)));
+                const top: i32 = @floatToInt(i32, std.math.min(a.y, std.math.min(b.y, c.y)));
+                const right: i32 = @floatToInt(i32, std.math.max(a.x, std.math.max(b.x, c.x)));
+                const bottom: i32 = @floatToInt(i32, std.math.max(a.y, std.math.max(b.y, c.y)));
+
+                // if the triangle is not fully inside the buffer, discard it straight away
+                // TODO reintroduce this
+                // if (left < 0 or top < 0 or @intCast(usize, right) >= pixel_buffer.width or @intCast(usize, bottom) >= pixel_buffer.height()) return;
+
+                // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
+                // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
+                // test it just in case
+
+                // bottom to top
+                var y: i32 = bottom;
+                while (y >= top) : (y -= 1) {
+                    
+                    // left to right
+                    var x: i32 = left;
+                    while (x <= right) : (x += 1) {
+                        
+                        // barycentric coordinates of the current pixel
+                        const pixel = Vector3f { .x = @intToFloat(f32, x), .y = @intToFloat(f32, y), .z = 0 };
+
+                        const ab = b.subtract(a.*);
+                        const ac = c.subtract(a.*);
+                        const ap = pixel.subtract(a.*);
+                        const bp = pixel.subtract(b.*);
+                        const ca = a.subtract(c.*);
+
+                        // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
+                        // the magnitude of the cross product can be interpreted as the area of the parallelogram.
+                        const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+                        const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
+                        const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
+
+                        const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
+                        const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
+                        const w: f32 = (1 - u - v);
+
+                        // The inverse of the barycentric would be `P=wA+uB+vC`
+
+                        // determine if a pixel is in fact part of the triangle
+                        if (u < 0 or u >= 1) continue;
+                        if (v < 0 or v >= 1) continue;
+                        if (w < 0 or w >= 1) continue;
+
+                        fragment_shader(context, u, v, w, x, y, invariants);
+
+                    }
+                }
+            }
+        }
+    };
+}
+
+const GouraudShaderContext = struct {
+    pixel_buffer: Buffer2D(win32.Pixel),
+    depth_buffer: Buffer2D(f32),
+    texture: AnyBuffer2D,
+    texture_width: usize,
+    texture_height: usize,
+    viewport_matrix: M44,
+    projection_matrix: M44,
+    view_model_matrix: M44,
+    light_source: Vector3f,
+};
+
+const GouraudShaderInvariant = struct {
+    light_intensity: f32,
+    texture_uv: Vector2f,
+    vertex: Vector3f
+};
+
+const GouraudRenderer = Shader(
+    GouraudShaderContext,
+    GouraudShaderInvariant,
+    
+    struct {
+        fn vertex_shader(context: GouraudShaderContext, vertex_buffer: []f32, vertex_index: usize, out_invariant: *GouraudShaderInvariant) ?Vector3f {
+            const location: Vector3f = Vector3f { .x = vertex_buffer[vertex_index+0], .y = vertex_buffer[vertex_index+1], .z = vertex_buffer[vertex_index+2] };
+            const normal: Vector3f = Vector3f { .x = vertex_buffer[vertex_index+3], .y = vertex_buffer[vertex_index+4], .z = vertex_buffer[vertex_index+5] };
+            const uv: Vector2f = Vector2f { .x = vertex_buffer[vertex_index+6], .y = vertex_buffer[vertex_index+7] };
+            
+            const world_position = context.view_model_matrix.apply_to_point(location);
+            const clip_position = context.projection_matrix.apply_to_point(world_position);
+            if (clip_position.x >= 1 or clip_position.x < -1 or clip_position.y >= 1 or clip_position.y < -1 or clip_position.z >= 1 or clip_position.z < -1) {
+                // if the triangle is not fully visible, skip it
+                return null;
+            }
+            const screen_position = context.viewport_matrix.apply_to_point(clip_position);
+            
+            const light_direction = context.light_source.substract(world_position).normalized();
+            out_invariant.light_intensity = std.math.min(1, std.math.max(0, normal.normalized().dot(light_direction)));
+            // const texture_length = switch (context.texture) { _ => |buffer| buffer.data.len };
+            // const texture_width = switch (context.texture) { _ => |buffer| buffer.width };
+            out_invariant.texture_uv = Vector2f { .x = uv.x * context.texture_width, .y = uv.y * context.texture_height };
+            out_invariant.vertex = location;
+            
+            return screen_position;
+        }
+    }.vertex_shader,
+    
+    struct {
+        fn fragment_shader(context: GouraudShaderContext, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]GouraudShaderInvariant) void {
+            const z = in_invariants[0].vertex.z * w + in_invariants[1].vertex.z * u + in_invariants[2].vertex.z * v;
+            if (context.depth_buffer.get(x, y) >= z) return;
+            context.depth_buffer.set(x, y, z);
+
+            // interpolate the light intensity for the current pixel
+            var light_intensity: f32 = 0;
+            light_intensity += in_invariants[0].light_intensity * w;
+            light_intensity += in_invariants[1].light_intensity * u;
+            light_intensity += in_invariants[2].light_intensity * v;
+            
+            // clamp light intensity to 1 of 6 different levels (it looks cool)
+            if (false) {
+                if (light_intensity > 0.85) light_intensity = 1
+                else if (light_intensity > 0.60) light_intensity = 0.80
+                else if (light_intensity > 0.45) light_intensity = 0.60
+                else if (light_intensity > 0.30) light_intensity = 0.45
+                else if (light_intensity > 0.15) light_intensity = 0.30
+                else light_intensity = 0.15;
+            }
+
+            // interpolate texture uvs for the current pixel
+            const texture_uv =
+                in_invariants[0].texture_uv.scale(w).add(
+                    in_invariants[1].texture_uv.scale(u).add(
+                        in_invariants[2].texture_uv.scale(v)
+                    )
+                );
+
+            const texture_u = @floatToInt(usize, texture_uv.x);
+            const texture_v = @floatToInt(usize, texture_uv.y);
+
+            switch (context.texture) {
+                .rgb => |texture| {
+                    const rgb: RGB = texture.get(texture_u, texture_v);
+                    context.pixel_buffer.set(x, y, win32.rgb(rgb.r, rgb.g, rgb.b).scale(light_intensity));
+                },
+                .rgba =>  |texture| {
+                    const rgba: RGBA = texture.get(texture_u, texture_v);
+                    context.pixel_buffer.set(x, y, win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a).scale(light_intensity));
+                },
+                else => unreachable
+            }
+        }
+    }.fragment_shader,
+);
