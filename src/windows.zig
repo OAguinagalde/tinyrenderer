@@ -600,7 +600,6 @@ const OBJ = struct {
             normal_indices: [3]u32 = undefined,
         };
 
-        // the obj file will be read and the data put into these arrays
         var vertices = std.ArrayList(Vector3f).init(allocator);
         defer vertices.deinit();
         var normals = std.ArrayList(Vector3f).init(allocator);
@@ -617,7 +616,7 @@ const OBJ = struct {
         // line by line read the obj file and parse its content
         var current_line_buffer: [1024]u8 = undefined;
         while (try buf_reader.reader().readUntilDelimiterOrEof(&current_line_buffer, '\n')) |the_line| {
-            // if (the_line[the_line.len-1] == '\r') return error.LineTerminatorErrorAaaaah;
+            // If the file has windows style line endings ignore the \r at the end of each line
             const line_content = if (the_line[the_line.len-1] == '\r') the_line[0..the_line.len-1] else the_line;
             // skip empty lines
             if (line_content.len == 0) continue;
@@ -641,6 +640,11 @@ const OBJ = struct {
                     i = start;
                 }
                 const vertex = Vector3f { .x = values[0], .y = values[1], .z = values[2] };
+                // std.debug.print("{s}\n", .{line_content});
+                // std.debug.print("{?}\n", .{vertex});
+                std.debug.assert(vertex.x>=-1 and vertex.x<=1);
+                std.debug.assert(vertex.y>=-1 and vertex.y<=1);
+                std.debug.assert(vertex.z>=-1 and vertex.z<=1);
                 try vertices.append(vertex);
             }
             else if (std.mem.eql(u8, line_content[0..3], "vt ")) {
@@ -660,6 +664,8 @@ const OBJ = struct {
                     i = start;
                 }
                 const uv = Vector2f { .x = values[0], .y = values[1] };
+                std.debug.assert(uv.x>=0 and uv.x<=1);
+                std.debug.assert(uv.y>=0 and uv.y<=1);
                 try uvs.append(uv);
             }
             else if (std.mem.eql(u8, line_content[0..3], "vn ")) {
@@ -679,6 +685,9 @@ const OBJ = struct {
                     i = start;
                 }
                 const normal = Vector3f { .x = values[0], .y = values[1], .z = values[2] };
+                std.debug.assert(normal.x>=-1 and normal.x<=1);
+                std.debug.assert(normal.y>=-1 and normal.y<=1);
+                std.debug.assert(normal.z>=-1 and normal.z<=1);
                 try normals.append(normal);
             }
             else if (std.mem.eql(u8, line_content[0..2], "f ")) {
@@ -725,59 +734,57 @@ const OBJ = struct {
             
         }
 
-        const VertexRaw = extern struct {
-            location_x: f32 align(1),
-            location_y: f32 align(1),
-            location_z: f32 align(1),
-            texture_u: f32 align(1),
-            texture_v: f32 align(1),
-            normal_x: f32 align(1),
-            normal_y: f32 align(1),
-            normal_z: f32 align(1),
-        };
-        const FaceRaw = extern struct {
-            a: VertexRaw align(1),
-            b: VertexRaw align(1),
-            c: VertexRaw align(1),
-        };
-        comptime std.debug.assert(@sizeOf(VertexRaw) == @sizeOf(f32)*8);
-        comptime std.debug.assert(@sizeOf(FaceRaw) == @sizeOf(VertexRaw)*3);
-        var vertex_buffer = try allocator.alloc(FaceRaw, faces.items.len);
+        // std.debug.print("A {?}\n", .{ faces.items[2].uv_indices[0] });
+        // std.debug.print("A {?}\n", .{ faces.items[2].uv_indices[1] });
+        // std.debug.print("A {?}\n", .{ faces.items[2].uv_indices[2] });
+        
+        // std.debug.print("B {?}\n", .{ uvs.items[faces.items[2].uv_indices[0]] });
+        // std.debug.print("B {?}\n", .{ uvs.items[faces.items[2].uv_indices[1]] });
+        // std.debug.print("B {?}\n", .{ uvs.items[faces.items[2].uv_indices[2]] });
+
+        // const VertexLayout = struct {
+        //     location_x: f32,
+        //     location_y: f32,
+        //     location_z: f32,
+        //     texture_u: f32,
+        //     texture_v: f32,
+        //     normal_x: f32,
+        //     normal_y: f32,
+        //     normal_z: f32,
+        // };
+
+        var vertex_buffer = try allocator.alloc(f32, faces.items.len * 3 * 8);
         for (faces.items, 0..) |face, face_index| {
-            vertex_buffer[face_index] = FaceRaw {
-                .a = VertexRaw {
-                    .location_x = vertices.items[face.vertex_indices[0]].x,
-                    .location_y = vertices.items[face.vertex_indices[0]].y,
-                    .location_z = vertices.items[face.vertex_indices[0]].z,
-                    .texture_u = uvs.items[face.uv_indices[0]].x,
-                    .texture_v = uvs.items[face.uv_indices[0]].y,
-                    .normal_x = normals.items[face.normal_indices[0]].x,
-                    .normal_y = normals.items[face.normal_indices[0]].y,
-                    .normal_z = normals.items[face.normal_indices[0]].z,
-                },
-                .b = VertexRaw {
-                    .location_x = vertices.items[face.vertex_indices[1]].x,
-                    .location_y = vertices.items[face.vertex_indices[1]].y,
-                    .location_z = vertices.items[face.vertex_indices[1]].z,
-                    .texture_u = uvs.items[face.uv_indices[1]].x,
-                    .texture_v = uvs.items[face.uv_indices[1]].y,
-                    .normal_x = normals.items[face.normal_indices[1]].x,
-                    .normal_y = normals.items[face.normal_indices[1]].y,
-                    .normal_z = normals.items[face.normal_indices[1]].z,
-                },
-                .c = VertexRaw {
-                    .location_x = vertices.items[face.vertex_indices[2]].x,
-                    .location_y = vertices.items[face.vertex_indices[2]].y,
-                    .location_z = vertices.items[face.vertex_indices[2]].z,
-                    .texture_u = uvs.items[face.uv_indices[2]].x,
-                    .texture_v = uvs.items[face.uv_indices[2]].y,
-                    .normal_x = normals.items[face.normal_indices[2]].x,
-                    .normal_y = normals.items[face.normal_indices[2]].y,
-                    .normal_z = normals.items[face.normal_indices[2]].z,
-                },
-            };
+
+            vertex_buffer[face_index*3*8 + 8*0 + 0] = vertices.items[face.vertex_indices[0]].x;
+            vertex_buffer[face_index*3*8 + 8*0 + 1] = vertices.items[face.vertex_indices[0]].y;
+            vertex_buffer[face_index*3*8 + 8*0 + 2] = vertices.items[face.vertex_indices[0]].z;
+            vertex_buffer[face_index*3*8 + 8*0 + 3] = uvs.items[face.uv_indices[0]].x;
+            vertex_buffer[face_index*3*8 + 8*0 + 4] = uvs.items[face.uv_indices[0]].y;
+            vertex_buffer[face_index*3*8 + 8*0 + 5] = normals.items[face.normal_indices[0]].x;
+            vertex_buffer[face_index*3*8 + 8*0 + 6] = normals.items[face.normal_indices[0]].y;
+            vertex_buffer[face_index*3*8 + 8*0 + 7] = normals.items[face.normal_indices[0]].z;
+                
+            vertex_buffer[face_index*3*8 + 8*1 + 0] = vertices.items[face.vertex_indices[1]].x;
+            vertex_buffer[face_index*3*8 + 8*1 + 1] = vertices.items[face.vertex_indices[1]].y;
+            vertex_buffer[face_index*3*8 + 8*1 + 2] = vertices.items[face.vertex_indices[1]].z;
+            vertex_buffer[face_index*3*8 + 8*1 + 3] = uvs.items[face.uv_indices[1]].x;
+            vertex_buffer[face_index*3*8 + 8*1 + 4] = uvs.items[face.uv_indices[1]].y;
+            vertex_buffer[face_index*3*8 + 8*1 + 5] = normals.items[face.normal_indices[1]].x;
+            vertex_buffer[face_index*3*8 + 8*1 + 6] = normals.items[face.normal_indices[1]].y;
+            vertex_buffer[face_index*3*8 + 8*1 + 7] = normals.items[face.normal_indices[1]].z;
+
+            vertex_buffer[face_index*3*8 + 8*2 + 0] = vertices.items[face.vertex_indices[2]].x;
+            vertex_buffer[face_index*3*8 + 8*2 + 1] = vertices.items[face.vertex_indices[2]].y;
+            vertex_buffer[face_index*3*8 + 8*2 + 2] = vertices.items[face.vertex_indices[2]].z;
+            vertex_buffer[face_index*3*8 + 8*2 + 3] = uvs.items[face.uv_indices[2]].x;
+            vertex_buffer[face_index*3*8 + 8*2 + 4] = uvs.items[face.uv_indices[2]].y;
+            vertex_buffer[face_index*3*8 + 8*2 + 5] = normals.items[face.normal_indices[2]].x;
+            vertex_buffer[face_index*3*8 + 8*2 + 6] = normals.items[face.normal_indices[2]].y;
+            vertex_buffer[face_index*3*8 + 8*2 + 7] = normals.items[face.normal_indices[2]].z;
+
         }
-        return @ptrCast([*]f32, @alignCast(4, vertex_buffer))[0..(3*8*faces.items.len)];
+        return vertex_buffer;
     }
 };
 
@@ -1622,15 +1629,15 @@ pub fn main() !void {
                 if (mouse_dx != 0 or mouse_dy != 0) {
                     state.camera.direction = state.camera.direction.add(real_right.scale(mouse_dx));
                     if (state.camera.direction.y < 0.95 and state.camera.direction.y > -0.95) {
-                        state.camera.direction = state.camera.direction.add(real_up.scale(mouse_dy));
+                        state.camera.direction = state.camera.direction.add(real_up.scale(-mouse_dy));
                     }
                     state.camera.direction.normalize();
                 }
                 
                 // move the camera position based on WASD and QE
                 if (state.keys['W']) state.camera.position = state.camera.position.add(state.camera.direction.scale(0.02));
-                if (state.keys['S']) state.camera.position = state.camera.position.add(state.camera.direction.scale(0.02)).scale(-1);
-                if (state.keys['A']) state.camera.position = state.camera.position.add(real_right.scale(0.02)).scale(-1);
+                if (state.keys['S']) state.camera.position = state.camera.position.add(state.camera.direction.scale(-0.02));
+                if (state.keys['A']) state.camera.position = state.camera.position.add(real_right.scale(-0.02));
                 if (state.keys['D']) state.camera.position = state.camera.position.add(real_right.scale(0.02));
                 if (state.keys['Q']) state.camera.position.y += 0.02;
                 if (state.keys['E']) state.camera.position.y -= 0.02;
@@ -1645,7 +1652,8 @@ pub fn main() !void {
                 if (state.keys['P']) state.projection_matrix = M44.identity();
                 if (state.keys['V']) state.viewport_matrix = M44.identity();
 
-                const horizontally_spinning_position = Vector3f { .x = std.math.cos(@intToFloat(f32, counted_since_start) / 2000), .y = 0, .z = std.math.sin(@intToFloat(f32, counted_since_start) / 2000) };
+                _ = counted_since_start;
+                const horizontally_spinning_position = Vector3f { .x = std.math.cos(@floatCast(f32, state.time) / 2000), .y = 0, .z = std.math.sin(@floatCast(f32, state.time) / 2000) };
                 
                 // comptime pixel_type: type, buffer: Buffer2D(pixel_type), a: Vector2i, b: Vector2i, color: pixel_type
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red); 
@@ -1713,16 +1721,18 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
         win32.WM_SYSKEYDOWN,
         win32.WM_KEYDOWN => {
             if (w_param == @enumToInt(win32.VK_ESCAPE)) win32.PostQuitMessage(0)
-            else if (l_param < 256 and l_param >= 0) {
-                const key = @intCast(usize, l_param);
+            else if (w_param < 256 and w_param >= 0) {
+                const key = @intCast(u8, w_param);
                 state.keys[key] = true;
+                std.debug.print("down {c}\n", .{key});
             }
         },
 
         win32.WM_KEYUP => {
-            if (l_param < 256 and l_param >= 0) {
-                const key = @intCast(usize, l_param);
+            if (w_param < 256 and w_param >= 0) {
+                const key = @intCast(u8, w_param);
                 state.keys[key] = false;
+                std.debug.print("up   {c}\n", .{key});
             }
         },
 
@@ -1771,6 +1781,8 @@ fn Shader(
                 
                 var invariants: [3]invariant_type = undefined;
                 var tri: [3]Vector3f = undefined;
+
+                // std.debug.print("fi {}\n", .{face_index});
                 
                 // pass all 3 vertices of this face through the vertex shader
                 inline for(0..3) |i| {
@@ -1868,10 +1880,16 @@ const GouraudRenderer = Shader(
     GouraudShaderInvariant,
     struct {
         fn vertex_shader(context: GouraudShaderContext, vertex_buffer: []f32, vertex_index: usize, out_invariant: *GouraudShaderInvariant) ?Vector3f {
-            const location: Vector3f = Vector3f { .x = vertex_buffer[vertex_index+0], .y = vertex_buffer[vertex_index+1], .z = vertex_buffer[vertex_index+2] };
-            const normal: Vector3f = Vector3f { .x = vertex_buffer[vertex_index+3], .y = vertex_buffer[vertex_index+4], .z = vertex_buffer[vertex_index+5] };
-            const uv: Vector2f = Vector2f { .x = vertex_buffer[vertex_index+6], .y = vertex_buffer[vertex_index+7] };
             
+            // std.debug.print("vi {?}\n", .{vertex_index});
+
+            const location: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*8+0], .y = vertex_buffer[vertex_index*8+1], .z = vertex_buffer[vertex_index*8+2] };
+            const uv: Vector2f = Vector2f { .x = vertex_buffer[vertex_index*8+3], .y = vertex_buffer[vertex_index*8+4] };
+            const normal: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*8+5], .y = vertex_buffer[vertex_index*8+6], .z = vertex_buffer[vertex_index*8+7] };
+            
+            // std.debug.print("C {?}\n", .{uv});
+            std.debug.assert(uv.x>=0 and uv.x<1);
+
             const world_position = context.view_model_matrix.apply_to_point(location);
             const clip_position = context.projection_matrix.apply_to_point(world_position);
             if (clip_position.x >= 1 or clip_position.x < -1 or clip_position.y >= 1 or clip_position.y < -1 or clip_position.z >= 1 or clip_position.z < -1) {
@@ -1882,8 +1900,7 @@ const GouraudRenderer = Shader(
             
             const light_direction = context.light_source.substract(world_position).normalized();
             out_invariant.light_intensity = std.math.min(1, std.math.max(0, normal.normalized().dot(light_direction)));
-            // const texture_length = switch (context.texture) { _ => |buffer| buffer.data.len };
-            // const texture_width = switch (context.texture) { _ => |buffer| buffer.width };
+
             out_invariant.texture_uv = Vector2f { .x = uv.x * @intToFloat(f32, context.texture_width), .y = uv.y * @intToFloat(f32, context.texture_height) };
             out_invariant.vertex = location;
             
@@ -1892,53 +1909,76 @@ const GouraudRenderer = Shader(
     }.vertex_shader,
     struct {
         fn fragment_shader(context: GouraudShaderContext, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]GouraudShaderInvariant) void {
+            
+            std.debug.assert(x>=0 and x<context.pixel_buffer.width);
+            std.debug.assert(y>=0 and y<context.pixel_buffer.height());
+            std.debug.assert(u>=0 and u<1);
+            std.debug.assert(v>=0 and v<1);
+            std.debug.assert(w>=0 and w<1);
+            std.debug.assert(in_invariants[0].light_intensity>=0 and in_invariants[0].light_intensity<1);
+            std.debug.assert(in_invariants[1].light_intensity>=0 and in_invariants[1].light_intensity<1);
+            std.debug.assert(in_invariants[2].light_intensity>=0 and in_invariants[2].light_intensity<1);
+
             const z = in_invariants[0].vertex.z * w + in_invariants[1].vertex.z * u + in_invariants[2].vertex.z * v;
+
+            // std.debug.assert(z>=0 and z<1);
+
             if (context.depth_buffer.get(@intCast(usize, x), @intCast(usize, y)) >= z) return;
             context.depth_buffer.set(@intCast(usize, x), @intCast(usize, y), z);
 
-            context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgb(255,255,255).scale(z));
-
-            if (false) {
-
-                // interpolate the light intensity for the current pixel
-                var light_intensity: f32 = 0;
-                light_intensity += in_invariants[0].light_intensity * w;
-                light_intensity += in_invariants[1].light_intensity * u;
-                light_intensity += in_invariants[2].light_intensity * v;
+            // interpolate the light intensity for the current pixel
+            var light_intensity: f32 = 0;
+            light_intensity += in_invariants[0].light_intensity * w;
+            light_intensity += in_invariants[1].light_intensity * u;
+            light_intensity += in_invariants[2].light_intensity * v;
                 
-                // clamp light intensity to 1 of 6 different levels (it looks cool)
-                if (false) {
-                    if (light_intensity > 0.85) light_intensity = 1
-                    else if (light_intensity > 0.60) light_intensity = 0.80
-                    else if (light_intensity > 0.45) light_intensity = 0.60
-                    else if (light_intensity > 0.30) light_intensity = 0.45
-                    else if (light_intensity > 0.15) light_intensity = 0.30
-                    else light_intensity = 0.15;
-                }
+            // clamp light intensity to 1 of 6 different levels (it looks cool)
+            // if (light_intensity > 0.85) light_intensity = 1
+            // else if (light_intensity > 0.60) light_intensity = 0.80
+            // else if (light_intensity > 0.45) light_intensity = 0.60
+            // else if (light_intensity > 0.30) light_intensity = 0.45
+            // else if (light_intensity > 0.15) light_intensity = 0.30
+            // else light_intensity = 0.15;
 
-                // interpolate texture uvs for the current pixel
-                const texture_uv =
-                    in_invariants[0].texture_uv.scale(w).add(
-                        in_invariants[1].texture_uv.scale(u).add(
-                            in_invariants[2].texture_uv.scale(v)
-                        )
-                    );
+            std.debug.assert(light_intensity>=0 and light_intensity<=1);
 
-                const texture_u = @floatToInt(usize, texture_uv.x);
-                const texture_v = @floatToInt(usize, texture_uv.y);
+            // std.debug.print("0 {?}\n", .{in_invariants[0].texture_uv});
+            // std.debug.print("1 {?}\n", .{in_invariants[1].texture_uv});
+            // std.debug.print("2 {?}\n", .{in_invariants[2].texture_uv});
 
-                switch (context.texture) {
-                    .rgb => |texture| {
-                        const rgb: RGB = texture.get(texture_u, texture_v).scale(light_intensity);
-                        context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgb(rgb.r, rgb.g, rgb.b));
-                    },
-                    .rgba =>  |texture| {
-                        const rgba: RGBA = texture.get(texture_u, texture_v).scale(light_intensity);
-                        context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
-                    },
-                    else => unreachable
-                }
+            std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<1024);
+            std.debug.assert(in_invariants[0].texture_uv.y>=0 and in_invariants[0].texture_uv.y<1024);
+            std.debug.assert(in_invariants[1].texture_uv.x>=0 and in_invariants[1].texture_uv.x<1024);
+            std.debug.assert(in_invariants[1].texture_uv.y>=0 and in_invariants[1].texture_uv.y<1024);
+            std.debug.assert(in_invariants[2].texture_uv.x>=0 and in_invariants[2].texture_uv.x<1024);
+            std.debug.assert(in_invariants[2].texture_uv.y>=0 and in_invariants[2].texture_uv.y<1024);
+
+            // interpolate texture uvs for the current pixel
+            const texture_uv =
+                in_invariants[0].texture_uv.scale(w).add(
+                    in_invariants[1].texture_uv.scale(u).add(
+                        in_invariants[2].texture_uv.scale(v)
+                    )
+                );
+
+            std.debug.assert(texture_uv.x>=0 and texture_uv.x<1024);
+            std.debug.assert(texture_uv.y>=0 and texture_uv.y<1024);
+
+            const texture_u = @floatToInt(usize, texture_uv.x);
+            const texture_v = @floatToInt(usize, texture_uv.y);
+
+            switch (context.texture) {
+                .rgb => |texture| {
+                    const rgb: RGB = texture.get(texture_u, texture_v).scale(light_intensity);
+                    context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgb(rgb.r, rgb.g, rgb.b));
+                },
+                .rgba =>  |texture| {
+                    const rgba: RGBA = texture.get(texture_u, texture_v).scale(light_intensity);
+                    context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
+                },
+                else => unreachable
             }
+
         }
     }.fragment_shader,
 );
