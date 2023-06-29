@@ -14,6 +14,14 @@ const win32 = struct {
         r: u8,
         /// 255 for solid and 0 for transparent
         a: u8,
+        fn scale(self: win32.RGBA, factor: f32) win32.RGBA {
+        return win32.RGBA {
+            .r = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.r) * factor))),
+            .g = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.g) * factor))),
+            .b = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.b) * factor))),
+            .a = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.a) * factor))),
+        };
+    }
     };
 
     fn rgb(r: u8, g: u8, b: u8) win32.RGBA {
@@ -608,8 +616,9 @@ const OBJ = struct {
         
         // line by line read the obj file and parse its content
         var current_line_buffer: [1024]u8 = undefined;
-        while (try buf_reader.reader().readUntilDelimiterOrEof(&current_line_buffer, '\n')) |line_content| {
-            if (line_content[line_content.len-1] == '\r') return error.LineTerminatorErrorAaaaah;
+        while (try buf_reader.reader().readUntilDelimiterOrEof(&current_line_buffer, '\n')) |the_line| {
+            // if (the_line[the_line.len-1] == '\r') return error.LineTerminatorErrorAaaaah;
+            const line_content = if (the_line[the_line.len-1] == '\r') the_line[0..the_line.len-1] else the_line;
             // skip empty lines
             if (line_content.len == 0) continue;
             // skip comments
@@ -623,7 +632,8 @@ const OBJ = struct {
                 var i: usize = 2;
                 var start = i;
                 for (0..3) |j| {
-                    while (line_content[i] != ' ') : (i += 1) {}
+                    while (start<line_content.len and line_content[start] == ' ') : ({start += 1; i += 1;}) {} // skip spaces
+                    while (i<line_content.len and line_content[i] != ' ') : (i += 1) {}
                     const f32_string = line_content[start..i];
                     const f32_value = try std.fmt.parseFloat(f32, f32_string);
                     values[j] = f32_value;
@@ -641,7 +651,8 @@ const OBJ = struct {
                 var i: usize = 3;
                 var start = i;
                 for (0..2) |j| {
-                    while (line_content[i] != ' ') : (i += 1) {}
+                    while (start<line_content.len and line_content[start] == ' ') : ({start += 1; i += 1;}) {} // skip spaces
+                    while (i<line_content.len and line_content[i] != ' ') : (i += 1) {}
                     const f32_string = line_content[start..i];
                     const f32_value = try std.fmt.parseFloat(f32, f32_string);
                     values[j] = f32_value;
@@ -659,7 +670,8 @@ const OBJ = struct {
                 var i: usize = 3;
                 var start = i;
                 for (0..3) |j| {
-                    while (line_content[i] != ' ') : (i += 1) {}
+                    while (start<line_content.len and line_content[start] == ' ') : ({start += 1; i += 1;}) {} // skip spaces
+                    while (i<line_content.len and line_content[i] != ' ') : (i += 1) {}
                     const f32_string = line_content[start..i];
                     const f32_value = try std.fmt.parseFloat(f32, f32_string);
                     values[j] = f32_value;
@@ -682,13 +694,13 @@ const OBJ = struct {
                 var i: usize = 2;
                 var start = i;
                 for (0..3) |j| {
-                    while (line_content[i] != ' ') : (i += 1) {}
+                    while (start<line_content.len and line_content[start] == ' ') : ({start += 1; i += 1;}) {} // skip spaces
+                    while (i<line_content.len and line_content[i] != ' ') : (i += 1) {}
                     const index_trio_string = line_content[start..i];
-                    
                     var i_2: usize = 0;
                     var start_2 = i_2;
                     inline for (0..3) |k| {
-                        while (index_trio_string[i_2] != '/') : (i_2 += 1) {}
+                        while (i_2<index_trio_string.len and index_trio_string[i_2] != '/') : (i_2 += 1) {}
                         const index_of_slash = i_2;
                         const u32_string = index_trio_string[start_2..index_of_slash];
                         const u32_value = try std.fmt.parseUnsigned(u32, u32_string, 10);
@@ -1884,43 +1896,48 @@ const GouraudRenderer = Shader(
             if (context.depth_buffer.get(@intCast(usize, x), @intCast(usize, y)) >= z) return;
             context.depth_buffer.set(@intCast(usize, x), @intCast(usize, y), z);
 
-            // interpolate the light intensity for the current pixel
-            var light_intensity: f32 = 0;
-            light_intensity += in_invariants[0].light_intensity * w;
-            light_intensity += in_invariants[1].light_intensity * u;
-            light_intensity += in_invariants[2].light_intensity * v;
-            
-            // clamp light intensity to 1 of 6 different levels (it looks cool)
+            context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgb(255,255,255).scale(z));
+
             if (false) {
-                if (light_intensity > 0.85) light_intensity = 1
-                else if (light_intensity > 0.60) light_intensity = 0.80
-                else if (light_intensity > 0.45) light_intensity = 0.60
-                else if (light_intensity > 0.30) light_intensity = 0.45
-                else if (light_intensity > 0.15) light_intensity = 0.30
-                else light_intensity = 0.15;
-            }
 
-            // interpolate texture uvs for the current pixel
-            const texture_uv =
-                in_invariants[0].texture_uv.scale(w).add(
-                    in_invariants[1].texture_uv.scale(u).add(
-                        in_invariants[2].texture_uv.scale(v)
-                    )
-                );
+                // interpolate the light intensity for the current pixel
+                var light_intensity: f32 = 0;
+                light_intensity += in_invariants[0].light_intensity * w;
+                light_intensity += in_invariants[1].light_intensity * u;
+                light_intensity += in_invariants[2].light_intensity * v;
+                
+                // clamp light intensity to 1 of 6 different levels (it looks cool)
+                if (false) {
+                    if (light_intensity > 0.85) light_intensity = 1
+                    else if (light_intensity > 0.60) light_intensity = 0.80
+                    else if (light_intensity > 0.45) light_intensity = 0.60
+                    else if (light_intensity > 0.30) light_intensity = 0.45
+                    else if (light_intensity > 0.15) light_intensity = 0.30
+                    else light_intensity = 0.15;
+                }
 
-            const texture_u = @floatToInt(usize, texture_uv.x);
-            const texture_v = @floatToInt(usize, texture_uv.y);
+                // interpolate texture uvs for the current pixel
+                const texture_uv =
+                    in_invariants[0].texture_uv.scale(w).add(
+                        in_invariants[1].texture_uv.scale(u).add(
+                            in_invariants[2].texture_uv.scale(v)
+                        )
+                    );
 
-            switch (context.texture) {
-                .rgb => |texture| {
-                    const rgb: RGB = texture.get(texture_u, texture_v).scale(light_intensity);
-                    context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgb(rgb.r, rgb.g, rgb.b));
-                },
-                .rgba =>  |texture| {
-                    const rgba: RGBA = texture.get(texture_u, texture_v).scale(light_intensity);
-                    context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
-                },
-                else => unreachable
+                const texture_u = @floatToInt(usize, texture_uv.x);
+                const texture_v = @floatToInt(usize, texture_uv.y);
+
+                switch (context.texture) {
+                    .rgb => |texture| {
+                        const rgb: RGB = texture.get(texture_u, texture_v).scale(light_intensity);
+                        context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgb(rgb.r, rgb.g, rgb.b));
+                    },
+                    .rgba =>  |texture| {
+                        const rgba: RGBA = texture.get(texture_u, texture_v).scale(light_intensity);
+                        context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
+                    },
+                    else => unreachable
+                }
             }
         }
     }.fragment_shader,
