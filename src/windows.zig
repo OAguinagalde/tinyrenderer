@@ -1685,6 +1685,26 @@ pub fn main() !void {
                 };
                 const number_of_triangles = @divExact(state.vertex_buffer.len, 8*3);
                 GouraudRenderer.render(context, state.vertex_buffer, number_of_triangles);
+
+                const context_quad = QuadRendererContext {
+                    .pixel_buffer = &state.pixel_buffer,
+                    .depth_buffer = &state.depth_buffer,
+                    .texture = state.texture,
+                    .texture_width = texture_width,
+                    .texture_height = texture_height,
+                    .viewport_matrix = state.viewport_matrix,
+                    .projection_matrix = state.projection_matrix,
+                    .view_model_matrix = state.view_matrix.multiply(M44.translation(Vector3f { .x = 0, .y = 0, .z = -3 }).multiply(M44.scale(1))),
+                };
+                const quad_vertex_buffer = [_]f32{
+                    0, 0, 0, 0, 0,
+                    1, 0, 0, 1, 0,
+                    1, 1, 0, 1, 1,
+                    0, 0, 0, 0, 0,
+                    1, 1, 0, 1, 1,
+                    0, 1, 0, 0, 1,
+                };
+                QuadRenderer.render(context_quad, quad_vertex_buffer[0..quad_vertex_buffer.len], 2);
             }
 
             state.running = state.running and !app_close_requested;
@@ -1769,12 +1789,12 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
 fn Shader(
     comptime context_type: type,
     comptime invariant_type: type,
-    comptime vertex_shader: fn(context: context_type, vertex_buffer: []f32, vertex_index: usize, out_invariant: *invariant_type) ?Vector3f,
+    comptime vertex_shader: fn(context: context_type, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *invariant_type) ?Vector3f,
     comptime fragment_shader: fn(context: context_type, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]invariant_type) void,
 ) type {
     return struct {
         const Self = @This();
-        fn render(context: context_type, vertex_buffer: []f32, face_count: usize) void {
+        fn render(context: context_type, vertex_buffer: []const f32, face_count: usize) void {
             
             var face_index: usize = 0;
             label_outer: while (face_index < face_count) : (face_index += 1) {
@@ -1874,12 +1894,11 @@ const GouraudShaderInvariant = struct {
     vertex: Vector3f
 };
 
-// TODO by the time I create this shader I already know the texture pixel format as well as the output format so there is no need to keep the switches inside
 const GouraudRenderer = Shader(
     GouraudShaderContext,
     GouraudShaderInvariant,
     struct {
-        fn vertex_shader(context: GouraudShaderContext, vertex_buffer: []f32, vertex_index: usize, out_invariant: *GouraudShaderInvariant) ?Vector3f {
+        fn vertex_shader(context: GouraudShaderContext, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *GouraudShaderInvariant) ?Vector3f {
             
             // std.debug.print("vi {?}\n", .{vertex_index});
 
@@ -1888,7 +1907,8 @@ const GouraudRenderer = Shader(
             const normal: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*8+5], .y = vertex_buffer[vertex_index*8+6], .z = vertex_buffer[vertex_index*8+7] };
             
             // std.debug.print("C {?}\n", .{uv});
-            std.debug.assert(uv.x>=0 and uv.x<1);
+            std.debug.assert(uv.x>=0 and uv.x<=1);
+            std.debug.assert(uv.y>=0 and uv.y<=1);
 
             const world_position = context.view_model_matrix.apply_to_point(location);
             const clip_position = context.projection_matrix.apply_to_point(world_position);
@@ -1946,12 +1966,12 @@ const GouraudRenderer = Shader(
             // std.debug.print("1 {?}\n", .{in_invariants[1].texture_uv});
             // std.debug.print("2 {?}\n", .{in_invariants[2].texture_uv});
 
-            std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<1024);
-            std.debug.assert(in_invariants[0].texture_uv.y>=0 and in_invariants[0].texture_uv.y<1024);
-            std.debug.assert(in_invariants[1].texture_uv.x>=0 and in_invariants[1].texture_uv.x<1024);
-            std.debug.assert(in_invariants[1].texture_uv.y>=0 and in_invariants[1].texture_uv.y<1024);
-            std.debug.assert(in_invariants[2].texture_uv.x>=0 and in_invariants[2].texture_uv.x<1024);
-            std.debug.assert(in_invariants[2].texture_uv.y>=0 and in_invariants[2].texture_uv.y<1024);
+            std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<=@intToFloat(f32, context.texture_width));
+            std.debug.assert(in_invariants[0].texture_uv.y>=0 and in_invariants[0].texture_uv.y<=@intToFloat(f32, context.texture_height));
+            std.debug.assert(in_invariants[1].texture_uv.x>=0 and in_invariants[1].texture_uv.x<=@intToFloat(f32, context.texture_width));
+            std.debug.assert(in_invariants[1].texture_uv.y>=0 and in_invariants[1].texture_uv.y<=@intToFloat(f32, context.texture_height));
+            std.debug.assert(in_invariants[2].texture_uv.x>=0 and in_invariants[2].texture_uv.x<=@intToFloat(f32, context.texture_width));
+            std.debug.assert(in_invariants[2].texture_uv.y>=0 and in_invariants[2].texture_uv.y<=@intToFloat(f32, context.texture_height));
 
             // interpolate texture uvs for the current pixel
             const texture_uv =
@@ -1961,8 +1981,8 @@ const GouraudRenderer = Shader(
                     )
                 );
 
-            std.debug.assert(texture_uv.x>=0 and texture_uv.x<1024);
-            std.debug.assert(texture_uv.y>=0 and texture_uv.y<1024);
+            std.debug.assert(texture_uv.x>=0 and texture_uv.x<=@intToFloat(f32, context.texture_width));
+            std.debug.assert(texture_uv.y>=0 and texture_uv.y<=@intToFloat(f32, context.texture_height));
 
             const texture_u = @floatToInt(usize, texture_uv.x);
             const texture_v = @floatToInt(usize, texture_uv.y);
@@ -1974,6 +1994,83 @@ const GouraudRenderer = Shader(
                 },
                 .rgba =>  |texture| {
                     const rgba: RGBA = texture.get(texture_u, texture_v).scale(light_intensity);
+                    context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
+                },
+                else => unreachable
+            }
+
+        }
+    }.fragment_shader,
+);
+
+const QuadRendererContext = struct {
+    pixel_buffer: *Buffer2D(win32.RGBA),
+    depth_buffer: *Buffer2D(f32),
+    texture: AnyBuffer2D,
+    texture_width: usize,
+    texture_height: usize,
+    viewport_matrix: M44,
+    projection_matrix: M44,
+    view_model_matrix: M44,
+};
+
+const QuadRendererInvariant = struct {
+    texture_uv: Vector2f,
+    vertex: Vector3f
+};
+
+const QuadRenderer = Shader(
+    QuadRendererContext,
+    QuadRendererInvariant,
+    struct {
+        fn vertex_shader(context: QuadRendererContext, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *QuadRendererInvariant) ?Vector3f {
+            const location: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*5+0], .y = vertex_buffer[vertex_index*5+1], .z = vertex_buffer[vertex_index*5+2] };
+            const uv: Vector2f = Vector2f { .x = vertex_buffer[vertex_index*5+3], .y = vertex_buffer[vertex_index*5+4] };
+            std.debug.assert(uv.x>=0 and uv.x<=1);
+            std.debug.assert(uv.y>=0 and uv.y<=1);
+            const world_position = context.view_model_matrix.apply_to_point(location);
+            const clip_position = context.projection_matrix.apply_to_point(world_position);
+            // if the triangle is not fully visible, skip it
+            if (clip_position.x >= 1 or clip_position.x < -1 or clip_position.y >= 1 or clip_position.y < -1 or clip_position.z >= 1 or clip_position.z < -1) return null;
+            const screen_position = context.viewport_matrix.apply_to_point(clip_position);
+            out_invariant.texture_uv = Vector2f { .x = uv.x * @intToFloat(f32, context.texture_width), .y = uv.y * @intToFloat(f32, context.texture_height) };
+            out_invariant.vertex = location;
+            return screen_position;
+        }
+    }.vertex_shader,
+    struct {
+        fn fragment_shader(context: QuadRendererContext, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]QuadRendererInvariant) void {
+            std.debug.assert(x>=0 and x<context.pixel_buffer.width);
+            std.debug.assert(y>=0 and y<context.pixel_buffer.height());
+            std.debug.assert(u>=0 and u<1);
+            std.debug.assert(v>=0 and v<1);
+            std.debug.assert(w>=0 and w<1);
+            const z = in_invariants[0].vertex.z * w + in_invariants[1].vertex.z * u + in_invariants[2].vertex.z * v;
+            if (context.depth_buffer.get(@intCast(usize, x), @intCast(usize, y)) >= z) return;
+            context.depth_buffer.set(@intCast(usize, x), @intCast(usize, y), z);
+            std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<=@intToFloat(f32, context.texture_width));
+            std.debug.assert(in_invariants[0].texture_uv.y>=0 and in_invariants[0].texture_uv.y<=@intToFloat(f32, context.texture_height));
+            std.debug.assert(in_invariants[1].texture_uv.x>=0 and in_invariants[1].texture_uv.x<=@intToFloat(f32, context.texture_width));
+            std.debug.assert(in_invariants[1].texture_uv.y>=0 and in_invariants[1].texture_uv.y<=@intToFloat(f32, context.texture_height));
+            std.debug.assert(in_invariants[2].texture_uv.x>=0 and in_invariants[2].texture_uv.x<=@intToFloat(f32, context.texture_width));
+            std.debug.assert(in_invariants[2].texture_uv.y>=0 and in_invariants[2].texture_uv.y<=@intToFloat(f32, context.texture_height));
+            const texture_uv =
+                in_invariants[0].texture_uv.scale(w).add(
+                    in_invariants[1].texture_uv.scale(u).add(
+                        in_invariants[2].texture_uv.scale(v)
+                    )
+                );
+            std.debug.assert(texture_uv.x>=0 and texture_uv.x<=@intToFloat(f32, context.texture_width));
+            std.debug.assert(texture_uv.y>=0 and texture_uv.y<=@intToFloat(f32, context.texture_height));
+            const texture_u = @floatToInt(usize, @floor(texture_uv.x));
+            const texture_v = @floatToInt(usize, @floor(texture_uv.y));
+            switch (context.texture) {
+                .rgb => |texture| {
+                    const rgb: RGB = texture.get(texture_u, texture_v);
+                    context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgb(rgb.r, rgb.g, rgb.b));
+                },
+                .rgba =>  |texture| {
+                    const rgba: RGBA = texture.get(texture_u, texture_v);
                     context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
                 },
                 else => unreachable
