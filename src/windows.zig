@@ -1566,7 +1566,12 @@ pub fn main() !void {
             break :blk performance_frequency.QuadPart;
         };
 
-        state.mouse = Vector2i { .x = 0, .y = 0 };
+        { // Set the initial mouse state to wherever the mouse is when the app is initialized
+            var mouse_current: win32.POINT = undefined;
+            _ = win32.GetCursorPos(&mouse_current);
+            state.mouse.x = mouse_current.x;
+            state.mouse.y = mouse_current.y;
+        }
 
         while (state.running) {
 
