@@ -1462,8 +1462,10 @@ const State = struct {
 var state = State {
     .x = 10,
     .y = 10,
-    .w = 500,
-    .h = 300,
+    .w = 1000,
+    // .w = 500,
+    .h = 1000,
+    // .h = 300,
     .render_target = undefined,
     .pixel_buffer = undefined,
     .running = true,
@@ -1541,9 +1543,9 @@ pub fn main() !void {
                 catch |err| { std.debug.print("error reading `res/african_head.obj` {?}", .{err}); return; };
 
             // Set the camera
-            state.camera.position = Vector3f { .x = 1, .y = 1, .z = 3 };
+            state.camera.position = Vector3f { .x = 1, .y = 1, .z = 2 };
             state.camera.up = Vector3f { .x = 0, .y = 1, .z = 0 };
-            state.camera.direction = Vector3f { .x = 0, .y = 0, .z = 1 };
+            state.camera.direction = Vector3f { .x = 0, .y = 0, .z = -1 };
 
             state.time = 0;
         }
@@ -1653,8 +1655,7 @@ pub fn main() !void {
                 if (state.keys['E']) state.camera.position.y -= 0.02;
 
                 // calculate camera's look-at
-                state.camera.looking_at = state.camera.position.add(state.camera.direction);
-                
+                state.camera.looking_at = state.camera.position.add(state.camera.direction);                
                 state.view_matrix = M44.lookat_right_handed(state.camera.position, state.camera.looking_at, state.camera.up);
                 state.viewport_matrix = M44.viewport(0, 0, state.w, state.h, 255);
                 state.projection_matrix = M44.projection(-1 / state.camera.position.substract(state.camera.looking_at).magnitude());
@@ -1666,17 +1667,19 @@ pub fn main() !void {
                 const horizontally_spinning_position = Vector3f { .x = std.math.cos(@as(f32, @floatCast(state.time)) / 2000), .y = 0, .z = std.math.sin(@as(f32, @floatCast(state.time)) / 2000) };
                 
                 // comptime pixel_type: type, buffer: Buffer2D(pixel_type), a: Vector2i, b: Vector2i, color: pixel_type
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red); 
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 50 }, green);
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 50, .y = 100 }, blue);
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 1, .y = 100 }, white);
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 100 }, turquoise);
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 1 }, red); 
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 50 }, green);
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 50, .y = 100 }, blue);
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 1, .y = 100 }, white);
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 100 }, turquoise);
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 70, .y = 10 }, Vector2i { .x = 70, .y = 10 }, white);
+                if (false) {
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red);
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 50 }, green);
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 50, .y = 100 }, blue);
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 1, .y = 100 }, white);
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 100 }, turquoise);
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 1 }, red); 
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 50 }, green);
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 50, .y = 100 }, blue);
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 1, .y = 100 }, white);
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 100 }, turquoise);
+                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 70, .y = 10 }, Vector2i { .x = 70, .y = 10 }, white);
+                }
 
                 // TODO I think windows is rendering upside down, (or me, lol) so invert it
                 
@@ -1690,11 +1693,13 @@ pub fn main() !void {
                     .texture_height = texture_height,
                     .viewport_matrix = state.viewport_matrix,
                     .projection_matrix = state.projection_matrix,
-                    .view_model_matrix = state.view_matrix.multiply(M44.translation(Vector3f { .x = 0, .y = 0, .z = -1 }).multiply(M44.scale(1))),
+                    .view_model_matrix = state.view_matrix.multiply(
+                        M44.translation(Vector3f { .x = 0.5, .y = 0.5, .z = -3 }).multiply(M44.scale(0.8))
+                    ),
                     .light_source = state.view_matrix.apply_to_point(horizontally_spinning_position),
                 };
                 const number_of_triangles = @divExact(state.vertex_buffer.len, 8*3);
-                GouraudRenderer.render(context, state.vertex_buffer, number_of_triangles);
+                if (true) GouraudRenderer.render(context, state.vertex_buffer, number_of_triangles);
 
                 const context_quad = QuadRendererContext {
                     .pixel_buffer = &state.pixel_buffer,
@@ -1704,7 +1709,10 @@ pub fn main() !void {
                     .texture_height = texture_height,
                     .viewport_matrix = state.viewport_matrix,
                     .projection_matrix = state.projection_matrix,
-                    .view_model_matrix = state.view_matrix.multiply(M44.translation(Vector3f { .x = 0, .y = 0, .z = -3 }).multiply(M44.scale(1))),
+                    .view_model_matrix = state.view_matrix.multiply(
+                        // This is basically the position of the quad
+                        M44.translation(Vector3f { .x = 0.5, .y = 0.5, .z = -1 }).multiply(M44.scale(1))
+                    ),
                 };
                 const quad_vertex_buffer = [_]f32{
                     0, 0, 0, 0, 0,
@@ -1715,6 +1723,8 @@ pub fn main() !void {
                     0, 1, 0, 0, 1,
                 };
                 QuadRenderer.render(context_quad, quad_vertex_buffer[0..quad_vertex_buffer.len], 2);
+                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
+                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
             }
 
             state.running = state.running and !app_close_requested;
