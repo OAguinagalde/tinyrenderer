@@ -2070,10 +2070,8 @@ const QuadRenderer = Shader(
                         in_invariants[2].texture_uv.scale(v)
                     )
                 );
-            std.debug.assert(texture_uv.x>=0 and texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
-            std.debug.assert(texture_uv.y>=0 and texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
-            const texture_u: usize = @intFromFloat(@floor(texture_uv.x));
-            const texture_v: usize = @intFromFloat(@floor(texture_uv.y));
+            const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.x)), 0, context.texture_width-1);
+            const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.y)), 0, context.texture_height-1);
             switch (context.texture) {
                 .rgb => |texture| {
                     const rgb: RGB = texture.get(texture_u, texture_v);
