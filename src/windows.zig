@@ -1368,20 +1368,25 @@ fn line(comptime pixel_type: type, buffer: *Buffer2D(pixel_type), a: Vector2i, b
     const delta_y_abs = std.math.absInt(delta.y) catch unreachable;
 
     if (delta_x_abs == delta_y_abs) {
-        // draw diagonal line
-        var bottom_left = &a;
-        var top_right = &b;
-        if (a.x < b.x and a.y < b.y) {} else {
-            bottom_left = &b;
-            top_right = &a;
+        if (a.y < b.y) { // draw a to b so that memory is modified in the "correct order"
+            const diff: i32 = if (a.x < b.x) 1 else -1;
+            var x = a.x;
+            var y = a.y;
+            while (x != b.x) {
+                buffer.set(@intCast(x), @intCast(y), color);
+                x += diff;
+                y += 1;
+            }
         }
-
-        var x = bottom_left.x;
-        var y = bottom_left.y;
-        while (x != top_right.x) {
-            buffer.set(@intCast(x), @intCast(y), color);
-            x += 1;
-            y += 1;
+        else { // draw b to a so that memory is modified in the "correct order"
+            const diff: i32 = if (a.x < b.x) -1 else 1;
+            var x = b.x;
+            var y = b.y;
+            while (x != a.x) {
+                buffer.set(@intCast(x), @intCast(y), color);
+                x += diff;
+                y += 1;
+            }
         }
         return;
     }
