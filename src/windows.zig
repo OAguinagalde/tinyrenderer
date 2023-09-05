@@ -16,10 +16,10 @@ const win32 = struct {
         a: u8,
         fn scale(self: win32.RGBA, factor: f32) win32.RGBA {
         return win32.RGBA {
-            .r = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.r) * factor))),
-            .g = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.g) * factor))),
-            .b = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.b) * factor))),
-            .a = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.a) * factor))),
+            .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
+            .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
+            .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
+            .a = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.a)) * factor))),
         };
     }
     };
@@ -65,7 +65,7 @@ const Vector2i = struct {
     }
 
     pub fn to_vec2f(self: Vector2i) Vector2f {
-        return Vector2f { .x = @intCast(f32, self.x), .y = @intCast(f32, self.y) };
+        return Vector2f { .x = @intCast(self.x), .y = @intCast(self.y) };
     }
 };
 
@@ -445,11 +445,11 @@ const M44 = struct {
     pub fn viewport(x: i32, y: i32, w: i32, h: i32, depth: i32) M44 {
         var matrix = M44.identity();
 
-        const xf = @intToFloat(f32, x);
-        const yf = @intToFloat(f32, y);
-        const wf = @intToFloat(f32, w);
-        const hf = @intToFloat(f32, h);
-        const depthf = @intToFloat(f32, depth);
+        const xf: f32 = @floatFromInt(x);
+        const yf: f32 = @floatFromInt(y);
+        const wf: f32 = @floatFromInt(w);
+        const hf: f32 = @floatFromInt(h);
+        const depthf: f32 = @floatFromInt(depth);
         
         // 1 0 0 translation_x
         // 0 1 0 translation_y
@@ -505,10 +505,10 @@ const RGBA = extern struct {
     a: u8 align(1),
     fn scale(self: RGBA, factor: f32) RGBA {
         return RGBA {
-            .r = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.r) * factor))),
-            .g = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.g) * factor))),
-            .b = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.b) * factor))),
-            .a = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.a) * factor))),
+            .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
+            .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
+            .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
+            .a = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.a)) * factor))),
         };
     }
     comptime { std.debug.assert(@sizeOf(RGBA) == 4); }
@@ -520,9 +520,9 @@ const RGB = extern struct {
     b: u8 align(1),
     fn scale(self: RGB, factor: f32) RGB {
         return RGB {
-            .r = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.r) * factor))),
-            .g = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.g) * factor))),
-            .b = @floatToInt(u8, std.math.max(0, std.math.min(255, @intToFloat(f32, self.b) * factor))),
+            .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
+            .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
+            .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
         };
     }
     comptime { std.debug.assert(@sizeOf(RGB) == 3); }
@@ -820,18 +820,18 @@ const TGA = struct {
         /// 1.  For the Targa 24, it should be 0.  For
         /// Targa 32, it should be 8.
         pub fn get_attribute_bits_per_pixel(self: Self) u4 {
-            return @intCast(u4, self.the_byte >> 4);
+            return @intCast(self.the_byte >> 4);
         }
 
         /// must be 0
         pub fn get_reserved(self: Self) u1 {
-            return @intCast(u1, (self.the_byte | 0b00001000) >> 3);
+            return @intCast((self.the_byte | 0b00001000) >> 3);
         }
 
         /// 0 = Origin in lower left-hand corner
         /// 1 = Origin in upper left-hand corner
         pub fn get_screen_origin_bit(self: Self) u1 {
-            return @intCast(u1, (self.the_byte | 0b00000100) >> 2);
+            return @intCast((self.the_byte | 0b00000100) >> 2);
         }
 
         /// 00 = non-interleaved.                        
@@ -839,7 +839,7 @@ const TGA = struct {
         /// 10 = four way interleaving.                  
         /// 11 = reserved.                               
         pub fn get_interleaving(self: Self) u2 {
-            return @intCast(u2, self.the_byte << 6);
+            return @intCast(self.the_byte << 6);
         }
 
     };
@@ -1170,13 +1170,13 @@ const TGA = struct {
         
         { // validate the file
             // only care about RGB and RGBA images
-            switch (@enumToInt(header.image_spec.bits_per_pixel)) {
+            switch (@intFromEnum(header.image_spec.bits_per_pixel)) {
                 24, 32 => {},
                 else => return error.FileNotSupported,
             }
             // only care about non color mapped, non compressed files
             // 2023/06/29 and now also run length encoded rgb images!
-            switch (@enumToInt(header.data_type)) {
+            switch (@intFromEnum(header.data_type)) {
                 2, 10 => {},
                 else => return error.FileNotSupported,
             }
@@ -1188,11 +1188,11 @@ const TGA = struct {
             // this shouldn't be a thing, probably...
             if (header.image_spec.width <= 0 or header.image_spec.height <= 0) return error.MalformedTgaFile;
         }
-        const width = @intCast(usize, header.image_spec.width);
-        const height = @intCast(usize, header.image_spec.height);
+        const width: usize = @intCast(header.image_spec.width);
+        const height: usize = @intCast(header.image_spec.height);
 
         // If there is a comment/id or whatever, skip it
-        const id_length = @intCast(usize, header.id_length);
+        const id_length: usize = @intCast(header.id_length);
         if (id_length > 0) {
             file.seekTo(@sizeOf(Header) + id_length) catch return error.SeekTo;
         }
@@ -1236,7 +1236,7 @@ const TGA = struct {
                 }
                 
                 // Allocate anough memory to store the pixel data
-                const pixel_data_size = width * height * @intCast(usize, @divExact(@enumToInt(header.image_spec.bits_per_pixel), 8));
+                const pixel_data_size = width * height * @as(usize, @intCast(@divExact(@intFromEnum(header.image_spec.bits_per_pixel), 8)));
                 var buffer_pixel_data: []u8 = allocator.alloc(u8, pixel_data_size) catch return error.OutOfMemory;
 
                 var pixel_packet_header: [1]u8 = undefined;
@@ -1245,7 +1245,7 @@ const TGA = struct {
                     const read_size = file.read(&pixel_packet_header) catch return error.ReadPixelDataHeader;
                     if (read_size != 1) return error.ReadPixelDataHeaderReadSize;
                     const is_run_length_packet = (pixel_packet_header[0] >> 7) == 1;
-                    const count: usize = @intCast(usize, pixel_packet_header[0] & 0b01111111) + 1;
+                    const count: usize = @as(usize, @intCast(pixel_packet_header[0] & 0b01111111)) + 1;
                     std.debug.assert(count <= 128);
                     if (is_run_length_packet) {
                         switch (header.image_spec.bits_per_pixel) {
@@ -1303,7 +1303,7 @@ const TGA = struct {
             },
             DataTypeCode.UncompressedRgb => {
                 // Only thing left is to read the pixel data
-                const pixel_data_size = width * height * @intCast(usize, @divExact(@enumToInt(header.image_spec.bits_per_pixel), 8));
+                const pixel_data_size = width * height * @as(usize, @intCast(@divExact(@intFromEnum(header.image_spec.bits_per_pixel), 8)));
                 var buffer_pixel_data: []u8 = allocator.alloc(u8, pixel_data_size) catch return error.OutOfMemory;
                 // allocate and let the caller handle its lifetime
                 {
@@ -1325,7 +1325,7 @@ fn line(comptime pixel_type: type, buffer: *Buffer2D(pixel_type), a: Vector2i, b
     
     if (a.x == b.x and a.y == b.y) {
         // a point
-        buffer.set(@intCast(usize, a.x), @intCast(usize, a.y), color);
+        buffer.set(@intCast(a.x), @intCast(a.y), color);
         return;
     }
 
@@ -1343,7 +1343,7 @@ fn line(comptime pixel_type: type, buffer: *Buffer2D(pixel_type), a: Vector2i, b
         const x = a.x;
         var y = bottom.y;
         while (y != top.y + 1) : (y += 1) {
-            buffer.set(@intCast(usize, x), @intCast(usize, y), color);
+            buffer.set(@intCast(x), @intCast(y), color);
         }
         return;
     }
@@ -1359,7 +1359,7 @@ fn line(comptime pixel_type: type, buffer: *Buffer2D(pixel_type), a: Vector2i, b
         const y = a.y;
         var x = left.x;
         while (x != right.x + 1) : (x += 1) {
-            buffer.set(@intCast(usize, x), @intCast(usize, y), color);
+            buffer.set(@intCast(x), @intCast(y), color);
         }
         return;
     }
@@ -1379,7 +1379,7 @@ fn line(comptime pixel_type: type, buffer: *Buffer2D(pixel_type), a: Vector2i, b
         var x = bottom_left.x;
         var y = bottom_left.y;
         while (x != top_right.x) {
-            buffer.set(@intCast(usize, x), @intCast(usize, y), color);
+            buffer.set(@intCast(x), @intCast(y), color);
             x += 1;
             y += 1;
         }
@@ -1397,14 +1397,14 @@ fn line(comptime pixel_type: type, buffer: *Buffer2D(pixel_type), a: Vector2i, b
             right = &a;
         }
 
-        const increment = 1 / @intToFloat(f32, delta_x_abs);
+        const increment = 1 / @as(f32, @floatFromInt(delta_x_abs));
         var percentage_of_line_done: f32 = 0;
         
         var x = left.x;
         while (x <= right.x) : (x += 1) {
             // linear interpolation to figure out `y`
-            const y = left.y + @floatToInt(i32, @intToFloat(f32, right.y - left.y) * percentage_of_line_done);
-            buffer.set(@intCast(usize, x), @intCast(usize, y), color);
+            const y = left.y + @as(i32, @intFromFloat(@as(f32, @floatFromInt(right.y - left.y)) * percentage_of_line_done));
+            buffer.set(@intCast(x), @intCast(y), color);
             percentage_of_line_done += increment;
         }
     }
@@ -1419,13 +1419,13 @@ fn line(comptime pixel_type: type, buffer: *Buffer2D(pixel_type), a: Vector2i, b
             bottom = &a;
         }
 
-        const increment = 1 / @intToFloat(f32, delta_y_abs);
+        const increment = 1 / @as(f32, @floatFromInt(delta_y_abs));
         var percentage_of_line_done: f32 = 0;
 
         var y = top.y;
         while (y <= bottom.y) : (y += 1) {
-            const x = top.x + @floatToInt(i32, @intToFloat(f32, bottom.x - top.x) * percentage_of_line_done);
-            buffer.set(@intCast(usize, x), @intCast(usize, y), color);
+            const x = top.x + @as(i32, @intFromFloat(@as(f32, @floatFromInt(bottom.x - top.x)) * percentage_of_line_done));
+            buffer.set(@intCast(x), @intCast(y), color);
             percentage_of_line_done += increment;
         }
 
@@ -1480,7 +1480,7 @@ pub fn main() !void {
     const instance_handle = win32.GetModuleHandleW(null);
     const window_class_name = win32.L("doesntmatter");
     const window_class = win32.WNDCLASSW {
-        .style = @intToEnum(win32.WNDCLASS_STYLES, 0),
+        .style = @enumFromInt(0),
         .lpfnWndProc = window_callback,
         .cbClsExtra = 0,
         .cbWndExtra = 0,
@@ -1504,18 +1504,18 @@ pub fn main() !void {
     state.render_target.bmiHeader.biBitCount = 32;
     state.render_target.bmiHeader.biCompression = win32.BI_RGB;
 
-    state.pixel_buffer.data = try allocator.alloc(win32.RGBA, @intCast(usize, state.w * state.h));
-    state.pixel_buffer.width = @intCast(usize, state.w);
+    state.pixel_buffer.data = try allocator.alloc(win32.RGBA, @intCast(state.w * state.h));
+    state.pixel_buffer.width = @intCast(state.w);
     defer allocator.free(state.pixel_buffer.data);
 
     _ = win32.RegisterClassW(&window_class);
     defer _ = win32.UnregisterClassW(window_class_name, instance_handle);
     
     const window_handle_maybe = win32.CreateWindowExW(
-        @intToEnum(win32.WINDOW_EX_STYLE, 0),
+        @enumFromInt(0),
         window_class_name,
         win32.L("win32 zig window"),
-        @intToEnum(win32.WINDOW_STYLE, @enumToInt(win32.WS_POPUP) | @enumToInt(win32.WS_OVERLAPPED) | @enumToInt(win32.WS_THICKFRAME) | @enumToInt(win32.WS_CAPTION) | @enumToInt(win32.WS_SYSMENU) | @enumToInt(win32.WS_MINIMIZEBOX) | @enumToInt(win32.WS_MAXIMIZEBOX)),
+        @enumFromInt(@intFromEnum(win32.WS_POPUP) | @intFromEnum(win32.WS_OVERLAPPED) | @intFromEnum(win32.WS_THICKFRAME) | @intFromEnum(win32.WS_CAPTION) | @intFromEnum(win32.WS_SYSMENU) | @intFromEnum(win32.WS_MINIMIZEBOX) | @intFromEnum(win32.WS_MAXIMIZEBOX)),
         state.x, state.y, state.w, state.h,
         null, null, instance_handle, null
     );
@@ -1526,7 +1526,7 @@ pub fn main() !void {
 
         { // Initialize the application state
             // Create the z-buffer
-            state.depth_buffer = Buffer2D(f32) { .data = try allocator.alloc(f32, @intCast(usize, state.w * state.h)), .width = @intCast(usize, state.w) };
+            state.depth_buffer = Buffer2D(f32) { .data = try allocator.alloc(f32, @intCast(state.w * state.h)), .width = @intCast(state.w) };
             
             // Load the diffuse texture data
             state.texture = TGA.from_file(allocator, "res/african_head_diffuse.tga")
@@ -1573,7 +1573,7 @@ pub fn main() !void {
                 var counter_difference = new_counter.QuadPart - cpu_counter;
                 // TODO sometimes it comes out as 0????? not sure why but its not important right now
                 if (counter_difference == 0) counter_difference = 1;
-                ms = 1000.0 * @intToFloat(f64, counter_difference) / @intToFloat(f64, cpu_frequency_seconds);
+                ms = 1000.0 * @as(f64, @floatFromInt(counter_difference)) / @as(f64, @floatFromInt(cpu_frequency_seconds));
                 fps = @divFloor(cpu_frequency_seconds, counter_difference);
                 cpu_counter = new_counter.QuadPart;
             }
@@ -1602,8 +1602,8 @@ pub fn main() !void {
             var mouse_current: win32.POINT = undefined;
             _ = win32.GetCursorPos(&mouse_current);
             const factor: f32 = 0.02;
-            const mouse_dx = @intToFloat(f32, mouse_current.x - mouse_previous.x) * factor;
-            const mouse_dy = @intToFloat(f32, mouse_current.y - mouse_previous.y) * factor;
+            const mouse_dx: f32 = @as(f32, @floatFromInt(mouse_current.x - mouse_previous.x)) * factor;
+            const mouse_dy: f32 = @as(f32, @floatFromInt(mouse_current.y - mouse_previous.y)) * factor;
             state.mouse.x = mouse_current.x;
             state.mouse.y = mouse_current.y;
 
@@ -1653,7 +1653,7 @@ pub fn main() !void {
                 if (state.keys['V']) state.viewport_matrix = M44.identity();
 
                 _ = counted_since_start;
-                const horizontally_spinning_position = Vector3f { .x = std.math.cos(@floatCast(f32, state.time) / 2000), .y = 0, .z = std.math.sin(@floatCast(f32, state.time) / 2000) };
+                const horizontally_spinning_position = Vector3f { .x = std.math.cos(@as(f32, @floatCast(state.time)) / 2000), .y = 0, .z = std.math.sin(@as(f32, @floatCast(state.time)) / 2000) };
                 
                 // comptime pixel_type: type, buffer: Buffer2D(pixel_type), a: Vector2i, b: Vector2i, color: pixel_type
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red); 
@@ -1740,9 +1740,9 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
 
         win32.WM_SYSKEYDOWN,
         win32.WM_KEYDOWN => {
-            if (w_param == @enumToInt(win32.VK_ESCAPE)) win32.PostQuitMessage(0)
+            if (w_param == @intFromEnum(win32.VK_ESCAPE)) win32.PostQuitMessage(0)
             else if (w_param < 256 and w_param >= 0) {
-                const key = @intCast(u8, w_param);
+                const key: u8 = @intCast(w_param);
                 state.keys[key] = true;
                 std.debug.print("down {c}\n", .{key});
             }
@@ -1750,7 +1750,7 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
 
         win32.WM_KEYUP => {
             if (w_param < 256 and w_param >= 0) {
-                const key = @intCast(u8, w_param);
+                const key: u8 = @intCast(w_param);
                 state.keys[key] = false;
                 std.debug.print("up   {c}\n", .{key});
             }
@@ -1759,7 +1759,7 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
         win32.WM_SIZE => {
             var rect: win32.RECT = undefined;
             _ = win32.GetClientRect(window_handle, &rect);
-            _ = win32.InvalidateRect(window_handle, &rect, @enumToInt(win32.True));
+            _ = win32.InvalidateRect(window_handle, &rect, @intFromEnum(win32.True));
         },
 
         win32.WM_PAINT => {
@@ -1820,10 +1820,10 @@ fn Shader(
                 const c = &tri[2];
 
                 // calculate the bounding of the triangle's projection on the screen
-                const left: i32 = @floatToInt(i32, std.math.min(a.x, std.math.min(b.x, c.x)));
-                const top: i32 = @floatToInt(i32, std.math.min(a.y, std.math.min(b.y, c.y)));
-                const right: i32 = @floatToInt(i32, std.math.max(a.x, std.math.max(b.x, c.x)));
-                const bottom: i32 = @floatToInt(i32, std.math.max(a.y, std.math.max(b.y, c.y)));
+                const left: i32 = @intFromFloat(@min(a.x, @min(b.x, c.x)));
+                const top: i32 = @intFromFloat(@min(a.y, @min(b.y, c.y)));
+                const right: i32 = @intFromFloat(@max(a.x, @max(b.x, c.x)));
+                const bottom: i32 = @intFromFloat(@max(a.y, @max(b.y, c.y)));
 
                 // if the triangle is not fully inside the buffer, discard it straight away
                 // TODO reintroduce this
@@ -1842,7 +1842,7 @@ fn Shader(
                     while (x <= right) : (x += 1) {
                         
                         // barycentric coordinates of the current pixel
-                        const pixel = Vector3f { .x = @intToFloat(f32, x), .y = @intToFloat(f32, y), .z = 0 };
+                        const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
 
                         const ab = b.substract(a.*);
                         const ac = c.substract(a.*);
@@ -1919,9 +1919,9 @@ const GouraudRenderer = Shader(
             const screen_position = context.viewport_matrix.apply_to_point(clip_position);
             
             const light_direction = context.light_source.substract(world_position).normalized();
-            out_invariant.light_intensity = std.math.min(1, std.math.max(0, normal.normalized().dot(light_direction)));
+            out_invariant.light_intensity = @min(1, @max(0, normal.normalized().dot(light_direction)));
 
-            out_invariant.texture_uv = Vector2f { .x = uv.x * @intToFloat(f32, context.texture_width), .y = uv.y * @intToFloat(f32, context.texture_height) };
+            out_invariant.texture_uv = Vector2f { .x = uv.x * @as(f32, @floatFromInt(context.texture_width)), .y = uv.y * @as(f32, @floatFromInt(context.texture_height)) };
             out_invariant.vertex = location;
             
             return screen_position;
@@ -1943,8 +1943,8 @@ const GouraudRenderer = Shader(
 
             // std.debug.assert(z>=0 and z<1);
 
-            if (context.depth_buffer.get(@intCast(usize, x), @intCast(usize, y)) >= z) return;
-            context.depth_buffer.set(@intCast(usize, x), @intCast(usize, y), z);
+            if (context.depth_buffer.get(@intCast(x), @intCast(y)) >= z) return;
+            context.depth_buffer.set(@intCast(x), @intCast(y), z);
 
             // interpolate the light intensity for the current pixel
             var light_intensity: f32 = 0;
@@ -1966,12 +1966,12 @@ const GouraudRenderer = Shader(
             // std.debug.print("1 {?}\n", .{in_invariants[1].texture_uv});
             // std.debug.print("2 {?}\n", .{in_invariants[2].texture_uv});
 
-            std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<=@intToFloat(f32, context.texture_width));
-            std.debug.assert(in_invariants[0].texture_uv.y>=0 and in_invariants[0].texture_uv.y<=@intToFloat(f32, context.texture_height));
-            std.debug.assert(in_invariants[1].texture_uv.x>=0 and in_invariants[1].texture_uv.x<=@intToFloat(f32, context.texture_width));
-            std.debug.assert(in_invariants[1].texture_uv.y>=0 and in_invariants[1].texture_uv.y<=@intToFloat(f32, context.texture_height));
-            std.debug.assert(in_invariants[2].texture_uv.x>=0 and in_invariants[2].texture_uv.x<=@intToFloat(f32, context.texture_width));
-            std.debug.assert(in_invariants[2].texture_uv.y>=0 and in_invariants[2].texture_uv.y<=@intToFloat(f32, context.texture_height));
+            std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
+            std.debug.assert(in_invariants[0].texture_uv.y>=0 and in_invariants[0].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
+            std.debug.assert(in_invariants[1].texture_uv.x>=0 and in_invariants[1].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
+            std.debug.assert(in_invariants[1].texture_uv.y>=0 and in_invariants[1].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
+            std.debug.assert(in_invariants[2].texture_uv.x>=0 and in_invariants[2].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
+            std.debug.assert(in_invariants[2].texture_uv.y>=0 and in_invariants[2].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
 
             // interpolate texture uvs for the current pixel
             const texture_uv =
@@ -1981,20 +1981,20 @@ const GouraudRenderer = Shader(
                     )
                 );
 
-            std.debug.assert(texture_uv.x>=0 and texture_uv.x<=@intToFloat(f32, context.texture_width));
-            std.debug.assert(texture_uv.y>=0 and texture_uv.y<=@intToFloat(f32, context.texture_height));
+            std.debug.assert(texture_uv.x>=0 and texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
+            std.debug.assert(texture_uv.y>=0 and texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
 
-            const texture_u = @floatToInt(usize, texture_uv.x);
-            const texture_v = @floatToInt(usize, texture_uv.y);
+            const texture_u: usize = @intFromFloat(texture_uv.x);
+            const texture_v: usize = @intFromFloat(texture_uv.y);
 
             switch (context.texture) {
                 .rgb => |texture| {
                     const rgb: RGB = texture.get(texture_u, texture_v).scale(light_intensity);
-                    context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgb(rgb.r, rgb.g, rgb.b));
+                    context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgb(rgb.r, rgb.g, rgb.b));
                 },
                 .rgba =>  |texture| {
                     const rgba: RGBA = texture.get(texture_u, texture_v).scale(light_intensity);
-                    context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
+                    context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
                 },
                 else => unreachable
             }
@@ -2033,7 +2033,7 @@ const QuadRenderer = Shader(
             // if the triangle is not fully visible, skip it
             if (clip_position.x >= 1 or clip_position.x < -1 or clip_position.y >= 1 or clip_position.y < -1 or clip_position.z >= 1 or clip_position.z < -1) return null;
             const screen_position = context.viewport_matrix.apply_to_point(clip_position);
-            out_invariant.texture_uv = Vector2f { .x = uv.x * @intToFloat(f32, context.texture_width), .y = uv.y * @intToFloat(f32, context.texture_height) };
+            out_invariant.texture_uv = Vector2f { .x = uv.x * @as(f32, @floatFromInt(context.texture_width)), .y = uv.y * @as(f32, @floatFromInt(context.texture_height)) };
             out_invariant.vertex = location;
             return screen_position;
         }
@@ -2046,32 +2046,32 @@ const QuadRenderer = Shader(
             std.debug.assert(v>=0 and v<1);
             std.debug.assert(w>=0 and w<1);
             const z = in_invariants[0].vertex.z * w + in_invariants[1].vertex.z * u + in_invariants[2].vertex.z * v;
-            if (context.depth_buffer.get(@intCast(usize, x), @intCast(usize, y)) >= z) return;
-            context.depth_buffer.set(@intCast(usize, x), @intCast(usize, y), z);
-            std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<=@intToFloat(f32, context.texture_width));
-            std.debug.assert(in_invariants[0].texture_uv.y>=0 and in_invariants[0].texture_uv.y<=@intToFloat(f32, context.texture_height));
-            std.debug.assert(in_invariants[1].texture_uv.x>=0 and in_invariants[1].texture_uv.x<=@intToFloat(f32, context.texture_width));
-            std.debug.assert(in_invariants[1].texture_uv.y>=0 and in_invariants[1].texture_uv.y<=@intToFloat(f32, context.texture_height));
-            std.debug.assert(in_invariants[2].texture_uv.x>=0 and in_invariants[2].texture_uv.x<=@intToFloat(f32, context.texture_width));
-            std.debug.assert(in_invariants[2].texture_uv.y>=0 and in_invariants[2].texture_uv.y<=@intToFloat(f32, context.texture_height));
+            if (context.depth_buffer.get(@intCast(x), @intCast(y)) >= z) return;
+            context.depth_buffer.set(@intCast(x), @intCast(y), z);
+            std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
+            std.debug.assert(in_invariants[0].texture_uv.y>=0 and in_invariants[0].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
+            std.debug.assert(in_invariants[1].texture_uv.x>=0 and in_invariants[1].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
+            std.debug.assert(in_invariants[1].texture_uv.y>=0 and in_invariants[1].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
+            std.debug.assert(in_invariants[2].texture_uv.x>=0 and in_invariants[2].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
+            std.debug.assert(in_invariants[2].texture_uv.y>=0 and in_invariants[2].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
             const texture_uv =
                 in_invariants[0].texture_uv.scale(w).add(
                     in_invariants[1].texture_uv.scale(u).add(
                         in_invariants[2].texture_uv.scale(v)
                     )
                 );
-            std.debug.assert(texture_uv.x>=0 and texture_uv.x<=@intToFloat(f32, context.texture_width));
-            std.debug.assert(texture_uv.y>=0 and texture_uv.y<=@intToFloat(f32, context.texture_height));
-            const texture_u = @floatToInt(usize, @floor(texture_uv.x));
-            const texture_v = @floatToInt(usize, @floor(texture_uv.y));
+            std.debug.assert(texture_uv.x>=0 and texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
+            std.debug.assert(texture_uv.y>=0 and texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
+            const texture_u: usize = @intFromFloat(@floor(texture_uv.x));
+            const texture_v: usize = @intFromFloat(@floor(texture_uv.y));
             switch (context.texture) {
                 .rgb => |texture| {
                     const rgb: RGB = texture.get(texture_u, texture_v);
-                    context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgb(rgb.r, rgb.g, rgb.b));
+                    context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgb(rgb.r, rgb.g, rgb.b));
                 },
                 .rgba =>  |texture| {
                     const rgba: RGBA = texture.get(texture_u, texture_v);
-                    context.pixel_buffer.set(@intCast(usize, x), @intCast(usize, y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
+                    context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
                 },
                 else => unreachable
             }

@@ -15,6 +15,7 @@ pub fn build(b: *Builder) !void {
     b.installArtifact(exe);
 
     const win32 = b.createModule(.{
+        // https://github.com/marlersoft/zigwin32 - e61d5e9 - 21.0.3-preview
         .source_file = .{ .path = "../zigwin32/win32.zig" },
     });
     exe.addModule("win32", win32);
