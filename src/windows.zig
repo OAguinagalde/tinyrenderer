@@ -1900,8 +1900,8 @@ const GouraudShaderContext = struct {
 
 const GouraudShaderInvariant = struct {
     light_intensity: f32,
+    depth: f32,
     texture_uv: Vector2f,
-    vertex: Vector3f
 };
 
 const GouraudRenderer = Shader(
@@ -1932,7 +1932,7 @@ const GouraudRenderer = Shader(
             out_invariant.light_intensity = @min(1, @max(0, normal.normalized().dot(light_direction)));
 
             out_invariant.texture_uv = Vector2f { .x = uv.x * @as(f32, @floatFromInt(context.texture_width)), .y = uv.y * @as(f32, @floatFromInt(context.texture_height)) };
-            out_invariant.vertex = location;
+            out_invariant.depth = screen_position.z;
             
             return screen_position;
         }
@@ -1949,7 +1949,7 @@ const GouraudRenderer = Shader(
             std.debug.assert(in_invariants[1].light_intensity>=0 and in_invariants[1].light_intensity<1);
             std.debug.assert(in_invariants[2].light_intensity>=0 and in_invariants[2].light_intensity<1);
 
-            const z = in_invariants[0].vertex.z * w + in_invariants[1].vertex.z * u + in_invariants[2].vertex.z * v;
+            const z = in_invariants[0].depth * w + in_invariants[1].depth * u + in_invariants[2].depth * v;
 
             // std.debug.assert(z>=0 and z<1);
 
@@ -2026,7 +2026,7 @@ const QuadRendererContext = struct {
 
 const QuadRendererInvariant = struct {
     texture_uv: Vector2f,
-    vertex: Vector3f
+    depth: f32
 };
 
 const QuadRenderer = Shader(
@@ -2044,7 +2044,7 @@ const QuadRenderer = Shader(
             if (clip_position.x >= 1 or clip_position.x < -1 or clip_position.y >= 1 or clip_position.y < -1 or clip_position.z >= 1 or clip_position.z < -1) return null;
             const screen_position = context.viewport_matrix.apply_to_point(clip_position);
             out_invariant.texture_uv = Vector2f { .x = uv.x * @as(f32, @floatFromInt(context.texture_width)), .y = uv.y * @as(f32, @floatFromInt(context.texture_height)) };
-            out_invariant.vertex = location;
+            out_invariant.depth = screen_position.z;
             return screen_position;
         }
     }.vertex_shader,
@@ -2055,7 +2055,7 @@ const QuadRenderer = Shader(
             std.debug.assert(u>=0 and u<1);
             std.debug.assert(v>=0 and v<1);
             std.debug.assert(w>=0 and w<1);
-            const z = in_invariants[0].vertex.z * w + in_invariants[1].vertex.z * u + in_invariants[2].vertex.z * v;
+            const z = in_invariants[0].depth * w + in_invariants[1].depth * u + in_invariants[2].depth * v;
             if (context.depth_buffer.get(@intCast(x), @intCast(y)) >= z) return;
             context.depth_buffer.set(@intCast(x), @intCast(y), z);
             std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
