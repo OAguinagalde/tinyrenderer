@@ -177,6 +177,22 @@ const Vector4f = struct {
     pub fn scale(self: Vector4f, factor: f32) Vector4f {
         return Vector4f { .x = self.x * factor, .y = self.y * factor, .z = self.z * factor, .w = self.w * factor };
     }
+
+    pub fn discard_w(self: Vector4f) Vector3f {
+        return Vector3f {
+            .x = self.x,
+            .y = self.y,
+            .z = self.z,
+        };
+    }
+
+    pub fn perspective_division(self: Vector4f) Vector3f {
+        return Vector3f {
+            .x = self.x / self.w,
+            .y = self.y / self.w,
+            .z = self.z / self.w,
+        };
+    }
 };
 
 /// column major 4x4 matrix
@@ -196,6 +212,25 @@ const M44 = struct {
         return result;
     }
 
+    pub fn apply_to_vec3(self: M44, point: Vector3f) Vector4f {
+        const point4d = Vector4f { .x = point.x, .y = point.y, .z = point.z, .w = 1 };
+        var point_transformed: Vector4f = undefined;
+        point_transformed.x = self.data[0] * point4d.x + self.data[4] * point4d.y + self.data[8] * point4d.z + self.data[12] * point4d.w;
+        point_transformed.y = self.data[1] * point4d.x + self.data[5] * point4d.y + self.data[9] * point4d.z + self.data[13] * point4d.w;
+        point_transformed.z = self.data[2] * point4d.x + self.data[6] * point4d.y + self.data[10] * point4d.z + self.data[14] * point4d.w;
+        point_transformed.w = self.data[3] * point4d.x + self.data[7] * point4d.y + self.data[11] * point4d.z + self.data[15] * point4d.w;
+        return point_transformed;
+    }
+
+    pub fn apply_to_vec4(self: M44, point4d: Vector4f) Vector4f {
+        var point_transformed: Vector4f = undefined;
+        point_transformed.x = self.data[0] * point4d.x + self.data[4] * point4d.y + self.data[8] * point4d.z + self.data[12] * point4d.w;
+        point_transformed.y = self.data[1] * point4d.x + self.data[5] * point4d.y + self.data[9] * point4d.z + self.data[13] * point4d.w;
+        point_transformed.z = self.data[2] * point4d.x + self.data[6] * point4d.y + self.data[10] * point4d.z + self.data[14] * point4d.w;
+        point_transformed.w = self.data[3] * point4d.x + self.data[7] * point4d.y + self.data[11] * point4d.z + self.data[15] * point4d.w;
+        return point_transformed;
+    }
+    
     pub fn apply_to_point(self: M44, point: Vector3f) Vector3f {
         // Embed the `point` into "4D" by augmenting it with 1, so that we can work with it.
         // 
@@ -278,6 +313,9 @@ const M44 = struct {
         return result;
     }
     
+    /// The camera is looking towards -Z.
+    /// The right direction is in the +X direction.
+    /// The up direction is in the +Y direction.
     pub fn lookat_right_handed(camera_location: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
         
         { // Some notes and articles, this things can be confusing lol
@@ -400,33 +438,59 @@ const M44 = struct {
         // just in case, normalize the up direction
         const normalized_up = up.normalized();
         
-        // here z is technically -z
-        const z: Vector3f = camera_location.substract(point_looked_at).normalized();
-        const x: Vector3f = normalized_up.cross_product(z).normalized();
-        const y: Vector3f = z.cross_product(x).normalized();
+        // the camera looks towards the negative z axes
+        // the z axes got the direction `point looked at ------> camera location`
+        // 
+        //     The camera is looking towards -Z.
+        //     The right direction is in the +X direction.
+        //     The up direction is in the +Y direction.
+        // 
+        const new_forward: Vector3f = camera_location.substract(point_looked_at).normalized();
+        const new_right: Vector3f = normalized_up.cross_product(new_forward).normalized();
+        const new_up: Vector3f = new_forward.cross_product(new_right).normalized();
 
-        // AKA change of basis matrix
-        var rotation_matrix = M44.identity();
-        rotation_matrix.data[0] = x.x;
-        rotation_matrix.data[4] = x.y;
-        rotation_matrix.data[8] = x.z;
+        // Create a change of basis matrix, in which, the camera position,
+        // the points its looking at and the up vector form the three axes.
+        // > In essence, a change of basis matrix is a transformation that allows us to express the same
+        // > vector or set of coordinates in a different coordinate system or basis, providing a new
+        // > perspective or representation while preserving the underlying geometric relationships.
+        var change_of_basis_matrix = M44.identity();
+        change_of_basis_matrix.data[0] = new_right.x;
+        change_of_basis_matrix.data[4] = new_right.y;
+        change_of_basis_matrix.data[8] = new_right.z;
 
-        rotation_matrix.data[1] = y.x;
-        rotation_matrix.data[5] = y.y;
-        rotation_matrix.data[9] = y.z;
+        change_of_basis_matrix.data[1] = new_up.x;
+        change_of_basis_matrix.data[5] = new_up.y;
+        change_of_basis_matrix.data[9] = new_up.z;
 
-        rotation_matrix.data[2] = z.x;
-        rotation_matrix.data[6] = z.y;
-        rotation_matrix.data[10] = z.z;
+        change_of_basis_matrix.data[2] = new_forward.x;
+        change_of_basis_matrix.data[6] = new_forward.y;
+        change_of_basis_matrix.data[10] = new_forward.z;
 
         // translate the world to the location of the camera and then rotate it
         // The order of this multiplication is relevant!
         // 
         //     rotation_matrix * translation_matrix(-camera_location)
         // 
-        return rotation_matrix.multiply(M44.translation(camera_location.scale(-1)));
+        return change_of_basis_matrix.multiply(M44.translation(camera_location.scale(-1)));
     }
-    
+
+    // the resulting matrix will map a point to NDC based on the input parameters
+    pub fn perspective_projection(fovY: f32, aspectRatio: f32, near: f32, far: f32) M44 {
+        var result = M44.identity();
+        // Calculate the tangent of half the vertical field of view angle (fovY)
+        const tanHalfFovY: f32 = std.math.tan(fovY/2);
+        // Calculate the scaling factors for X and Y axes
+        result.data[0] = 1 / (aspectRatio * tanHalfFovY);
+        result.data[5] = 1 / tanHalfFovY;
+        // Calculate the depth-related components
+        result.data[10] = (far + near) / (far - near);     // Depth scaling and translation
+        result.data[11] = -1;                              // Depth scaling
+        result.data[14] = (2 * far * near) / (far - near); // Depth translation
+        return result;
+    }
+
+
     /// This should probably go something like...
     /// 
     ///     float c = -1 / (camera.looking_at - camera.position).norm();
@@ -470,6 +534,10 @@ const M44 = struct {
         // 0       0       0       1
         
         const scale_x: f32 = wf / 2;
+        // This coulb be negated so that the top left corner is 0,0
+        // If so, when mapping from normalized device coordinates (NDC) to screen space, thing will be inverted so that top left is 0,0
+        // 
+        //     const scale_y: f32 = -hf / 2;
         const scale_y: f32 = hf / 2;
         const scale_z: f32 = depthf / 2;
 
@@ -1543,7 +1611,9 @@ pub fn main() !void {
                 catch |err| { std.debug.print("error reading `res/african_head.obj` {?}", .{err}); return; };
 
             // Set the camera
-            state.camera.position = Vector3f { .x = 1, .y = 1, .z = 2 };
+            // Since I have decided that the camera will look towards -z (this happens in the lookat matrix generation)
+            // meaning that the camera starts at 0, 0, 1, Looking backwards (direction is 0, 0, -1), and up is up
+            state.camera.position = Vector3f { .x = 0, .y = 0, .z = 1 };
             state.camera.up = Vector3f { .x = 0, .y = 1, .z = 0 };
             state.camera.direction = Vector3f { .x = 0, .y = 0, .z = -1 };
 
@@ -1629,19 +1699,20 @@ pub fn main() !void {
                 const turquoise = win32.rgb(0, 255, 255);
                 
                 // Clear the screen and the zbuffer
-                for (state.pixel_buffer.data) |*pixel| { pixel.* = win32.rgb(0, 0, 0); }
-                for (state.depth_buffer.data) |*value| { value.* = -9999; }
+                for (state.pixel_buffer.data) |*pixel| { pixel.* = win32.rgb(20, 6, 27); }
+                for (state.depth_buffer.data) |*value| { value.* = -999999; }
 
                 if (state.keys['T']) state.time += ms;
 
                 // move camera direction based on mouse movement
+                const mouse_sensitivity = 0.60;
                 const up = Vector3f {.x = 0, .y = 1, .z = 0 };
                 const real_right = state.camera.direction.cross_product(up).normalized();
                 const real_up = state.camera.direction.cross_product(real_right).normalized().scale(-1);
                 if (mouse_dx != 0 or mouse_dy != 0) {
-                    state.camera.direction = state.camera.direction.add(real_right.scale(mouse_dx));
+                    state.camera.direction = state.camera.direction.add(real_right.scale(mouse_dx*mouse_sensitivity));
                     if (state.camera.direction.y < 0.95 and state.camera.direction.y > -0.95) {
-                        state.camera.direction = state.camera.direction.add(real_up.scale(-mouse_dy));
+                        state.camera.direction = state.camera.direction.add(real_up.scale(-mouse_dy*mouse_sensitivity));
                     }
                     state.camera.direction.normalize();
                 }
@@ -1657,8 +1728,9 @@ pub fn main() !void {
                 // calculate camera's look-at
                 state.camera.looking_at = state.camera.position.add(state.camera.direction);                
                 state.view_matrix = M44.lookat_right_handed(state.camera.position, state.camera.looking_at, state.camera.up);
+                // state.projection_matrix = M44.projection(-1 / state.camera.position.substract(state.camera.looking_at).magnitude());
+                state.projection_matrix = M44.perspective_projection(60*(@as(f32,std.math.pi)/180), 16/9, 0.01, 10);
                 state.viewport_matrix = M44.viewport(0, 0, state.w, state.h, 255);
-                state.projection_matrix = M44.projection(-1 / state.camera.position.substract(state.camera.looking_at).magnitude());
 
                 if (state.keys['P']) state.projection_matrix = M44.identity();
                 if (state.keys['V']) state.viewport_matrix = M44.identity();
@@ -1694,9 +1766,9 @@ pub fn main() !void {
                     .viewport_matrix = state.viewport_matrix,
                     .projection_matrix = state.projection_matrix,
                     .view_model_matrix = state.view_matrix.multiply(
-                        M44.translation(Vector3f { .x = 0.5, .y = 0.5, .z = -3 }).multiply(M44.scale(0.8))
+                        M44.translation(Vector3f { .x = 0, .y = 0, .z = -2 }).multiply(M44.scale(0.8))
                     ),
-                    .light_source = state.view_matrix.apply_to_point(horizontally_spinning_position),
+                    .light_source = state.view_matrix.apply_to_vec3(horizontally_spinning_position).discard_w(),
                 };
                 const number_of_triangles = @divExact(state.vertex_buffer.len, 8*3);
                 if (true) GouraudRenderer.render(context, state.vertex_buffer, number_of_triangles);
@@ -1710,8 +1782,7 @@ pub fn main() !void {
                     .viewport_matrix = state.viewport_matrix,
                     .projection_matrix = state.projection_matrix,
                     .view_model_matrix = state.view_matrix.multiply(
-                        // This is basically the position of the quad
-                        M44.translation(Vector3f { .x = 0.5, .y = 0.5, .z = -1 }).multiply(M44.scale(1))
+                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 0 }).multiply(M44.scale(1))
                     ),
                 };
                 const quad_vertex_buffer = [_]f32{
@@ -1911,7 +1982,7 @@ const GouraudShaderContext = struct {
 const GouraudShaderInvariant = struct {
     light_intensity: f32,
     depth: f32,
-    texture_uv: Vector2f,
+    texture_uv: Vector3f,
 };
 
 const GouraudRenderer = Shader(
@@ -1919,80 +1990,31 @@ const GouraudRenderer = Shader(
     GouraudShaderInvariant,
     struct {
         fn vertex_shader(context: GouraudShaderContext, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *GouraudShaderInvariant) ?Vector3f {
-            
-            // std.debug.print("vi {?}\n", .{vertex_index});
-
-            const location: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*8+0], .y = vertex_buffer[vertex_index*8+1], .z = vertex_buffer[vertex_index*8+2] };
+            const position: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*8+0], .y = vertex_buffer[vertex_index*8+1], .z = vertex_buffer[vertex_index*8+2] };
             const uv: Vector2f = Vector2f { .x = vertex_buffer[vertex_index*8+3], .y = vertex_buffer[vertex_index*8+4] };
             const normal: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*8+5], .y = vertex_buffer[vertex_index*8+6], .z = vertex_buffer[vertex_index*8+7] };
-            
-            // std.debug.print("C {?}\n", .{uv});
-            std.debug.assert(uv.x>=0 and uv.x<=1);
-            std.debug.assert(uv.y>=0 and uv.y<=1);
-
-            const world_position = context.view_model_matrix.apply_to_point(location);
-            const clip_position = context.projection_matrix.apply_to_point(world_position);
-            if (clip_position.x >= 1 or clip_position.x < -1 or clip_position.y >= 1 or clip_position.y < -1 or clip_position.z >= 1 or clip_position.z < -1) {
-                // if the triangle is not fully visible, skip it
-                return null;
-            }
-            const screen_position = context.viewport_matrix.apply_to_point(clip_position);
-            
-            const light_direction = context.light_source.substract(world_position).normalized();
+            const view_space_position = context.view_model_matrix.apply_to_vec3(position);
+            const clip_space_position = context.projection_matrix.apply_to_vec4(view_space_position);
+            const ndc = clip_space_position.perspective_division();
+            if (ndc.x >= 1 or ndc.x <= -1 or ndc.y >= 1 or ndc.y <= -1 or ndc.z >= 1 or ndc.z <= -1) return null;
+            const screen_space_position = context.viewport_matrix.apply_to_vec3(ndc).perspective_division();
+            const light_direction = context.light_source.substract(view_space_position.discard_w()).normalized();
             out_invariant.light_intensity = @min(1, @max(0, normal.normalized().dot(light_direction)));
-
-            out_invariant.texture_uv = Vector2f { .x = uv.x * @as(f32, @floatFromInt(context.texture_width)), .y = uv.y * @as(f32, @floatFromInt(context.texture_height)) };
-            out_invariant.depth = screen_position.z;
-            
-            return screen_position;
+            out_invariant.texture_uv = Vector3f { .x = uv.x * @as(f32, @floatFromInt(context.texture_width)) / clip_space_position.w, .y = uv.y * @as(f32, @floatFromInt(context.texture_height)) / clip_space_position.w, .z = 1 / clip_space_position.w };
+            out_invariant.depth = ndc.z;
+            return screen_space_position;
         }
     }.vertex_shader,
     struct {
         fn fragment_shader(context: GouraudShaderContext, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]GouraudShaderInvariant) void {
-            
-            std.debug.assert(x>=0 and x<context.pixel_buffer.width);
-            std.debug.assert(y>=0 and y<context.pixel_buffer.height());
-            std.debug.assert(u>=0 and u<1);
-            std.debug.assert(v>=0 and v<1);
-            std.debug.assert(w>=0 and w<1);
-            std.debug.assert(in_invariants[0].light_intensity>=0 and in_invariants[0].light_intensity<1);
-            std.debug.assert(in_invariants[1].light_intensity>=0 and in_invariants[1].light_intensity<1);
-            std.debug.assert(in_invariants[2].light_intensity>=0 and in_invariants[2].light_intensity<1);
-
             const z = in_invariants[0].depth * w + in_invariants[1].depth * u + in_invariants[2].depth * v;
-
-            // std.debug.assert(z>=0 and z<1);
-
             if (context.depth_buffer.get(@intCast(x), @intCast(y)) >= z) return;
             context.depth_buffer.set(@intCast(x), @intCast(y), z);
-
             // interpolate the light intensity for the current pixel
             var light_intensity: f32 = 0;
             light_intensity += in_invariants[0].light_intensity * w;
             light_intensity += in_invariants[1].light_intensity * u;
             light_intensity += in_invariants[2].light_intensity * v;
-                
-            // clamp light intensity to 1 of 6 different levels (it looks cool)
-            // if (light_intensity > 0.85) light_intensity = 1
-            // else if (light_intensity > 0.60) light_intensity = 0.80
-            // else if (light_intensity > 0.45) light_intensity = 0.60
-            // else if (light_intensity > 0.30) light_intensity = 0.45
-            // else if (light_intensity > 0.15) light_intensity = 0.30
-            // else light_intensity = 0.15;
-
-            std.debug.assert(light_intensity>=0 and light_intensity<=1);
-
-            // std.debug.print("0 {?}\n", .{in_invariants[0].texture_uv});
-            // std.debug.print("1 {?}\n", .{in_invariants[1].texture_uv});
-            // std.debug.print("2 {?}\n", .{in_invariants[2].texture_uv});
-
-            std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
-            std.debug.assert(in_invariants[0].texture_uv.y>=0 and in_invariants[0].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
-            std.debug.assert(in_invariants[1].texture_uv.x>=0 and in_invariants[1].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
-            std.debug.assert(in_invariants[1].texture_uv.y>=0 and in_invariants[1].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
-            std.debug.assert(in_invariants[2].texture_uv.x>=0 and in_invariants[2].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
-            std.debug.assert(in_invariants[2].texture_uv.y>=0 and in_invariants[2].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
-
             // interpolate texture uvs for the current pixel
             const texture_uv =
                 in_invariants[0].texture_uv.scale(w).add(
@@ -2000,13 +2022,8 @@ const GouraudRenderer = Shader(
                         in_invariants[2].texture_uv.scale(v)
                     )
                 );
-
-            std.debug.assert(texture_uv.x>=0 and texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
-            std.debug.assert(texture_uv.y>=0 and texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
-
-            const texture_u: usize = @intFromFloat(texture_uv.x);
-            const texture_v: usize = @intFromFloat(texture_uv.y);
-
+            const texture_u: usize = @intFromFloat(texture_uv.x/texture_uv.z);
+            const texture_v: usize = @intFromFloat(texture_uv.y/texture_uv.z);
             switch (context.texture) {
                 .rgb => |texture| {
                     const rgb: RGB = texture.get(texture_u, texture_v).scale(light_intensity);
@@ -2035,7 +2052,7 @@ const QuadRendererContext = struct {
 };
 
 const QuadRendererInvariant = struct {
-    texture_uv: Vector2f,
+    texture_uv: Vector3f,
     depth: f32
 };
 
@@ -2044,44 +2061,31 @@ const QuadRenderer = Shader(
     QuadRendererInvariant,
     struct {
         fn vertex_shader(context: QuadRendererContext, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *QuadRendererInvariant) ?Vector3f {
-            const location: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*5+0], .y = vertex_buffer[vertex_index*5+1], .z = vertex_buffer[vertex_index*5+2] };
+            const position: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*5+0], .y = vertex_buffer[vertex_index*5+1], .z = vertex_buffer[vertex_index*5+2] };
             const uv: Vector2f = Vector2f { .x = vertex_buffer[vertex_index*5+3], .y = vertex_buffer[vertex_index*5+4] };
-            std.debug.assert(uv.x>=0 and uv.x<=1);
-            std.debug.assert(uv.y>=0 and uv.y<=1);
-            const world_position = context.view_model_matrix.apply_to_point(location);
-            const clip_position = context.projection_matrix.apply_to_point(world_position);
-            // if the triangle is not fully visible, skip it
-            if (clip_position.x >= 1 or clip_position.x < -1 or clip_position.y >= 1 or clip_position.y < -1 or clip_position.z >= 1 or clip_position.z < -1) return null;
-            const screen_position = context.viewport_matrix.apply_to_point(clip_position);
-            out_invariant.texture_uv = Vector2f { .x = uv.x * @as(f32, @floatFromInt(context.texture_width)), .y = uv.y * @as(f32, @floatFromInt(context.texture_height)) };
-            out_invariant.depth = screen_position.z;
-            return screen_position;
+            const view_space_position = context.view_model_matrix.apply_to_vec3(position);
+            const clip_space_position = context.projection_matrix.apply_to_vec4(view_space_position);
+            const ndc = clip_space_position.perspective_division();
+            if (ndc.x >= 1 or ndc.x <= -1 or ndc.y >= 1 or ndc.y <= -1 or ndc.z >= 1 or ndc.z <= -1) return null;
+            const screen_space_position = context.viewport_matrix.apply_to_vec3(ndc).perspective_division();
+            out_invariant.depth = ndc.z;
+            out_invariant.texture_uv = Vector3f { .x = uv.x * @as(f32, @floatFromInt(context.texture_width)) / clip_space_position.w, .y = uv.y * @as(f32, @floatFromInt(context.texture_height)) / clip_space_position.w, .z = 1 / clip_space_position.w };
+            return screen_space_position;
         }
     }.vertex_shader,
     struct {
         fn fragment_shader(context: QuadRendererContext, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]QuadRendererInvariant) void {
-            std.debug.assert(x>=0 and x<context.pixel_buffer.width);
-            std.debug.assert(y>=0 and y<context.pixel_buffer.height());
-            std.debug.assert(u>=0 and u<1);
-            std.debug.assert(v>=0 and v<1);
-            std.debug.assert(w>=0 and w<1);
             const z = in_invariants[0].depth * w + in_invariants[1].depth * u + in_invariants[2].depth * v;
             if (context.depth_buffer.get(@intCast(x), @intCast(y)) >= z) return;
             context.depth_buffer.set(@intCast(x), @intCast(y), z);
-            std.debug.assert(in_invariants[0].texture_uv.x>=0 and in_invariants[0].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
-            std.debug.assert(in_invariants[0].texture_uv.y>=0 and in_invariants[0].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
-            std.debug.assert(in_invariants[1].texture_uv.x>=0 and in_invariants[1].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
-            std.debug.assert(in_invariants[1].texture_uv.y>=0 and in_invariants[1].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
-            std.debug.assert(in_invariants[2].texture_uv.x>=0 and in_invariants[2].texture_uv.x<=@as(f32, @floatFromInt(context.texture_width)));
-            std.debug.assert(in_invariants[2].texture_uv.y>=0 and in_invariants[2].texture_uv.y<=@as(f32, @floatFromInt(context.texture_height)));
             const texture_uv =
                 in_invariants[0].texture_uv.scale(w).add(
                     in_invariants[1].texture_uv.scale(u).add(
                         in_invariants[2].texture_uv.scale(v)
                     )
                 );
-            const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.x)), 0, context.texture_width-1);
-            const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.y)), 0, context.texture_height-1);
+            const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.x/texture_uv.z)), 0, context.texture_width-1);
+            const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.y/texture_uv.z)), 0, context.texture_height-1);
             switch (context.texture) {
                 .rgb => |texture| {
                     const rgb: RGB = texture.get(texture_u, texture_v);
