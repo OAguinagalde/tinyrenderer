@@ -1796,6 +1796,8 @@ pub fn main() !void {
                 QuadRenderer.render(context_quad, quad_vertex_buffer[0..quad_vertex_buffer.len], 2);
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
+                // TODO there is part of the pixel buffer being rendered below the status bar from windows
+                render_text(allocator, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 50) }, "hello there!");
             }
 
             state.running = state.running and !app_close_requested;
@@ -1915,10 +1917,6 @@ fn Shader(
                 const top: i32 = @intFromFloat(@min(a.y, @min(b.y, c.y)));
                 const right: i32 = @intFromFloat(@max(a.x, @max(b.x, c.x)));
                 const bottom: i32 = @intFromFloat(@max(a.y, @max(b.y, c.y)));
-
-                // if the triangle is not fully inside the buffer, discard it straight away
-                // TODO reintroduce this
-                // if (left < 0 or top < 0 or @intCast(usize, right) >= pixel_buffer.width or @intCast(usize, bottom) >= pixel_buffer.height()) return;
 
                 // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
                 // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
@@ -2101,3 +2099,119 @@ const QuadRenderer = Shader(
         }
     }.fragment_shader,
 );
+
+const TextRendererContext = struct {
+    pixel_buffer: *Buffer2D(win32.RGBA),
+    texture: AnyBuffer2D,
+    texture_width: usize,
+    texture_height: usize,
+};
+
+const TextRendererInvariant = struct {
+    texture_uv: Vector2f,
+};
+
+const TextRenderer = Shader(
+    TextRendererContext,
+    TextRendererInvariant,
+    struct {
+        fn vertex_shader(context: TextRendererContext, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *TextRendererInvariant) ?Vector3f {
+            _ = context;
+            const position = Vector3f { .x = vertex_buffer[vertex_index*4+0], .y = vertex_buffer[vertex_index*4+1], .z = 0 };
+            const uv = Vector2f { .x = vertex_buffer[vertex_index*4+2], .y = vertex_buffer[vertex_index*4+3] };
+            out_invariant.texture_uv = Vector2f { .x = uv.x, .y = uv.y };
+            return position;
+        }
+    }.vertex_shader,
+    struct {
+        fn fragment_shader(context: TextRendererContext, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]TextRendererInvariant) void {
+            const texture_uv =
+                in_invariants[0].texture_uv.scale(w).add(
+                    in_invariants[1].texture_uv.scale(u).add(
+                        in_invariants[2].texture_uv.scale(v)
+                    )
+                );
+            const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.x)), 0, context.texture_width-1);
+            const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.y)), 0, context.texture_height-1);
+            switch (context.texture) {
+                .rgb => |texture| {
+                    const rgb: RGB = texture.get(texture_u, texture_v);
+                    context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgb(rgb.r, rgb.g, rgb.b));
+                },
+                .rgba =>  |texture| {
+                    const rgba: RGBA = texture.get(texture_u, texture_v);
+                    context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
+                },
+                else => unreachable
+            }
+
+        }
+    }.fragment_shader,
+);
+
+
+fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA), pos: Vector2i, text: []const u8) void {
+    // bitmap font embedded in the executable
+    const font = @import("font_embedded.zig");
+    // TODO what happens if I write to the pointer that has the data lol
+    const texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&font.data)), font.width);
+    // 1 vertex = 4 floats { location_x, location_y, text_u, text_v }
+    // 1 triangle = 3 vertices
+    // 1 quad = 2 triangles
+    // 1 char = 1 quad
+    // Up to 1024 characters
+    var vertex_buffer = allocator.alloc(f32, 4*3*2*1024) catch unreachable;
+    defer allocator.free(vertex_buffer);
+    const char_width: i32 = 4;
+    const char_height: i32 = 7;
+    const size = 2;
+    for (text, 0..) |c, i| {
+        const x: i32 = pos.x + @as(i32, @intCast(i)) * char_width * size;
+        const y: i32 = pos.y;
+        
+        const u_1: i32 = (c%16) * 8;
+        const v_1: i32 = (c/16) * 8;
+        const u_2: i32 = u_1 + char_width;
+        const v_2: i32 = v_1 + char_height;
+
+        const offset: usize = i*4*3*2;
+
+        vertex_buffer[offset + 0] = @floatFromInt(x);
+        vertex_buffer[offset + 1] = @floatFromInt(y);
+        vertex_buffer[offset + 2] = @floatFromInt(u_1);
+        vertex_buffer[offset + 3] = @floatFromInt(v_1);
+
+        vertex_buffer[offset + 4] = @floatFromInt(x + char_width * size);
+        vertex_buffer[offset + 5] = @floatFromInt(y);
+        vertex_buffer[offset + 6] = @floatFromInt(u_2);
+        vertex_buffer[offset + 7] = @floatFromInt(v_1);
+
+        vertex_buffer[offset + 8] = @floatFromInt(x);
+        vertex_buffer[offset + 9] = @floatFromInt(y - char_height * size);
+        vertex_buffer[offset + 10] = @floatFromInt(u_1);
+        vertex_buffer[offset + 11] = @floatFromInt(v_2);
+
+        vertex_buffer[offset + 12] = @floatFromInt(x);
+        vertex_buffer[offset + 13] = @floatFromInt(y - char_height * size);
+        vertex_buffer[offset + 14] = @floatFromInt(u_1);
+        vertex_buffer[offset + 15] = @floatFromInt(v_2);
+
+        vertex_buffer[offset + 16] = @floatFromInt(x + char_width * size);
+        vertex_buffer[offset + 17] = @floatFromInt(y - char_height * size);
+        vertex_buffer[offset + 18] = @floatFromInt(u_2);
+        vertex_buffer[offset + 19] = @floatFromInt(v_2);
+
+        vertex_buffer[offset + 20] = @floatFromInt(x + char_width * size);
+        vertex_buffer[offset + 21] = @floatFromInt(y);
+        vertex_buffer[offset + 22] = @floatFromInt(u_2);
+        vertex_buffer[offset + 23] = @floatFromInt(v_1);
+    }
+
+    const context = TextRendererContext {
+        .pixel_buffer = pixel_buffer,
+        .texture = AnyBuffer2D { .rgba = texture },
+        .texture_width = texture.width,
+        .texture_height = texture.height(),
+    };
+    TextRenderer.render(context, vertex_buffer[0..vertex_buffer.len], text.len * 2);
+}
