@@ -1797,7 +1797,17 @@ pub fn main() !void {
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
                 // TODO there is part of the pixel buffer being rendered below the status bar from windows
-                render_text(allocator, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 50) }, "hello there!");
+                render_text(allocator, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 50) }, "ms {d: <9.2}", .{ms});
+
+                // Some kind of performance visualizer
+                var performance_color: win32.RGBA = win32.rgb(255, 0, 0);
+                var performance_base: f32 = 128;
+                if (ms < 64) { performance_base = 64; performance_color = win32.rgb(255, 150, 0); }
+                if (ms < 32) { performance_base = 32; performance_color = win32.rgb(240, 204, 0); }
+                if (ms < 16) { performance_base = 16; performance_color = win32.rgb(174, 255, 0); }
+                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 49) }, Vector2i { .x = @intFromFloat(@min(ms / @as(f64, @floatCast(performance_base)) * @as(f64, @floatFromInt(state.pixel_buffer.width)), @as(f64, @floatFromInt(state.pixel_buffer.width)))), .y = @intCast(state.pixel_buffer.height() - 49) }, performance_color);
+                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 48) }, Vector2i { .x = @intFromFloat(@min(ms / @as(f64, @floatCast(performance_base)) * @as(f64, @floatFromInt(state.pixel_buffer.width)), @as(f64, @floatFromInt(state.pixel_buffer.width)))), .y = @intCast(state.pixel_buffer.height() - 48) }, performance_color);
+                // line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 49) }, Vector2i { .x = 100, .y = @intCast(state.pixel_buffer.height() - 49) }, green);
             }
 
             state.running = state.running and !app_close_requested;
@@ -2102,7 +2112,7 @@ const QuadRenderer = Shader(
 
 const TextRendererContext = struct {
     pixel_buffer: *Buffer2D(win32.RGBA),
-    texture: AnyBuffer2D,
+    texture: Buffer2D(RGBA),
     texture_width: usize,
     texture_height: usize,
 };
@@ -2117,10 +2127,8 @@ const TextRenderer = Shader(
     struct {
         fn vertex_shader(context: TextRendererContext, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *TextRendererInvariant) ?Vector3f {
             _ = context;
-            const position = Vector3f { .x = vertex_buffer[vertex_index*4+0], .y = vertex_buffer[vertex_index*4+1], .z = 0 };
-            const uv = Vector2f { .x = vertex_buffer[vertex_index*4+2], .y = vertex_buffer[vertex_index*4+3] };
-            out_invariant.texture_uv = Vector2f { .x = uv.x, .y = uv.y };
-            return position;
+            out_invariant.texture_uv = Vector2f { .x = vertex_buffer[vertex_index*4+2], .y = vertex_buffer[vertex_index*4+3] };
+            return Vector3f { .x = vertex_buffer[vertex_index*4+0], .y = vertex_buffer[vertex_index*4+1], .z = 0 };
         }
     }.vertex_shader,
     struct {
@@ -2133,28 +2141,25 @@ const TextRenderer = Shader(
                 );
             const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.x)), 0, context.texture_width-1);
             const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.y)), 0, context.texture_height-1);
-            switch (context.texture) {
-                .rgb => |texture| {
-                    const rgb: RGB = texture.get(texture_u, texture_v);
-                    context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgb(rgb.r, rgb.g, rgb.b));
-                },
-                .rgba =>  |texture| {
-                    const rgba: RGBA = texture.get(texture_u, texture_v);
-                    context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
-                },
-                else => unreachable
-            }
-
+            const rgba: RGBA = context.texture.get(texture_u, texture_v);
+            context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
         }
     }.fragment_shader,
 );
 
+fn render_line(pixel_buffer: *Buffer2D(win32.RGBA), a: Vector2i, b: Vector2i, color: win32.RGBA) void {
+    line(win32.RGBA, pixel_buffer, a, b, color);
+}
 
-fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA), pos: Vector2i, text: []const u8) void {
+fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA), pos: Vector2i, comptime format: []const u8, args: anytype) void {
     // bitmap font embedded in the executable
     const font = @import("font_embedded.zig");
     // TODO what happens if I write to the pointer that has the data lol
     const texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&font.data)), font.width);
+    var text_buffer: [1024]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&text_buffer);
+    std.fmt.format(fbs.writer(), format, args) catch @panic("failed to format text while rendering it");
+    const text = fbs.getWritten();
     // 1 vertex = 4 floats { location_x, location_y, text_u, text_v }
     // 1 triangle = 3 vertices
     // 1 quad = 2 triangles
@@ -2209,7 +2214,7 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA)
 
     const context = TextRendererContext {
         .pixel_buffer = pixel_buffer,
-        .texture = AnyBuffer2D { .rgba = texture },
+        .texture = texture,
         .texture_width = texture.width,
         .texture_height = texture.height(),
     };
