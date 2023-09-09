@@ -2220,3 +2220,52 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA)
     };
     TextRenderer.render(context, vertex_buffer[0..vertex_buffer.len], text.len * 2);
 }
+
+// TODO finish this...
+// triangle clipping on at least one plane
+// 
+//     const Plane = struct { a: f32; b: f32; c: f32; d: f32; };
+//     pub fn intersection(p1: Vector3f, p2: Vector3f, plane: Plane) Vector3f {
+//         const t: f32 =
+//             -(plane.a * p1.x + plane.b * p1.y + plane.c * p1.z + plane.d) /
+//             (plane.a * (p2.x - p1.x) + plane.b * (p2.y - p1.y) + plane.c * (p2.z - p1.z));
+//     
+//         const intersection_point = Vector3f {
+//             .x = p1.x + t * (p2.x - p1.x),
+//             .y = p1.y + t * (p2.y - p1.y),
+//             .z = p1.z + t * (p2.z - p1.z),
+//         };
+//     
+//         return intersection_point;
+//     }
+// 
+// I can find the equation of a plane `ax + by + cz + d = 0` by knowing a point of it and a perpendicular vector (a,b,c)
+// 
+//     pub fn plane(point: Vector3f, normal: Vector3f) Plane {
+//         const d = - ((normal.x*point.x)+(normal.y*point.y)+(normal.z*point.z));
+//         return Plane { .a = normal.a, .b = normal.b, .c = normal.c, .d = d };
+//     }
+// 
+//     pub fn signed_distance_to_plane(point: Vector3f, plane: Plane) f32 {
+//         return plane.a * point.x +
+//             plane.b * point.y +
+//             plane.c * point.z +
+//             plane.d;
+//     }
+// 
+// if 1 or 2 (but not 3) points of a given triangle are outside the plane, then calculate the 1 or 2 clipped triangles that need to be rendered
+// continue implementing this ...
+
+// TODO implement a backend for dear imgui
+// 1. Get imgui working in a zig project
+// 2. then the implementation (reference win32 here: https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_win32.cpp)
+// 3. test it on a simple layout:
+// 
+//     ImGui::Text("Hello, world %d", 123);  
+//     if (ImGui::Button("Save"))  
+//     {  
+//         // do stuff  
+//     }  
+//     ImGui::InputText("string", buf, IM_ARRAYSIZE(buf));  
+//     ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
+// 
