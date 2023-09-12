@@ -1,8 +1,59 @@
 const std = @import("std");
-const cimgui = @cImport({
-    @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", {});
-    @cInclude("cimgui.h");
-});
+const imgui = struct {
+    
+    const c = @cImport({
+        @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", {});
+        @cInclude("cimgui.h");
+    });
+    
+    pub fn ImVector(comptime T: type) type {
+        // Original ImVectors look like this
+        // 
+        //     pub const struct_ImVector_ImDrawIdx = extern struct {
+        //         Size: c_int,
+        //         Capacity: c_int,
+        //         Data: [*c]ImDrawIdx,
+        //     };
+        // 
+        return struct {
+            const Self = @This();
+            
+            used: usize,
+            data: []T,
+            
+            pub fn used_slice(self: Self) []T {
+                return self.data[0..self.used];
+            }
+
+            pub fn from(im_vector: anytype) Self {
+                const size: usize = @intCast(@field(im_vector, "Size"));
+                const capacity: usize = @intCast(@field(im_vector, "Capacity"));
+                const data = @field(im_vector, "Data");
+                const slice: []T = @ptrCast(data[0..capacity]);
+                return Self {
+                    .used = size,
+                    .data = slice
+                };
+            }
+        };
+    }
+
+    fn im_vector_guess_type(comptime im_vector_type: type) type {
+        const info: std.builtin.Type = @typeInfo(im_vector_type);
+        for (info.Struct.fields) |field| {
+            if (std.mem.eql(u8, field.name, "Data")) {
+                const data_type: std.builtin.Type = @typeInfo(field.type);
+                return data_type.Pointer.child;
+            }
+        }
+        @panic("Provided type isn't an ImVector");
+    }
+
+    pub fn im_vector_from(im_vector: anytype) ImVector(im_vector_guess_type(@TypeOf(im_vector))) {
+        return ImVector(im_vector_guess_type(@TypeOf(im_vector))).from(im_vector);
+    }
+};
+
 
 const win32 = struct {
     usingnamespace @import("win32").everything;
@@ -19,13 +70,13 @@ const win32 = struct {
         /// 255 for solid and 0 for transparent
         a: u8,
         fn scale(self: win32.RGBA, factor: f32) win32.RGBA {
-        return win32.RGBA {
-            .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
-            .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
-            .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
-            .a = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.a)) * factor))),
-        };
-    }
+            return win32.RGBA {
+                .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
+                .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
+                .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
+                .a = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.a)) * factor))),
+            };
+        }
     };
 
     fn rgb(r: u8, g: u8, b: u8) win32.RGBA {
@@ -480,6 +531,24 @@ const M44 = struct {
     }
 
     // the resulting matrix will map a point to NDC based on the input parameters
+    pub fn orthographic_projection(left: f32, right: f32, top: f32, bottom: f32, near: f32, far: f32) M44 {
+        var result = M44.identity();
+        // Scale factor for X
+        result.data[0] = 2 / (right - left);
+        // Scale factor for Y
+        result.data[5] = 2 / (top - bottom);
+        // Scale factor for Z
+        result.data[10] = -2 / (far - near);
+        // Translate X
+        result.data[12] = -(right + left) / (right - left);
+        // Translate Y
+        result.data[13] = -(top + bottom) / (top - bottom);
+        // Translate Z
+        result.data[14] = -(far + near) / (far - near);
+        // Homogeneous Coordinate
+        result.data[15] = 1;
+        return result;
+    }
     pub fn perspective_projection(fovY: f32, aspectRatio: f32, near: f32, far: f32) M44 {
         var result = M44.identity();
         // Calculate the tangent of half the vertical field of view angle (fovY)
@@ -510,23 +579,26 @@ const M44 = struct {
     /// will map a point in the 3-dimensional cube [-1, 1]*[-1, 1]*[-1, 1]
     /// onto the screen cube [x, x+w]*[y, y+h]*[0, d],
     /// where d is the depth/resolution of the z-buffer
-    pub fn viewport(x: i32, y: i32, w: i32, h: i32, depth: i32) M44 {
-        var matrix = M44.identity();
-
+    pub fn viewport_i32(x: i32, y: i32, w: i32, h: i32, depth: i32) M44 {
         const xf: f32 = @floatFromInt(x);
         const yf: f32 = @floatFromInt(y);
         const wf: f32 = @floatFromInt(w);
         const hf: f32 = @floatFromInt(h);
         const depthf: f32 = @floatFromInt(depth);
+        return viewport(xf, yf, wf, hf, depthf);
+    }
+    
+    pub fn viewport(x: f32, y: f32, w: f32, h: f32, depth: f32) M44 {
+        var matrix = M44.identity();
         
         // 1 0 0 translation_x
         // 0 1 0 translation_y
         // 0 0 1 translation_z
         // 0 0 0 1
 
-        const translation_x: f32 = xf + (wf / 2);
-        const translation_y: f32 = yf + (hf / 2);
-        const translation_z: f32 = depthf / 2;
+        const translation_x: f32 = x + (w / 2);
+        const translation_y: f32 = y + (h / 2);
+        const translation_z: f32 = depth / 2;
 
         matrix.data[12] = translation_x;
         matrix.data[13] = translation_y;
@@ -537,13 +609,13 @@ const M44 = struct {
         // 0       0       scale_z 0
         // 0       0       0       1
         
-        const scale_x: f32 = wf / 2;
+        const scale_x: f32 = w / 2;
         // This coulb be negated so that the top left corner is 0,0
         // If so, when mapping from normalized device coordinates (NDC) to screen space, thing will be inverted so that top left is 0,0
         // 
         //     const scale_y: f32 = -hf / 2;
-        const scale_y: f32 = hf / 2;
-        const scale_z: f32 = depthf / 2;
+        const scale_y: f32 = h / 2;
+        const scale_z: f32 = depth / 2;
 
         matrix.data[0] = scale_x;
         matrix.data[5] = scale_y;
@@ -581,6 +653,22 @@ const RGBA = extern struct {
             .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
             .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
             .a = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.a)) * factor))),
+        };
+    }
+    fn add(self: RGBA, other: RGBA) RGBA {
+        return RGBA {
+            .r = @max(0, @min(255, ((self.r/255) * (self.a/255) + (other.r/255) * (other.a/255) * 1-(self.a/255)) * 255)),
+            .g = @max(0, @min(255, ((self.g/255) * (self.a/255) + (other.g/255) * (other.a/255) * 1-(self.a/255)) * 255)),
+            .b = @max(0, @min(255, ((self.b/255) * (self.a/255) + (other.b/255) * (other.a/255) * 1-(self.a/255)) * 255)),
+            .a = @max(0, @min(255, ((self.a/255) + (other.a/255) * 1-(self.a/255)) * 255)),
+        };
+    }
+    fn multiply(self: RGBA, other: RGBA) RGBA {
+        return RGBA {
+            .r = @max(0, @min(255, (self.r/255) * (other.r/255) * (self.a/255) * (other.a/255) * 255)),
+            .g = @max(0, @min(255, (self.g/255) * (other.g/255) * (self.a/255) * (other.a/255) * 255)),
+            .b = @max(0, @min(255, (self.b/255) * (other.b/255) * (self.a/255) * (other.a/255) * 255)),
+            .a = @max(0, @min(255, (self.a/255) * (other.a/255) * 255)),
         };
     }
     comptime { std.debug.assert(@sizeOf(RGBA) == 4); }
@@ -1400,9 +1488,9 @@ const imgui_win32_impl = struct {
         TicksPerSecond: i64,
     };
     
-    fn init(context: *Context, window_handle: win32.HWND) void {
-        const io = cimgui.igGetIO();        
-        io.BackendPlatformUserData = context;
+    fn init(context: *Context, window_handle: win32.HWND, out_font_texture: *Buffer2D(RGBA)) void {
+        const io = imgui.c.igGetIO();        
+        io.*.BackendPlatformUserData = context;
         context.hWnd = window_handle;
         var counter: win32.LARGE_INTEGER = undefined;
         var performance_frequency: win32.LARGE_INTEGER = undefined;
@@ -1411,83 +1499,66 @@ const imgui_win32_impl = struct {
         context.TicksPerSecond = performance_frequency.QuadPart;
         context.Time = counter.QuadPart;
         
-        const main_viewport = cimgui.igGetMainViewport();
-        main_viewport.PlatformHandle = window_handle;
-        main_viewport.PlatformHandleRaw = window_handle;
+        const main_viewport = imgui.c.igGetMainViewport();
+        main_viewport.*.PlatformHandle = window_handle;
+        main_viewport.*.PlatformHandleRaw = window_handle;
 
         var out_width: i32 = undefined;
         var out_height: i32 = undefined;
         var out_bytes_per_pixel: i32 = undefined;
-        var out_pixels: *u8 = undefined;
-        cimgui.ImFontAtlas_GetTexDataAsRGBA32(io.Fonts, &out_pixels, &out_width, &out_height, &out_bytes_per_pixel);
+        var out_pixels: [*c]u8 = undefined;
+        imgui.c.ImFontAtlas_GetTexDataAsRGBA32(io.*.Fonts, &out_pixels, &out_width, &out_height, &out_bytes_per_pixel);
 
-        // TODO pass ownership to caller
-        const font_texture = Buffer2D(RGBA).init(out_pixels, out_width);
-        cimgui.ImFontAtlas_SetTexID(io.Fonts, font_texture);
+        const total_size: usize = @intCast(out_width * out_height);
+        // out_font_texture.* = Buffer2D(RGBA).init(@ptrCast(out_pixels[0..total_size]), out_width);
+        out_font_texture.* = Buffer2D(RGBA).init(std.mem.bytesAsSlice(RGBA, @as([]u8, @ptrCast(out_pixels[0..total_size]))), @intCast(out_width));
+        imgui.c.ImFontAtlas_SetTexID(io.*.Fonts, out_font_texture);
     }
 
-    fn render_draw_data(context: *Context) void {
-        const draw_data = cimgui.igGetDrawData();
-        const io = cimgui.igGetIO();
-        _ = draw_data;
-        _ = io;
-        _ = context;
-        // // TODO: Setup render state: alpha-blending enabled, no face culling, no depth testing, scissor enabled
-        // // TODO: Setup texture sampling state: sample with bilinear filtering (NOT point/nearest filtering). Use 'io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines;' to allow point/nearest filtering.
-        // // TODO: Setup viewport covering draw_data->DisplayPos to draw_data->DisplayPos + draw_data->DisplaySize
-        // // TODO: Setup orthographic projection matrix cover draw_data->DisplayPos to draw_data->DisplayPos + draw_data->DisplaySize
-        // // TODO: Setup shader: vertex { float2 pos, float2 uv, u32 color }, fragment shader sample color from 1 texture, multiply by vertex color.
-        // ImVec2 clip_off = draw_data->DisplayPos;
-        // for (int n = 0; n < draw_data->CmdListsCount; n++)
-        // {
-        //     const ImDrawList* cmd_list = draw_data->CmdLists[n];
-        //     const ImDrawVert* vtx_buffer = cmd_list->VtxBuffer.Data;  // vertex buffer generated by Dear ImGui
-        //     const ImDrawIdx* idx_buffer = cmd_list->IdxBuffer.Data;   // index buffer generated by Dear ImGui
-        //     for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++)
-        //     {
-        //         const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
-        //         if (pcmd->UserCallback)
-        //         {
-        //             pcmd->UserCallback(cmd_list, pcmd);
-        //         }
-        //         else
-        //         {
-        //             // Project scissor/clipping rectangles into framebuffer space
-        //             ImVec2 clip_min(pcmd->ClipRect.x - clip_off.x, pcmd->ClipRect.y - clip_off.y);
-        //             ImVec2 clip_max(pcmd->ClipRect.z - clip_off.x, pcmd->ClipRect.w - clip_off.y);
-        //             if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y)
-        //                 continue;
-        // 
-        //             // We are using scissoring to clip some objects. All low-level graphics API should support it.
-        //             // - If your engine doesn't support scissoring yet, you may ignore this at first. You will get some small glitches
-        //             //   (some elements visible outside their bounds) but you can fix that once everything else works!
-        //             // - Clipping coordinates are provided in imgui coordinates space:
-        //             //   - For a given viewport, draw_data->DisplayPos == viewport->Pos and draw_data->DisplaySize == viewport->Size
-        //             //   - In a single viewport application, draw_data->DisplayPos == (0,0) and draw_data->DisplaySize == io.DisplaySize, but always use GetMainViewport()->Pos/Size instead of hardcoding those values.
-        //             //   - In the interest of supporting multi-viewport applications (see 'docking' branch on github),
-        //             //     always subtract draw_data->DisplayPos from clipping bounds to convert them to your viewport space.
-        //             // - Note that pcmd->ClipRect contains Min+Max bounds. Some graphics API may use Min+Max, other may use Min+Size (size being Max-Min)
-        //             MyEngineSetScissor(clip_min.x, clip_min.y, clip_max.x, clip_max.y);
-        // 
-        //             // The texture for the draw call is specified by pcmd->GetTexID().
-        //             // The vast majority of draw calls will use the Dear ImGui texture atlas, which value you have set yourself during initialization.
-        //             MyEngineBindTexture((MyTexture*)pcmd->GetTexID());
-        // 
-        //             // Render 'pcmd->ElemCount/3' indexed triangles.
-        //             // By default the indices ImDrawIdx are 16-bit, you can change them to 32-bit in imconfig.h if your engine doesn't support 16-bit indices.
-        //             MyEngineDrawIndexedTriangles(pcmd->ElemCount, sizeof(ImDrawIdx) == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, idx_buffer + pcmd->IdxOffset, vtx_buffer, pcmd->VtxOffset);
-        //         }
-        //     }
-        // }
+    fn render_draw_data(pixel_buffer: *Buffer2D(win32.RGBA)) void {
+        const draw_data = imgui.c.igGetDrawData();
+        const clip_offset = draw_data.*.DisplayPos;
+        const projection_matrix = M44.orthographic_projection(draw_data.*.DisplayPos.x, draw_data.*.DisplayPos.x + draw_data.*.DisplaySize.x, draw_data.*.DisplayPos.y, draw_data.*.DisplayPos.y + draw_data.*.DisplaySize.y, 0.1, 1000);
+        const viewport_matrix = M44.viewport(draw_data.*.DisplayPos.x, draw_data.*.DisplayPos.y, draw_data.*.DisplaySize.x, draw_data.*.DisplaySize.y, 255);
+        if (draw_data.*.CmdLists.Data == null) return;
+        const command_lists = imgui.im_vector_from(draw_data.*.CmdLists);
+        const command_lists_count: usize = @intCast(draw_data.*.CmdListsCount);
+        for (command_lists.data[0..command_lists_count]) |command_list| {
+            const command_buffer = imgui.im_vector_from(command_list.*.CmdBuffer);
+            const vertex_buffer = imgui.im_vector_from(command_list.*.VtxBuffer);
+            const index_buffer = imgui.im_vector_from(command_list.*.IdxBuffer);
+            for (command_buffer.used_slice()) |command| {
+                
+                const clip_min = Vector2f { .x = command.ClipRect.x - clip_offset.x, .y = command.ClipRect.y - clip_offset.y };
+                const clip_max = Vector2f { .x = command.ClipRect.z - clip_offset.x, .y = command.ClipRect.w - clip_offset.y };
+                if (clip_max.x <= clip_min.x or clip_max.y <= clip_min.y) continue;
+                
+                const texture: *Buffer2D(RGBA) = @as(*Buffer2D(RGBA), @alignCast(@ptrCast(command.TextureId.?)));
+                std.debug.assert(texture == &state.imgui_font_texture);
+                const render_context = DearImguiRendererContext {
+                    .pixel_buffer = pixel_buffer,
+                    .texture = texture.*,
+                    .texture_width = texture.width,
+                    .texture_height = texture.height(),
+                    .projection_matrix = projection_matrix,
+                    .viewport_matrix = viewport_matrix,
+                    .index_buffer = index_buffer.used_slice()[command.IdxOffset..],
+                    .clip_min = clip_min,
+                    .clip_max = clip_max,
+                };
+                const vertex_buffer_asf32: []f32 = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(vertex_buffer.used_slice()));
+                DearImguiRenderer.render(render_context, vertex_buffer_asf32[command.VtxOffset..], command.ElemCount / 3);
+            }
+        }
     }
 
     fn setup_new_frame(context: *Context) void {
-        const io = cimgui.igGetIO();
+        const io = imgui.c.igGetIO();
 
         var mouse_current: win32.POINT = undefined;
         _ = win32.GetCursorPos(&mouse_current);
 
-        cimgui.ImGuiIO_AddMousePosEvent(io,
+        imgui.c.ImGuiIO_AddMousePosEvent(io,
             @as(f32, @floatFromInt(mouse_current.x)),
             @as(f32, @floatFromInt(mouse_current.y))
         );
@@ -1497,12 +1568,12 @@ const imgui_win32_impl = struct {
         const client_width = rect.right - rect.left;
         const client_height = rect.bottom - rect.top;
 
-        io.DisplaySize = cimgui.ImVec2 { .x = @floatFromInt(client_width), .y = @floatFromInt(client_height) };
+        io.*.DisplaySize = imgui.c.ImVec2 { .x = @floatFromInt(client_width), .y = @floatFromInt(client_height) };
 
         var current_time: win32.LARGE_INTEGER = undefined;
         _ = win32.QueryPerformanceCounter(&current_time);
-        io.DeltaTime = @as(f32, @floatFromInt(current_time.QuadPart - context.Time)) / @as(f32, @floatFromInt(context.TicksPerSecond));
-        context.Time = current_time;
+        io.*.DeltaTime = @as(f32, @floatFromInt(current_time.QuadPart - context.Time)) / @as(f32, @floatFromInt(context.TicksPerSecond));
+        context.Time = current_time.QuadPart;
     }
 
 };
@@ -1643,6 +1714,9 @@ const State = struct {
     viewport_matrix: M44,
     projection_matrix: M44,
     time: f64,
+    
+    imgui_platform_context: imgui_win32_impl.Context,
+    imgui_font_texture: Buffer2D(RGBA),
 };
 
 var state = State {
@@ -1666,6 +1740,9 @@ var state = State {
     .viewport_matrix = undefined,
     .projection_matrix = undefined,
     .time = undefined,
+    
+    .imgui_font_texture = undefined,
+    .imgui_platform_context = undefined,
 };
 
 pub fn main() !void {
@@ -1717,15 +1794,15 @@ pub fn main() !void {
         _ = win32.ShowWindow(window_handle, .SHOW);
         defer _ = win32.DestroyWindow(window_handle);
 
-        const imgui_context = cimgui.igCreateContext(null);
-        _ = imgui_context;
-        var imgui_platform_context: imgui_win32_impl.Context = undefined;
-        imgui_win32_impl.init(&imgui_platform_context, window_handle);
-
         { // Initialize the application state
             // Create the z-buffer
             state.depth_buffer = Buffer2D(f32) { .data = try allocator.alloc(f32, @intCast(state.w * state.h)), .width = @intCast(state.w) };
             
+            // Initialize the imgui stuff
+            const imgui_context = imgui.c.igCreateContext(null);
+            _ = imgui_context;
+            imgui_win32_impl.init(&state.imgui_platform_context, window_handle, &state.imgui_font_texture);
+
             // Load the diffuse texture data
             state.texture = TGA.from_file(allocator, "res/african_head_diffuse.tga")
                 catch |err| { std.debug.print("error reading `res/african_head_diffuse.tga` {?}", .{err}); return; };
@@ -1768,10 +1845,11 @@ pub fn main() !void {
             state.mouse.y = mouse_current.y;
         }
 
+        var open: bool = true;
         while (state.running) {
 
-            imgui_win32_impl.setup_new_frame(&imgui_platform_context);
-            cimgui.igNewFrame();
+            imgui_win32_impl.setup_new_frame(&state.imgui_platform_context);
+            imgui.c.igNewFrame();
 
             var fps: i64 = undefined;
             var ms: f64 = undefined;
@@ -1856,7 +1934,7 @@ pub fn main() !void {
                 state.view_matrix = M44.lookat_right_handed(state.camera.position, state.camera.looking_at, state.camera.up);
                 // state.projection_matrix = M44.projection(-1 / state.camera.position.substract(state.camera.looking_at).magnitude());
                 state.projection_matrix = M44.perspective_projection(60*(@as(f32,std.math.pi)/180), 16/9, 0.01, 10);
-                state.viewport_matrix = M44.viewport(0, 0, state.w, state.h, 255);
+                state.viewport_matrix = M44.viewport_i32(0, 0, state.w, state.h, 255);
 
                 if (state.keys['P']) state.projection_matrix = M44.identity();
                 if (state.keys['V']) state.viewport_matrix = M44.identity();
@@ -1925,6 +2003,28 @@ pub fn main() !void {
                 // TODO there is part of the pixel buffer being rendered below the status bar from windows
                 render_text(allocator, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 50) }, "ms {d: <9.2}", .{ms});
 
+                const context_quad_2 = QuadRendererContext {
+                    .pixel_buffer = &state.pixel_buffer,
+                    .depth_buffer = &state.depth_buffer,
+                    .texture = AnyBuffer2D { .rgba = state.imgui_font_texture },
+                    .texture_width = state.imgui_font_texture.width,
+                    .texture_height = state.imgui_font_texture.height(),
+                    .viewport_matrix = state.viewport_matrix,
+                    .projection_matrix = state.projection_matrix,
+                    .view_model_matrix = state.view_matrix.multiply(
+                        M44.translation(Vector3f { .x = -0.5 + 2, .y = -0.5, .z = 0 }).multiply(M44.scale(1))
+                    ),
+                };
+                const quad_vertex_buffer_2 = [_]f32{
+                    0, 0, 0, 0, 0,
+                    1, 0, 0, 1, 0,
+                    1, 1, 0, 1, 1,
+                    0, 0, 0, 0, 0,
+                    1, 1, 0, 1, 1,
+                    0, 1, 0, 0, 1,
+                };
+                QuadRenderer.render(context_quad_2, quad_vertex_buffer_2[0..quad_vertex_buffer_2.len], 2);
+
                 // Some kind of performance visualizer
                 var performance_color: win32.RGBA = win32.rgb(255, 0, 0);
                 var performance_base: f32 = 128;
@@ -1935,10 +2035,12 @@ pub fn main() !void {
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 48) }, Vector2i { .x = @intFromFloat(@min(ms / @as(f64, @floatCast(performance_base)) * @as(f64, @floatFromInt(state.pixel_buffer.width)), @as(f64, @floatFromInt(state.pixel_buffer.width)))), .y = @intCast(state.pixel_buffer.height() - 48) }, performance_color);
                 // line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 49) }, Vector2i { .x = 100, .y = @intCast(state.pixel_buffer.height() - 49) }, green);
 
-                cimgui.igEndFrame();
-                cimgui.igRender();
-                imgui_win32_impl.render_draw_data();
-
+                // imgui.c.igShowDemoWindow(&open);
+                _ = open;
+                _ = imgui.c.igButton("OK", .{ .x = 20, .y = 10 });
+                imgui.c.igEndFrame();
+                imgui.c.igRender();
+                imgui_win32_impl.render_draw_data(&state.pixel_buffer);
             }
 
             state.running = state.running and !app_close_requested;
@@ -2020,6 +2122,10 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
     return win32.DefWindowProcW(window_handle, message_type, w_param, l_param);
 }
 
+const PipelineConfiguration = struct {
+    do_depth_testing: bool = true,
+};
+
 fn Shader(
     comptime context_type: type,
     comptime invariant_type: type,
@@ -2030,6 +2136,7 @@ fn Shader(
         const Self = @This();
         fn render(context: context_type, vertex_buffer: []const f32, face_count: usize) void {
             
+            var clipped: usize = 0;
             var face_index: usize = 0;
             label_outer: while (face_index < face_count) : (face_index += 1) {
                 
@@ -2044,7 +2151,10 @@ fn Shader(
                     if (vertex_shader(context, vertex_buffer, vertex_index, &invariants[i])) |result| {
                         tri[i] = result;
                     }
-                    else continue :label_outer;
+                    else {
+                        clipped += 1;
+                        continue :label_outer;
+                    }
                 }
 
                 // top = y = window height, bottom = y = 0
@@ -2102,6 +2212,7 @@ fn Shader(
                     }
                 }
             }
+            std.log.debug("clipped: {}", .{clipped});
         }
     };
 }
@@ -2231,7 +2342,15 @@ const QuadRenderer = Shader(
                     context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgb(rgb.r, rgb.g, rgb.b));
                 },
                 .rgba =>  |texture| {
-                    const rgba: RGBA = texture.get(texture_u, texture_v);
+                    const older_color = context.pixel_buffer.get(@intCast(x), @intCast(y));
+                    const rgba: RGBA = texture.get(texture_u, texture_v).add(
+                        RGBA {
+                            .r = older_color.r,
+                            .g = older_color.g,
+                            .b = older_color.b,
+                            .a = older_color.a,
+                        }
+                    );
                     context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
                 },
                 else => unreachable
@@ -2273,6 +2392,77 @@ const TextRenderer = Shader(
             const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.x)), 0, context.texture_width-1);
             const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.y)), 0, context.texture_height-1);
             const rgba: RGBA = context.texture.get(texture_u, texture_v);
+            context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
+        }
+    }.fragment_shader,
+);
+
+const DearImguiRendererContext = struct {
+    pixel_buffer: *Buffer2D(win32.RGBA),
+    texture: Buffer2D(RGBA),
+    texture_width: usize,
+    texture_height: usize,
+    viewport_matrix: M44,
+    projection_matrix: M44,
+    index_buffer: []const u16,
+    clip_min: Vector2f,
+    clip_max: Vector2f,
+};
+const DearImguiRendererInvariant = struct {
+    texture_uv: Vector2f,
+    color: RGBA,
+};
+const VERTEX = struct {
+    pos: Vector2f,
+    uv: Vector2f,
+    color: RGBA,
+};
+const DearImguiRenderer = Shader(
+    DearImguiRendererContext,
+    DearImguiRendererInvariant,
+    struct {
+        fn vertex_shader(context: DearImguiRendererContext, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *DearImguiRendererInvariant) ?Vector3f {
+            const real_index = context.index_buffer[vertex_index]*5;
+            const vertex: *const VERTEX = std.mem.bytesAsValue(VERTEX, std.mem.sliceAsBytes(vertex_buffer[real_index..real_index+5])[0..20]);
+            // const color: []const u8 = @ptrCast(std.mem.asBytes(&vertex_buffer[real_index+4]));
+            // out_invariant.color = RGBA { .r = color[0], .g = color[1], .b = color[2], .a = color[3] };
+            // out_invariant.texture_uv = Vector2f { .x = vertex_buffer[real_index+2] * @as(f32, @floatFromInt(context.texture_width)), .y = vertex_buffer[real_index+3] * @as(f32, @floatFromInt(context.texture_height)) };
+            // const position: Vector3f = Vector3f { .x = vertex_buffer[real_index+0], .y = vertex_buffer[real_index+1], .z = 0 };
+            // const clip_space_position = context.projection_matrix.apply_to_vec3(position);
+            // const ndc = clip_space_position.perspective_division();
+            // if (ndc.x >= 1 or ndc.x <= -1 or ndc.y >= 1 or ndc.y <= -1 or ndc.z >= 1 or ndc.z <= -1) return null;
+            // const screen_space_position = context.viewport_matrix.apply_to_vec3(ndc).perspective_division();
+            // if (screen_space_position.x >= @as(f32, @floatFromInt(context.pixel_buffer.width)) or screen_space_position.x <= 0 or screen_space_position.y >= @as(f32, @floatFromInt(context.pixel_buffer.height())) or screen_space_position.y <= 0) return null;
+            out_invariant.color = vertex.color;
+            out_invariant.texture_uv = Vector2f { .x = vertex.uv.x * @as(f32, @floatFromInt(context.texture_width)), .y = vertex.uv.y * @as(f32, @floatFromInt(context.texture_height)) };
+            const position: Vector3f = Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0 };
+            return position;
+        }
+    }.vertex_shader,
+    struct {
+        fn fragment_shader(context: DearImguiRendererContext, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]DearImguiRendererInvariant) void {
+            const texture_uv =
+                in_invariants[0].texture_uv.scale(w).add(
+                    in_invariants[1].texture_uv.scale(u).add(
+                        in_invariants[2].texture_uv.scale(v)
+                    )
+                );
+            // const color =
+            //     in_invariants[0].color.scale(w).add(
+            //         in_invariants[1].color.scale(u).add(
+            //             in_invariants[2].color.scale(v)
+            //         )
+            //     );
+
+            const color: RGBA = .{
+                .r = @intFromFloat(@as(f32, @floatFromInt(in_invariants[0].color.r)) * w + @as(f32, @floatFromInt(in_invariants[1].color.r)) * u + @as(f32, @floatFromInt(in_invariants[2].color.r)) * v),
+                .g = @intFromFloat(@as(f32, @floatFromInt(in_invariants[0].color.g)) * w + @as(f32, @floatFromInt(in_invariants[1].color.g)) * u + @as(f32, @floatFromInt(in_invariants[2].color.g)) * v),
+                .b = @intFromFloat(@as(f32, @floatFromInt(in_invariants[0].color.b)) * w + @as(f32, @floatFromInt(in_invariants[1].color.b)) * u + @as(f32, @floatFromInt(in_invariants[2].color.b)) * v),
+                .a = @intFromFloat(@as(f32, @floatFromInt(in_invariants[0].color.a)) * w + @as(f32, @floatFromInt(in_invariants[1].color.a)) * u + @as(f32, @floatFromInt(in_invariants[2].color.a)) * v),
+            };
+            const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.x)), 0, context.texture_width-1);
+            const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.y)), 0, context.texture_height-1);
+            const rgba: RGBA = context.texture.get(texture_u, texture_v).multiply(color);
             context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
         }
     }.fragment_shader,
