@@ -655,21 +655,35 @@ const RGBA = extern struct {
             .a = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.a)) * factor))),
         };
     }
-    fn add(self: RGBA, other: RGBA) RGBA {
-        return RGBA {
-            .r = @max(0, @min(255, ((self.r/255) * (self.a/255) + (other.r/255) * (other.a/255) * 1-(self.a/255)) * 255)),
-            .g = @max(0, @min(255, ((self.g/255) * (self.a/255) + (other.g/255) * (other.a/255) * 1-(self.a/255)) * 255)),
-            .b = @max(0, @min(255, ((self.b/255) * (self.a/255) + (other.b/255) * (other.a/255) * 1-(self.a/255)) * 255)),
-            .a = @max(0, @min(255, ((self.a/255) + (other.a/255) * 1-(self.a/255)) * 255)),
+    fn add(c1: RGBA, c2: RGBA) RGBA {
+        const result = RGBA {
+            .r = @intFromFloat(@max(0, @min(255, (@as(f32, @floatFromInt(c1.r))/255 + @as(f32, @floatFromInt(c2.r))/255)*255))),
+            .g = @intFromFloat(@max(0, @min(255, (@as(f32, @floatFromInt(c1.g))/255 + @as(f32, @floatFromInt(c2.g))/255)*255))),
+            .b = @intFromFloat(@max(0, @min(255, (@as(f32, @floatFromInt(c1.b))/255 + @as(f32, @floatFromInt(c2.b))/255)*255))),
+            .a = @intFromFloat(@max(0, @min(255, (@as(f32, @floatFromInt(c1.a))/255 + @as(f32, @floatFromInt(c2.a))/255)*255))),
         };
+        return result;
     }
-    fn multiply(self: RGBA, other: RGBA) RGBA {
-        return RGBA {
-            .r = @max(0, @min(255, (self.r/255) * (other.r/255) * (self.a/255) * (other.a/255) * 255)),
-            .g = @max(0, @min(255, (self.g/255) * (other.g/255) * (self.a/255) * (other.a/255) * 255)),
-            .b = @max(0, @min(255, (self.b/255) * (other.b/255) * (self.a/255) * (other.a/255) * 255)),
-            .a = @max(0, @min(255, (self.a/255) * (other.a/255) * 255)),
+    /// where `c2` is the background color
+    /// https://learnopengl.com/Advanced-OpenGL/Blending
+    fn blend(c1: RGBA, c2: RGBA) RGBA {
+        const a1: f32 = @as(f32, @floatFromInt(c1.a)) / 255;
+        const result = RGBA {
+            .r = @intFromFloat((@as(f32, @floatFromInt(c1.r))/255*a1 + @as(f32, @floatFromInt(c2.r))/255*(1-a1))*255),
+            .g = @intFromFloat((@as(f32, @floatFromInt(c1.g))/255*a1 + @as(f32, @floatFromInt(c2.g))/255*(1-a1))*255),
+            .b = @intFromFloat((@as(f32, @floatFromInt(c1.b))/255*a1 + @as(f32, @floatFromInt(c2.b))/255*(1-a1))*255),
+            .a = @intFromFloat((@as(f32, @floatFromInt(c1.a))/255*a1 + @as(f32, @floatFromInt(c2.a))/255*(1-a1))*255),
         };
+        return result;
+    }
+    fn multiply(c1: RGBA, c2: RGBA) RGBA {
+        const result = RGBA {
+            .r = @intFromFloat(((@as(f32, @floatFromInt(c1.r)) / 255) * @as(f32, @floatFromInt(c2.r)))),
+            .g = @intFromFloat(((@as(f32, @floatFromInt(c1.g)) / 255) * @as(f32, @floatFromInt(c2.g)))),
+            .b = @intFromFloat(((@as(f32, @floatFromInt(c1.b)) / 255) * @as(f32, @floatFromInt(c2.b)))),
+            .a = @intFromFloat(((@as(f32, @floatFromInt(c1.a)) / 255) * @as(f32, @floatFromInt(c2.a)))),
+        };
+        return result;
     }
     comptime { std.debug.assert(@sizeOf(RGBA) == 4); }
 };
@@ -1498,11 +1512,12 @@ const imgui_win32_impl = struct {
         _ = win32.QueryPerformanceFrequency(&performance_frequency);
         context.TicksPerSecond = performance_frequency.QuadPart;
         context.Time = counter.QuadPart;
-        
+
         const main_viewport = imgui.c.igGetMainViewport();
         main_viewport.*.PlatformHandle = window_handle;
         main_viewport.*.PlatformHandleRaw = window_handle;
 
+        io.*.Fonts.*.Flags = io.*.Fonts.*.Flags | imgui.c.ImFontAtlasFlags_NoBakedLines;
         var out_width: i32 = undefined;
         var out_height: i32 = undefined;
         var out_bytes_per_pixel: i32 = undefined;
@@ -2003,27 +2018,61 @@ pub fn main() !void {
                 // TODO there is part of the pixel buffer being rendered below the status bar from windows
                 render_text(allocator, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 50) }, "ms {d: <9.2}", .{ms});
 
-                const context_quad_2 = QuadRendererContext {
-                    .pixel_buffer = &state.pixel_buffer,
-                    .depth_buffer = &state.depth_buffer,
-                    .texture = AnyBuffer2D { .rgba = state.imgui_font_texture },
-                    .texture_width = state.imgui_font_texture.width,
-                    .texture_height = state.imgui_font_texture.height(),
-                    .viewport_matrix = state.viewport_matrix,
-                    .projection_matrix = state.projection_matrix,
-                    .view_model_matrix = state.view_matrix.multiply(
-                        M44.translation(Vector3f { .x = -0.5 + 2, .y = -0.5, .z = 0 }).multiply(M44.scale(1))
-                    ),
-                };
-                const quad_vertex_buffer_2 = [_]f32{
-                    0, 0, 0, 0, 0,
-                    1, 0, 0, 1, 0,
-                    1, 1, 0, 1, 1,
-                    0, 0, 0, 0, 0,
-                    1, 1, 0, 1, 1,
-                    0, 1, 0, 0, 1,
-                };
-                QuadRenderer.render(context_quad_2, quad_vertex_buffer_2[0..quad_vertex_buffer_2.len], 2);
+                {
+                    const context_quad_2 = QuadRendererContext {
+                        .pixel_buffer = &state.pixel_buffer,
+                        .depth_buffer = &state.depth_buffer,
+                        .texture = AnyBuffer2D { .rgba = state.imgui_font_texture },
+                        .texture_width = state.imgui_font_texture.width,
+                        .texture_height = state.imgui_font_texture.height(),
+                        .viewport_matrix = state.viewport_matrix,
+                        .projection_matrix = state.projection_matrix,
+                        .view_model_matrix = state.view_matrix.multiply(
+                            M44.translation(Vector3f { .x = -0.5 + 2, .y = -0.5, .z = 0 }).multiply(M44.scale(1/@as(f32, @floatFromInt(state.imgui_font_texture.width))))
+                        ),
+                    };
+                    const w: f32 = @floatFromInt(state.imgui_font_texture.width);
+                    const h: f32 = @floatFromInt(state.imgui_font_texture.height());
+                    const quad_vertex_buffer_2 = [_]f32{
+                        0, 0, 0, 0, 0,
+                        w, 0, 0, 1, 0,
+                        w, h, 0, 1, 1,
+                        0, 0, 0, 0, 0,
+                        w, h, 0, 1, 1,
+                        0, h, 0, 0, 1,
+                    };
+                    QuadRenderer.render(context_quad_2, quad_vertex_buffer_2[0..quad_vertex_buffer_2.len], 2);
+                }
+
+                {
+                    const font = @import("font_embedded.zig");
+                    const texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&font.data)), font.width);
+
+                    const context_quad_2 = QuadRendererContext {
+                        .pixel_buffer = &state.pixel_buffer,
+                        .depth_buffer = &state.depth_buffer,
+                        .texture = AnyBuffer2D { .rgba = texture },
+                        .texture_width = texture.width,
+                        .texture_height = texture.height(),
+                        .viewport_matrix = state.viewport_matrix,
+                        .projection_matrix = state.projection_matrix,
+                        .view_model_matrix = state.view_matrix.multiply(
+                            M44.translation(Vector3f { .x = -0.5 - 2, .y = -0.5, .z = 0 }).multiply(M44.scale(-1/@as(f32, @floatFromInt(texture.width))))
+                        ),
+                    };
+                    const w: f32 = @floatFromInt(texture.width);
+                    const h: f32 = @floatFromInt(texture.height());
+                    const quad_vertex_buffer_2 = [_]f32{
+                        0, 0, 0, 0, 0,
+                        w, 0, 0, 1, 0,
+                        w, h, 0, 1, 1,
+                        0, 0, 0, 0, 0,
+                        w, h, 0, 1, 1,
+                        0, h, 0, 0, 1,
+                    };
+                    QuadRenderer.render(context_quad_2, quad_vertex_buffer_2[0..quad_vertex_buffer_2.len], 2);
+                }
+                
 
                 // Some kind of performance visualizer
                 var performance_color: win32.RGBA = win32.rgb(255, 0, 0);
@@ -2343,7 +2392,7 @@ const QuadRenderer = Shader(
                 },
                 .rgba =>  |texture| {
                     const older_color = context.pixel_buffer.get(@intCast(x), @intCast(y));
-                    const rgba: RGBA = texture.get(texture_u, texture_v).add(
+                    const rgba: RGBA = texture.get(texture_u, texture_v).blend(
                         RGBA {
                             .r = older_color.r,
                             .g = older_color.g,
@@ -2383,15 +2432,136 @@ const TextRenderer = Shader(
     }.vertex_shader,
     struct {
         fn fragment_shader(context: TextRendererContext, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]TextRendererInvariant) void {
-            const texture_uv =
-                in_invariants[0].texture_uv.scale(w).add(
-                    in_invariants[1].texture_uv.scale(u).add(
-                        in_invariants[2].texture_uv.scale(v)
-                    )
-                );
-            const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.x)), 0, context.texture_width-1);
-            const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.y)), 0, context.texture_height-1);
-            const rgba: RGBA = context.texture.get(texture_u, texture_v);
+            const uv: Vector2f = .{
+                .x = in_invariants[0].texture_uv.x * w + in_invariants[1].texture_uv.x * u + in_invariants[2].texture_uv.x * v,
+                .y = in_invariants[0].texture_uv.y * w + in_invariants[1].texture_uv.y * u + in_invariants[2].texture_uv.y * v,
+            };
+            const bilinear_texture_sample: RGBA = filtered: {
+
+                const left: f32 = uv.x - @floor(uv.x);
+                const right: f32 = 1 - left;
+                const bottom: f32 = uv.y - @floor(uv.y);
+                const top: f32 = 1 - bottom;
+
+                var result: RGBA =  undefined;
+                var points: [8]usize = undefined;
+                if (left > right) { // closer to the right
+                    if (top > bottom) { // closer to the bottom
+                        // right bottom
+                        
+                        // current
+                        points[0] = @intFromFloat(@floor(uv.x));
+                        points[1] = @intFromFloat(@floor(uv.y));
+                        
+                        // right
+                        points[2] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
+                        points[3] = points[1];
+
+                        // bottom
+                        points[4] = points[0];
+                        points[5] = if (points[1] > 0) points[1] - 1 else points[1];
+
+                        // bottom right
+                        points[6] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
+                        points[7] = if (points[1] > 0) points[1] - 1 else points[1];
+
+                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(top+left);
+                        const c_right: RGBA = context.texture.get(points[2], points[3]).scale(right+top);
+                        const c_bottom: RGBA = context.texture.get(points[4], points[5]).scale(bottom+left);
+                        const c_bottom_right: RGBA = context.texture.get(points[6], points[7]).scale(right+bottom);
+
+                        result = c_current.add(c_right.add(c_bottom.add(c_bottom_right)));
+                    }
+                    else { // closer to the top
+                        // right top
+                        
+                        // current
+                        points[0] = @intFromFloat(@floor(uv.x));
+                        points[1] = @intFromFloat(@floor(uv.y));
+                        
+                        // right
+                        points[2] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
+                        points[3] = points[1];
+
+                        // top
+                        points[4] = points[0];
+                        points[5] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
+
+                        // top right
+                        points[6] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
+                        points[7] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
+
+                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(left+bottom);
+                        const c_right: RGBA = context.texture.get(points[2], points[3]).scale(right+bottom);
+                        const c_top: RGBA = context.texture.get(points[4], points[5]).scale(left+top);
+                        const c_top_right: RGBA = context.texture.get(points[6], points[7]).scale(top+right);
+
+                        result = c_current.add(c_right.add(c_top.add(c_top_right)));
+                    }
+                }
+                else { // closer to the left
+                    if (top > bottom) { // closer to the bottom
+                        // left bottom
+
+                        // current
+                        points[0] = @intFromFloat(@floor(uv.x));
+                        points[1] = @intFromFloat(@floor(uv.y));
+                        
+                        // left
+                        points[2] = if (points[0] > 0) points[0] - 1 else points[0];
+                        points[3] = points[1];
+
+                        // bottom
+                        points[4] = points[0];
+                        points[5] = if (points[1] > 0) points[1] - 1 else points[1];
+
+                        // bottom left
+                        points[6] = if (points[0] > 0) points[0] - 1 else points[0];
+                        points[7] = if (points[1] > 0) points[1] - 1 else points[1];
+
+                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(right+top);
+                        const c_left: RGBA = context.texture.get(points[2], points[3]).scale(left+top);
+                        const c_bottom: RGBA = context.texture.get(points[4], points[5]).scale(bottom+right);
+                        const c_bottom_left: RGBA = context.texture.get(points[6], points[7]).scale(bottom+left);
+
+                        result = c_current.add(c_left.add(c_bottom.add(c_bottom_left)));
+                    }
+                    else { // closer to the top
+                        // left top
+
+                        // current
+                        points[0] = @intFromFloat(@floor(uv.x));
+                        points[1] = @intFromFloat(@floor(uv.y));
+                        
+                        // left
+                        points[2] = if (points[0] > 0) points[0] - 1 else points[0];
+                        points[3] = points[1];
+
+                        // top
+                        points[4] = points[0];
+                        points[5] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
+
+                        // top left
+                        points[6] = if (points[0] > 0) points[0] - 1 else points[0];
+                        points[7] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
+
+                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(right+bottom);
+                        const c_left: RGBA = context.texture.get(points[2], points[3]).scale(left+bottom);
+                        const c_top: RGBA = context.texture.get(points[4], points[5]).scale(top+right);
+                        const c_top_left: RGBA = context.texture.get(points[6], points[7]).scale(top+left);
+
+                        result = c_current.add(c_left.add(c_top.add(c_top_left)));
+                    }
+                }
+
+                break :filtered result;
+            };
+            // const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(uv.x)), 0, context.texture_width-1);
+            // const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(uv.y)), 0, context.texture_height-1);
+            const old_color = context.pixel_buffer.get(@intCast(x), @intCast(y));
+            const old_color_rgba = RGBA {.r=old_color.r,.g=old_color.g,.b=old_color.b,.a=old_color.a};
+            // const rgba: RGBA = context.texture.get(texture_u, texture_v).blend(old_color_rgba);
+            const rgba: RGBA = bilinear_texture_sample.blend(old_color_rgba);
             context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
         }
     }.fragment_shader,
@@ -2424,15 +2594,6 @@ const DearImguiRenderer = Shader(
         fn vertex_shader(context: DearImguiRendererContext, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *DearImguiRendererInvariant) ?Vector3f {
             const real_index = context.index_buffer[vertex_index]*5;
             const vertex: *const VERTEX = std.mem.bytesAsValue(VERTEX, std.mem.sliceAsBytes(vertex_buffer[real_index..real_index+5])[0..20]);
-            // const color: []const u8 = @ptrCast(std.mem.asBytes(&vertex_buffer[real_index+4]));
-            // out_invariant.color = RGBA { .r = color[0], .g = color[1], .b = color[2], .a = color[3] };
-            // out_invariant.texture_uv = Vector2f { .x = vertex_buffer[real_index+2] * @as(f32, @floatFromInt(context.texture_width)), .y = vertex_buffer[real_index+3] * @as(f32, @floatFromInt(context.texture_height)) };
-            // const position: Vector3f = Vector3f { .x = vertex_buffer[real_index+0], .y = vertex_buffer[real_index+1], .z = 0 };
-            // const clip_space_position = context.projection_matrix.apply_to_vec3(position);
-            // const ndc = clip_space_position.perspective_division();
-            // if (ndc.x >= 1 or ndc.x <= -1 or ndc.y >= 1 or ndc.y <= -1 or ndc.z >= 1 or ndc.z <= -1) return null;
-            // const screen_space_position = context.viewport_matrix.apply_to_vec3(ndc).perspective_division();
-            // if (screen_space_position.x >= @as(f32, @floatFromInt(context.pixel_buffer.width)) or screen_space_position.x <= 0 or screen_space_position.y >= @as(f32, @floatFromInt(context.pixel_buffer.height())) or screen_space_position.y <= 0) return null;
             out_invariant.color = vertex.color;
             out_invariant.texture_uv = Vector2f { .x = vertex.uv.x * @as(f32, @floatFromInt(context.texture_width)), .y = vertex.uv.y * @as(f32, @floatFromInt(context.texture_height)) };
             const position: Vector3f = Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0 };
@@ -2441,28 +2602,143 @@ const DearImguiRenderer = Shader(
     }.vertex_shader,
     struct {
         fn fragment_shader(context: DearImguiRendererContext, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]DearImguiRendererInvariant) void {
-            const texture_uv =
-                in_invariants[0].texture_uv.scale(w).add(
-                    in_invariants[1].texture_uv.scale(u).add(
-                        in_invariants[2].texture_uv.scale(v)
-                    )
-                );
-            // const color =
-            //     in_invariants[0].color.scale(w).add(
-            //         in_invariants[1].color.scale(u).add(
-            //             in_invariants[2].color.scale(v)
-            //         )
-            //     );
+            const uv: Vector2f = .{
+                .x = in_invariants[0].texture_uv.x * w + in_invariants[1].texture_uv.x * u + in_invariants[2].texture_uv.x * v,
+                .y = in_invariants[0].texture_uv.y * w + in_invariants[1].texture_uv.y * u + in_invariants[2].texture_uv.y * v,
+            };
+            const bilinear_texture_sample: RGBA = filtered: {
 
-            const color: RGBA = .{
+                const left: f32 = uv.x - @floor(uv.x);
+                const right: f32 = 1 - left;
+                const bottom: f32 = uv.y - @floor(uv.y);
+                const top: f32 = 1 - bottom;
+
+                var result: RGBA =  undefined;
+                var points: [8]usize = undefined;
+                if (left > right) { // closer to the right
+                    if (top > bottom) { // closer to the bottom
+                        // right bottom
+                        
+                        // current
+                        points[0] = @intFromFloat(@floor(uv.x));
+                        points[1] = @intFromFloat(@floor(uv.y));
+                        
+                        // right
+                        points[2] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
+                        points[3] = points[1];
+
+                        // bottom
+                        points[4] = points[0];
+                        points[5] = if (points[1] > 0) points[1] - 1 else points[1];
+
+                        // bottom right
+                        points[6] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
+                        points[7] = if (points[1] > 0) points[1] - 1 else points[1];
+
+                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(top+left);
+                        const c_right: RGBA = context.texture.get(points[2], points[3]).scale(right+top);
+                        const c_bottom: RGBA = context.texture.get(points[4], points[5]).scale(bottom+left);
+                        const c_bottom_right: RGBA = context.texture.get(points[6], points[7]).scale(right+bottom);
+
+                        result = c_current.add(c_right.add(c_bottom.add(c_bottom_right)));
+                    }
+                    else { // closer to the top
+                        // right top
+                        
+                        // current
+                        points[0] = @intFromFloat(@floor(uv.x));
+                        points[1] = @intFromFloat(@floor(uv.y));
+                        
+                        // right
+                        points[2] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
+                        points[3] = points[1];
+
+                        // top
+                        points[4] = points[0];
+                        points[5] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
+
+                        // top right
+                        points[6] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
+                        points[7] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
+
+                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(left+bottom);
+                        const c_right: RGBA = context.texture.get(points[2], points[3]).scale(right+bottom);
+                        const c_top: RGBA = context.texture.get(points[4], points[5]).scale(left+top);
+                        const c_top_right: RGBA = context.texture.get(points[6], points[7]).scale(top+right);
+
+                        result = c_current.add(c_right.add(c_top.add(c_top_right)));
+                    }
+                }
+                else { // closer to the left
+                    if (top > bottom) { // closer to the bottom
+                        // left bottom
+
+                        // current
+                        points[0] = @intFromFloat(@floor(uv.x));
+                        points[1] = @intFromFloat(@floor(uv.y));
+                        
+                        // left
+                        points[2] = if (points[0] > 0) points[0] - 1 else points[0];
+                        points[3] = points[1];
+
+                        // bottom
+                        points[4] = points[0];
+                        points[5] = if (points[1] > 0) points[1] - 1 else points[1];
+
+                        // bottom left
+                        points[6] = if (points[0] > 0) points[0] - 1 else points[0];
+                        points[7] = if (points[1] > 0) points[1] - 1 else points[1];
+
+                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(right+top);
+                        const c_left: RGBA = context.texture.get(points[2], points[3]).scale(left+top);
+                        const c_bottom: RGBA = context.texture.get(points[4], points[5]).scale(bottom+right);
+                        const c_bottom_left: RGBA = context.texture.get(points[6], points[7]).scale(bottom+left);
+
+                        result = c_current.add(c_left.add(c_bottom.add(c_bottom_left)));
+                    }
+                    else { // closer to the top
+                        // left top
+
+                        // current
+                        points[0] = @intFromFloat(@floor(uv.x));
+                        points[1] = @intFromFloat(@floor(uv.y));
+                        
+                        // left
+                        points[2] = if (points[0] > 0) points[0] - 1 else points[0];
+                        points[3] = points[1];
+
+                        // top
+                        points[4] = points[0];
+                        points[5] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
+
+                        // top left
+                        points[6] = if (points[0] > 0) points[0] - 1 else points[0];
+                        points[7] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
+
+                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(right+bottom);
+                        const c_left: RGBA = context.texture.get(points[2], points[3]).scale(left+bottom);
+                        const c_top: RGBA = context.texture.get(points[4], points[5]).scale(top+right);
+                        const c_top_left: RGBA = context.texture.get(points[6], points[7]).scale(top+left);
+
+                        result = c_current.add(c_left.add(c_top.add(c_top_left)));
+                    }
+                }
+
+                break :filtered result;
+            };
+            const tint: RGBA = .{
                 .r = @intFromFloat(@as(f32, @floatFromInt(in_invariants[0].color.r)) * w + @as(f32, @floatFromInt(in_invariants[1].color.r)) * u + @as(f32, @floatFromInt(in_invariants[2].color.r)) * v),
                 .g = @intFromFloat(@as(f32, @floatFromInt(in_invariants[0].color.g)) * w + @as(f32, @floatFromInt(in_invariants[1].color.g)) * u + @as(f32, @floatFromInt(in_invariants[2].color.g)) * v),
                 .b = @intFromFloat(@as(f32, @floatFromInt(in_invariants[0].color.b)) * w + @as(f32, @floatFromInt(in_invariants[1].color.b)) * u + @as(f32, @floatFromInt(in_invariants[2].color.b)) * v),
                 .a = @intFromFloat(@as(f32, @floatFromInt(in_invariants[0].color.a)) * w + @as(f32, @floatFromInt(in_invariants[1].color.a)) * u + @as(f32, @floatFromInt(in_invariants[2].color.a)) * v),
             };
-            const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.x)), 0, context.texture_width-1);
-            const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(texture_uv.y)), 0, context.texture_height-1);
-            const rgba: RGBA = context.texture.get(texture_u, texture_v).multiply(color);
+            // const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(uv.x)), 0, context.texture_width-1);
+            // const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(uv.y)), 0, context.texture_height-1);
+            const old_color = context.pixel_buffer.get(@intCast(x), @intCast(y));
+            const old_color_rgba = RGBA {.r=old_color.r,.g=old_color.g,.b=old_color.b,.a=old_color.a};
+            // _ = old_color_rgba;
+            // const rgba: RGBA = color.blend(context.texture.get(texture_u, texture_v)).blend(old_color_rgba);
+            const rgba: RGBA = tint.blend(bilinear_texture_sample).blend(old_color_rgba);
             context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
         }
     }.fragment_shader,
@@ -2490,7 +2766,7 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA)
     defer allocator.free(vertex_buffer);
     const char_width: i32 = 4;
     const char_height: i32 = 7;
-    const size = 2;
+    const size = 8*2;
     for (text, 0..) |c, i| {
         const x: i32 = pos.x + @as(i32, @intCast(i)) * char_width * size;
         const y: i32 = pos.y;
