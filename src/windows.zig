@@ -664,6 +664,16 @@ const RGBA = extern struct {
         };
         return result;
     }
+    /// This assumes that the sum of any channel is inside the range of u8, there is no checks!
+    fn add_raw(c1: RGBA, c2: RGBA) RGBA {
+        const result = RGBA {
+            .r = c1.r + c2.r,
+            .g = c1.g + c2.g,
+            .b = c1.b + c2.b,
+            .a = c1.a + c2.a,
+        };
+        return result;
+    }
     /// where `c2` is the background color
     /// https://learnopengl.com/Advanced-OpenGL/Blending
     fn blend(c1: RGBA, c2: RGBA) RGBA {
@@ -684,6 +694,14 @@ const RGBA = extern struct {
             .a = @intFromFloat(((@as(f32, @floatFromInt(c1.a)) / 255) * @as(f32, @floatFromInt(c2.a)))),
         };
         return result;
+    }
+    pub fn mean(c1: RGBA, c2: RGBA, c3: RGBA, c4: RGBA) RGBA {
+        return RGBA {
+            .r = @as(u8, @intCast((@as(u16, @intCast(c1.r)) + @as(u16, @intCast(c2.r)) + @as(u16, @intCast(c3.r)) + @as(u16, @intCast(c4.r))) / 4)),
+            .g = @as(u8, @intCast((@as(u16, @intCast(c1.g)) + @as(u16, @intCast(c2.g)) + @as(u16, @intCast(c3.g)) + @as(u16, @intCast(c4.g))) / 4)),
+            .b = @as(u8, @intCast((@as(u16, @intCast(c1.b)) + @as(u16, @intCast(c2.b)) + @as(u16, @intCast(c3.b)) + @as(u16, @intCast(c4.b))) / 4)),
+            .a = @as(u8, @intCast((@as(u16, @intCast(c1.a)) + @as(u16, @intCast(c2.a)) + @as(u16, @intCast(c3.a)) + @as(u16, @intCast(c4.a))) / 4)),
+        };
     }
     comptime { std.debug.assert(@sizeOf(RGBA) == 4); }
 };
@@ -755,6 +773,55 @@ fn Buffer2D(comptime T: type) type {
         }
 
     };
+}
+
+fn bilinear_filtering(texture: Buffer2D(RGBA), uv: Vector2f) RGBA {
+    // https://glasnost.itcarlow.ie/~powerk/GeneralGraphicsNotes/texturemapping/TextureFiltering.html
+    // https://en.wikipedia.org/wiki/Bilinear_interpolation
+    const left: f32 = uv.x - @floor(uv.x);
+    const right: f32 = 1 - left;
+    const bottom: f32 = uv.y - @floor(uv.y);
+    const top: f32 = 1 - bottom;
+
+    const x: usize = @intFromFloat(uv.x);
+    const y: usize = @intFromFloat(uv.y);
+    
+    // where 5 is (x,y)
+    // 1 2 3
+    // 4 5 6
+    // 7 8 9
+    
+    // NOTE rather than do (x-1, y+1) to get the pixel at t1, I first check that
+    // we have "margin". If on the edge of the texture, then there is no margin so indexes
+    // stay inside the texture and nothing breaks
+    const margin_left: usize = if (x==0) 0 else 1;
+    const margin_right: usize = if (x==texture.width) 0 else 1;
+    const margin_top: usize = if (y==texture.height()) 0 else 1;
+    const margin_bottom: usize = if (y==0) 0 else 1;
+
+    const c1 = texture.get(x-margin_left,y+margin_top);
+    const c2 = texture.get(x,y+margin_top);
+    const c3 = texture.get(x+margin_right,y+margin_top);
+    const c4 = texture.get(x-margin_left,y);
+    const c5 = texture.get(x,y);
+    const c6 = texture.get(x+margin_right,y);
+    const c7 = texture.get(x-margin_left,y-margin_bottom);
+    const c8 = texture.get(x,y-margin_bottom);
+    const c9 = texture.get(x+margin_right,y-margin_bottom);
+
+    const top_left = RGBA.mean(c1, c2, c4, c5);
+    const top_right = RGBA.mean(c2, c3, c5, c6);
+    const bottom_left = RGBA.mean(c4, c5, c7, c8);
+    const bottom_right = RGBA.mean(c5, c6, c8, c9);
+
+    // interpolate top left with top right [left, right] -> top
+    // interpolate bottom left with bottom right [left, right] -> bottom
+    // interpolate top with bottom [bottom, top] -> final
+
+    const color_top = top_left.scale(right).add_raw(top_right.scale(left));
+    const color_bottom = bottom_left.scale(right).add_raw(bottom_right.scale(left));
+    const color_final = color_top.scale(bottom).add_raw(color_bottom.scale(top));
+    return color_final;
 }
 
 const OBJ = struct {
@@ -1517,7 +1584,7 @@ const imgui_win32_impl = struct {
         main_viewport.*.PlatformHandle = window_handle;
         main_viewport.*.PlatformHandleRaw = window_handle;
 
-        io.*.Fonts.*.Flags = io.*.Fonts.*.Flags | imgui.c.ImFontAtlasFlags_NoBakedLines;
+        // io.*.Fonts.*.Flags = io.*.Fonts.*.Flags | imgui.c.ImFontAtlasFlags_NoBakedLines;
         var out_width: i32 = undefined;
         var out_height: i32 = undefined;
         var out_bytes_per_pixel: i32 = undefined;
@@ -1990,7 +2057,7 @@ pub fn main() !void {
                     .light_source = state.view_matrix.apply_to_vec3(horizontally_spinning_position).discard_w(),
                 };
                 const number_of_triangles = @divExact(state.vertex_buffer.len, 8*3);
-                if (true) GouraudRenderer.render(context, state.vertex_buffer, number_of_triangles);
+                if (false) GouraudRenderer.render(context, state.vertex_buffer, number_of_triangles);
 
                 const context_quad = QuadRendererContext {
                     .pixel_buffer = &state.pixel_buffer,
@@ -2012,11 +2079,11 @@ pub fn main() !void {
                     1, 1, 0, 1, 1,
                     0, 1, 0, 0, 1,
                 };
-                QuadRenderer.render(context_quad, quad_vertex_buffer[0..quad_vertex_buffer.len], 2);
+                if (false) QuadRenderer.render(context_quad, quad_vertex_buffer[0..quad_vertex_buffer.len], 2);
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
                 // TODO there is part of the pixel buffer being rendered below the status bar from windows
-                render_text(allocator, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 50) }, "ms {d: <9.2}", .{ms});
+                render_text(allocator, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 300) }, "ms {d: <9.2}", .{ms});
 
                 {
                     const context_quad_2 = QuadRendererContext {
@@ -2057,7 +2124,7 @@ pub fn main() !void {
                         .viewport_matrix = state.viewport_matrix,
                         .projection_matrix = state.projection_matrix,
                         .view_model_matrix = state.view_matrix.multiply(
-                            M44.translation(Vector3f { .x = -0.5 - 2, .y = -0.5, .z = 0 }).multiply(M44.scale(-1/@as(f32, @floatFromInt(texture.width))))
+                            M44.translation(Vector3f { .x = -0.5 - 0, .y = -0.5, .z = 0 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
                         ),
                     };
                     const w: f32 = @floatFromInt(texture.width);
@@ -2436,126 +2503,7 @@ const TextRenderer = Shader(
                 .x = in_invariants[0].texture_uv.x * w + in_invariants[1].texture_uv.x * u + in_invariants[2].texture_uv.x * v,
                 .y = in_invariants[0].texture_uv.y * w + in_invariants[1].texture_uv.y * u + in_invariants[2].texture_uv.y * v,
             };
-            const bilinear_texture_sample: RGBA = filtered: {
-
-                const left: f32 = uv.x - @floor(uv.x);
-                const right: f32 = 1 - left;
-                const bottom: f32 = uv.y - @floor(uv.y);
-                const top: f32 = 1 - bottom;
-
-                var result: RGBA =  undefined;
-                var points: [8]usize = undefined;
-                if (left > right) { // closer to the right
-                    if (top > bottom) { // closer to the bottom
-                        // right bottom
-                        
-                        // current
-                        points[0] = @intFromFloat(@floor(uv.x));
-                        points[1] = @intFromFloat(@floor(uv.y));
-                        
-                        // right
-                        points[2] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
-                        points[3] = points[1];
-
-                        // bottom
-                        points[4] = points[0];
-                        points[5] = if (points[1] > 0) points[1] - 1 else points[1];
-
-                        // bottom right
-                        points[6] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
-                        points[7] = if (points[1] > 0) points[1] - 1 else points[1];
-
-                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(top+left);
-                        const c_right: RGBA = context.texture.get(points[2], points[3]).scale(right+top);
-                        const c_bottom: RGBA = context.texture.get(points[4], points[5]).scale(bottom+left);
-                        const c_bottom_right: RGBA = context.texture.get(points[6], points[7]).scale(right+bottom);
-
-                        result = c_current.add(c_right.add(c_bottom.add(c_bottom_right)));
-                    }
-                    else { // closer to the top
-                        // right top
-                        
-                        // current
-                        points[0] = @intFromFloat(@floor(uv.x));
-                        points[1] = @intFromFloat(@floor(uv.y));
-                        
-                        // right
-                        points[2] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
-                        points[3] = points[1];
-
-                        // top
-                        points[4] = points[0];
-                        points[5] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
-
-                        // top right
-                        points[6] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
-                        points[7] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
-
-                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(left+bottom);
-                        const c_right: RGBA = context.texture.get(points[2], points[3]).scale(right+bottom);
-                        const c_top: RGBA = context.texture.get(points[4], points[5]).scale(left+top);
-                        const c_top_right: RGBA = context.texture.get(points[6], points[7]).scale(top+right);
-
-                        result = c_current.add(c_right.add(c_top.add(c_top_right)));
-                    }
-                }
-                else { // closer to the left
-                    if (top > bottom) { // closer to the bottom
-                        // left bottom
-
-                        // current
-                        points[0] = @intFromFloat(@floor(uv.x));
-                        points[1] = @intFromFloat(@floor(uv.y));
-                        
-                        // left
-                        points[2] = if (points[0] > 0) points[0] - 1 else points[0];
-                        points[3] = points[1];
-
-                        // bottom
-                        points[4] = points[0];
-                        points[5] = if (points[1] > 0) points[1] - 1 else points[1];
-
-                        // bottom left
-                        points[6] = if (points[0] > 0) points[0] - 1 else points[0];
-                        points[7] = if (points[1] > 0) points[1] - 1 else points[1];
-
-                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(right+top);
-                        const c_left: RGBA = context.texture.get(points[2], points[3]).scale(left+top);
-                        const c_bottom: RGBA = context.texture.get(points[4], points[5]).scale(bottom+right);
-                        const c_bottom_left: RGBA = context.texture.get(points[6], points[7]).scale(bottom+left);
-
-                        result = c_current.add(c_left.add(c_bottom.add(c_bottom_left)));
-                    }
-                    else { // closer to the top
-                        // left top
-
-                        // current
-                        points[0] = @intFromFloat(@floor(uv.x));
-                        points[1] = @intFromFloat(@floor(uv.y));
-                        
-                        // left
-                        points[2] = if (points[0] > 0) points[0] - 1 else points[0];
-                        points[3] = points[1];
-
-                        // top
-                        points[4] = points[0];
-                        points[5] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
-
-                        // top left
-                        points[6] = if (points[0] > 0) points[0] - 1 else points[0];
-                        points[7] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
-
-                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(right+bottom);
-                        const c_left: RGBA = context.texture.get(points[2], points[3]).scale(left+bottom);
-                        const c_top: RGBA = context.texture.get(points[4], points[5]).scale(top+right);
-                        const c_top_left: RGBA = context.texture.get(points[6], points[7]).scale(top+left);
-
-                        result = c_current.add(c_left.add(c_top.add(c_top_left)));
-                    }
-                }
-
-                break :filtered result;
-            };
+            const bilinear_texture_sample: RGBA = bilinear_filtering(context.texture, uv);
             // const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(uv.x)), 0, context.texture_width-1);
             // const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(uv.y)), 0, context.texture_height-1);
             const old_color = context.pixel_buffer.get(@intCast(x), @intCast(y));
@@ -2606,126 +2554,7 @@ const DearImguiRenderer = Shader(
                 .x = in_invariants[0].texture_uv.x * w + in_invariants[1].texture_uv.x * u + in_invariants[2].texture_uv.x * v,
                 .y = in_invariants[0].texture_uv.y * w + in_invariants[1].texture_uv.y * u + in_invariants[2].texture_uv.y * v,
             };
-            const bilinear_texture_sample: RGBA = filtered: {
-
-                const left: f32 = uv.x - @floor(uv.x);
-                const right: f32 = 1 - left;
-                const bottom: f32 = uv.y - @floor(uv.y);
-                const top: f32 = 1 - bottom;
-
-                var result: RGBA =  undefined;
-                var points: [8]usize = undefined;
-                if (left > right) { // closer to the right
-                    if (top > bottom) { // closer to the bottom
-                        // right bottom
-                        
-                        // current
-                        points[0] = @intFromFloat(@floor(uv.x));
-                        points[1] = @intFromFloat(@floor(uv.y));
-                        
-                        // right
-                        points[2] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
-                        points[3] = points[1];
-
-                        // bottom
-                        points[4] = points[0];
-                        points[5] = if (points[1] > 0) points[1] - 1 else points[1];
-
-                        // bottom right
-                        points[6] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
-                        points[7] = if (points[1] > 0) points[1] - 1 else points[1];
-
-                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(top+left);
-                        const c_right: RGBA = context.texture.get(points[2], points[3]).scale(right+top);
-                        const c_bottom: RGBA = context.texture.get(points[4], points[5]).scale(bottom+left);
-                        const c_bottom_right: RGBA = context.texture.get(points[6], points[7]).scale(right+bottom);
-
-                        result = c_current.add(c_right.add(c_bottom.add(c_bottom_right)));
-                    }
-                    else { // closer to the top
-                        // right top
-                        
-                        // current
-                        points[0] = @intFromFloat(@floor(uv.x));
-                        points[1] = @intFromFloat(@floor(uv.y));
-                        
-                        // right
-                        points[2] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
-                        points[3] = points[1];
-
-                        // top
-                        points[4] = points[0];
-                        points[5] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
-
-                        // top right
-                        points[6] = if (points[0] < context.texture_width-1) points[0] + 1 else points[0];
-                        points[7] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
-
-                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(left+bottom);
-                        const c_right: RGBA = context.texture.get(points[2], points[3]).scale(right+bottom);
-                        const c_top: RGBA = context.texture.get(points[4], points[5]).scale(left+top);
-                        const c_top_right: RGBA = context.texture.get(points[6], points[7]).scale(top+right);
-
-                        result = c_current.add(c_right.add(c_top.add(c_top_right)));
-                    }
-                }
-                else { // closer to the left
-                    if (top > bottom) { // closer to the bottom
-                        // left bottom
-
-                        // current
-                        points[0] = @intFromFloat(@floor(uv.x));
-                        points[1] = @intFromFloat(@floor(uv.y));
-                        
-                        // left
-                        points[2] = if (points[0] > 0) points[0] - 1 else points[0];
-                        points[3] = points[1];
-
-                        // bottom
-                        points[4] = points[0];
-                        points[5] = if (points[1] > 0) points[1] - 1 else points[1];
-
-                        // bottom left
-                        points[6] = if (points[0] > 0) points[0] - 1 else points[0];
-                        points[7] = if (points[1] > 0) points[1] - 1 else points[1];
-
-                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(right+top);
-                        const c_left: RGBA = context.texture.get(points[2], points[3]).scale(left+top);
-                        const c_bottom: RGBA = context.texture.get(points[4], points[5]).scale(bottom+right);
-                        const c_bottom_left: RGBA = context.texture.get(points[6], points[7]).scale(bottom+left);
-
-                        result = c_current.add(c_left.add(c_bottom.add(c_bottom_left)));
-                    }
-                    else { // closer to the top
-                        // left top
-
-                        // current
-                        points[0] = @intFromFloat(@floor(uv.x));
-                        points[1] = @intFromFloat(@floor(uv.y));
-                        
-                        // left
-                        points[2] = if (points[0] > 0) points[0] - 1 else points[0];
-                        points[3] = points[1];
-
-                        // top
-                        points[4] = points[0];
-                        points[5] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
-
-                        // top left
-                        points[6] = if (points[0] > 0) points[0] - 1 else points[0];
-                        points[7] = if (points[1] < context.texture_height-1) points[1] + 1 else points[1];
-
-                        const c_current: RGBA = context.texture.get(points[0], points[1]).scale(right+bottom);
-                        const c_left: RGBA = context.texture.get(points[2], points[3]).scale(left+bottom);
-                        const c_top: RGBA = context.texture.get(points[4], points[5]).scale(top+right);
-                        const c_top_left: RGBA = context.texture.get(points[6], points[7]).scale(top+left);
-
-                        result = c_current.add(c_left.add(c_top.add(c_top_left)));
-                    }
-                }
-
-                break :filtered result;
-            };
+            const bilinear_texture_sample: RGBA = bilinear_filtering(context.texture, uv);
             const tint: RGBA = .{
                 .r = @intFromFloat(@as(f32, @floatFromInt(in_invariants[0].color.r)) * w + @as(f32, @floatFromInt(in_invariants[1].color.r)) * u + @as(f32, @floatFromInt(in_invariants[2].color.r)) * v),
                 .g = @intFromFloat(@as(f32, @floatFromInt(in_invariants[0].color.g)) * w + @as(f32, @floatFromInt(in_invariants[1].color.g)) * u + @as(f32, @floatFromInt(in_invariants[2].color.g)) * v),
@@ -2766,7 +2595,7 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA)
     defer allocator.free(vertex_buffer);
     const char_width: i32 = 4;
     const char_height: i32 = 7;
-    const size = 8*2;
+    const size = 4;
     for (text, 0..) |c, i| {
         const x: i32 = pos.x + @as(i32, @intCast(i)) * char_width * size;
         const y: i32 = pos.y;
