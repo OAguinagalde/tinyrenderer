@@ -2650,37 +2650,246 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA)
 // TODO finish this...
 // triangle clipping on at least one plane
 // 
-//     const Plane = struct { a: f32; b: f32; c: f32; d: f32; };
-//     pub fn intersection(p1: Vector3f, p2: Vector3f, plane: Plane) Vector3f {
-//         const t: f32 =
-//             -(plane.a * p1.x + plane.b * p1.y + plane.c * p1.z + plane.d) /
-//             (plane.a * (p2.x - p1.x) + plane.b * (p2.y - p1.y) + plane.c * (p2.z - p1.z));
-//     
-//         const intersection_point = Vector3f {
-//             .x = p1.x + t * (p2.x - p1.x),
-//             .y = p1.y + t * (p2.y - p1.y),
-//             .z = p1.z + t * (p2.z - p1.z),
-//         };
-//     
-//         return intersection_point;
-//     }
-// 
-// I can find the equation of a plane `ax + by + cz + d = 0` by knowing a point of it and a perpendicular vector (a,b,c)
-// 
-//     pub fn plane(point: Vector3f, normal: Vector3f) Plane {
-//         const d = - ((normal.x*point.x)+(normal.y*point.y)+(normal.z*point.z));
-//         return Plane { .a = normal.a, .b = normal.b, .c = normal.c, .d = d };
-//     }
-// 
-//     pub fn signed_distance_to_plane(point: Vector3f, plane: Plane) f32 {
-//         return plane.a * point.x +
-//             plane.b * point.y +
-//             plane.c * point.z +
-//             plane.d;
-//     }
-// 
 // if 1 or 2 (but not 3) points of a given triangle are outside the plane, then calculate the 1 or 2 clipped triangles that need to be rendered
 // continue implementing this ...
+
+const Plane = struct {
+    
+    a: f32,
+    b: f32,
+    c: f32,
+    d: f32,
+
+    pub fn from(point: Vector3f, normal: Vector3f) Plane {
+        const d = - ((normal.x*point.x)+(normal.y*point.y)+(normal.z*point.z));
+        return Plane { .a = normal.a, .b = normal.b, .c = normal.c, .d = d };
+    }
+
+    pub fn signed_distance_to_point(plane: Plane, point: Vector3f) f32 {
+        return plane.a * point.x +
+            plane.b * point.y +
+            plane.c * point.z +
+            plane.d;
+    }
+
+    pub fn intersection(plane: Plane, p1: Vector3f, p2: Vector3f) Vector3f {
+        const t: f32 =
+            -(plane.a * p1.x + plane.b * p1.y + plane.c * p1.z + plane.d) /
+            (plane.a * (p2.x - p1.x) + plane.b * (p2.y - p1.y) + plane.c * (p2.z - p1.z));
+
+        const intersection_point = Vector3f {
+            .x = p1.x + t * (p2.x - p1.x),
+            .y = p1.y + t * (p2.y - p1.y),
+            .z = p1.z + t * (p2.z - p1.z),
+        };
+
+        return intersection_point;
+    }
+};
+
+const GraphicsPipelineConfiguration = struct {
+    blend_with_background: bool = false,
+    use_index_buffer: bool = false,
+    do_triangle_clipping: bool = false,
+    do_depth_testing: bool = false,
+    do_perspective_correct_interpolation: bool = false,
+    pub fn Requirements(comptime self: GraphicsPipelineConfiguration) type {
+        var fields: []const std.builtin.Type.StructField = [_] std.builtin.Type.StructField {
+            std.builtin.Type.StructField {
+                .default_value = null,
+                .is_comptime = false,
+                .name = "viewport_matrix",
+                .type = M44,
+                .alignment = @alignOf(M44)
+            },
+        };
+        if (self.use_index_buffer) fields = fields ++ std.builtin.Type.StructField {
+            .default_value = null,
+            .is_comptime = false,
+            .name = "index_buffer",
+            .type = []const u16,
+            .alignment = @alignOf([]const u16)
+        };
+        if (self.do_depth_testing) fields = fields ++ std.builtin.Type.StructField {
+            .default_value = null,
+            .is_comptime = false,
+            .name = "depth_buffer",
+            .type = Buffer2D(f32),
+            .alignment = @alignOf([]f32)
+        };
+        // TODO what exactly should I do with declarations?
+        var declarations: []const std.builtin.Type.Declaration = [_] std.builtin.Type.Declaration {
+            .{ .name = "" },
+            .{ .name = "" },
+        };
+        const requirements = std.builtin.Type {
+            .Struct = .{
+                .is_tuple = false,
+                .fields = fields,
+                .layout = .Auto,
+                .decls = declarations,
+            }
+        };
+        return @Type(requirements);
+    }
+};
+
+fn GraphicsPipeline(
+    comptime final_color_type: type,
+    comptime context_type: type,
+    comptime invariant_type: type,
+    comptime vertex_type: type,
+    comptime pipeline_configuration: GraphicsPipelineConfiguration,
+    comptime pipeline_requirements: pipeline_configuration.Requirements(),
+    comptime vertex_shader: fn(context: context_type, vertex_buffer: vertex_type, out_invariant: *invariant_type) Vector4f,
+    comptime fragment_shader: fn(context: context_type, invariants: invariant_type) final_color_type,
+) type {
+    return struct {
+        const Self = @This();
+        fn render(pixel_buffer: Buffer2D(final_color_type), context: context_type, vertex_buffer: []const vertex_type, face_count: usize) void {
+            
+            var face_index: usize = 0;
+            label_outer: while (face_index < face_count) : (face_index += 1) {
+                
+                var invariants: [3]invariant_type = undefined;
+                var tri: [3]Vector3f = undefined;
+                var w_used_for_perspective_correction: [3]f32 = undefined;
+                var depth: [3]f32 = undefined;
+
+                // pass all 3 vertices of this face through the vertex shader
+                var clipped: usize = 0;
+                inline for(0..3) |i| {
+                    const vertex_index = index: {
+                        if (!pipeline_configuration.use_index_buffer) break :index face_index * 3 + i
+                        else break :index pipeline_requirements.index_buffer[face_index * 3 + i];
+                    };
+                    const vertex_data: vertex_type = vertex_buffer[vertex_index];
+                    const clip_space_position = vertex_shader(context, vertex_data, &invariants[i]);
+                    const ndc = clip_space_position.perspective_division();
+                    if (ndc.x >= 1 or ndc.x <= -1 or ndc.y >= 1 or ndc.y <= -1 or ndc.z >= 1 or ndc.z <= -1) {
+                        if (pipeline_configuration.do_triangle_clipping) {
+                            clipped += 1;
+                            @panic("triangle clipping not yet implemented");
+                            // TODO how can I get a point and the normal of the frustrum? Maybe I can take those directly from the projection matrix?
+                            // Once I have the plane I can check for intersection points and form new triangles (that form the clipped triangle)
+                            // Plane.from(point, normal)
+                        }
+                        else continue :label_outer;
+                    }
+                    if (pipeline_configuration.do_depth_testing) depth[i] = ndc.z;
+                    if (pipeline_configuration.do_perspective_correct_interpolation) w_used_for_perspective_correction[i] = clip_space_position.z;
+                    const screen_space_position = pipeline_requirements.viewport_matrix.apply_to_vec3(ndc).perspective_division();
+                    tri[i] = screen_space_position;
+                }
+
+                // top = y = window height, bottom = y = 0
+                const a = &tri[0];
+                const b = &tri[1];
+                const c = &tri[2];
+
+                // calculate the bounding of the triangle's projection on the screen
+                const left: usize = @intFromFloat(@min(a.x, @min(b.x, c.x)));
+                const top: usize = @intFromFloat(@min(a.y, @min(b.y, c.y)));
+                const right: usize = @intFromFloat(@max(a.x, @max(b.x, c.x)));
+                const bottom: usize = @intFromFloat(@max(a.y, @max(b.y, c.y)));
+
+                // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
+                // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
+                // test it just in case
+
+                // bottom to top
+                var y: usize = bottom;
+                while (y >= top) : (y -= 1) {
+                    
+                    // left to right
+                    var x: usize = left;
+                    while (x <= right) : (x += 1) {
+                        
+                        // barycentric coordinates of the current pixel
+                        const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
+
+                        const ab = b.substract(a.*);
+                        const ac = c.substract(a.*);
+                        const ap = pixel.substract(a.*);
+                        const bp = pixel.substract(b.*);
+                        const ca = a.substract(c.*);
+
+                        // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
+                        // the magnitude of the cross product can be interpreted as the area of the parallelogram.
+                        const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+                        const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
+                        const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
+
+                        const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
+                        const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
+                        const w: f32 = (1 - u - v);
+
+                        // The inverse of the barycentric would be `P=wA+uB+vC`
+
+                        // determine if a pixel is in fact part of the triangle
+                        if (u < 0 or u >= 1) continue;
+                        if (v < 0 or v >= 1) continue;
+                        if (w < 0 or w >= 1) continue;
+
+                        if (pipeline_configuration.do_depth_testing) {
+                            const z = depth[0] * w + depth[1] * u + depth[2] * v;
+                            if (pipeline_requirements.depth_buffer.get(x, y) >= z) continue;
+                            pipeline_requirements.depth_buffer.set(x, y, z);
+                        }
+
+                        var interpolated_invariants: invariant_type = undefined;
+                        if (pipeline_configuration.do_perspective_correct_interpolation) {
+                            const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * w + 1/w_used_for_perspective_correction[2] * w;
+                            for (@typeInfo(invariant_type).Struct.fields) |invariant| {
+                                @field(interpolated_invariants, invariant.name) =
+                                    switch (invariant.type) {
+                                        Vector2f => Vector2f {
+                                            .x = (@field(invariants[0], invariant.name).x/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).x/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).x/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                            .y = (@field(invariants[0], invariant.name).y/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).y/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).y/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                        },
+                                        RGBA => RGBA {
+                                            .r = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.r))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.r))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                            .g = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.g))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.g))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                            .b = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                            .a = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                        },
+                                        f32 => (@field(invariants[0], invariant.name)/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name)/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name)/w_used_for_perspective_correction[2] * v) / perspective_correction
+                                    };
+                            }
+                        }
+                        else {
+                            for (@typeInfo(invariant_type).Struct.fields) |invariant| {
+                                @field(interpolated_invariants, invariant.name) =
+                                    switch (invariant.type) {
+                                        Vector2f => Vector2f {
+                                            .x = @field(invariants[0], invariant.name).x * w + @field(invariants[1], invariant.name).x * u + @field(invariants[2], invariant.name).x * v,
+                                            .y = @field(invariants[0], invariant.name).y * w + @field(invariants[1], invariant.name).y * u + @field(invariants[2], invariant.name).y * v,
+                                        },
+                                        RGBA => RGBA {
+                                            .r = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.r)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.r)) * v),
+                                            .g = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.g)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.g)) * v),
+                                            .b = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b)) * v),
+                                            .a = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a)) * v),
+                                        },
+                                        f32 => @field(invariants[0], invariant.name) * w + @field(invariants[1], invariant.name) * u + @field(invariants[2], invariant.name) * v
+                                    };
+                            }
+                        }
+
+                        const final_color = fragment_shader(context, interpolated_invariants);
+                        
+                        if (pipeline_configuration.blend_with_background) {
+                            const old_color = pixel_buffer.get(x, y);
+                            pixel_buffer.set(x, y, final_color.blend(old_color));
+                        }
+                        else pixel_buffer.set(x, y, final_color);
+
+                    }
+                }
+            }
+        }
+    };
+}
 
 // TODO implement a backend for dear imgui
 // 1. Get imgui working in a zig project
