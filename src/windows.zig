@@ -760,7 +760,7 @@ fn Buffer2D(comptime T: type) type {
             return @divExact(self.data.len, self.width);
         }
 
-        fn set(self: *Self, x: usize, y: usize, item: T) void {
+        fn set(self: Self, x: usize, y: usize, item: T) void {
             self.data[x + self.width * y] = item;
         }
         
@@ -773,6 +773,12 @@ fn Buffer2D(comptime T: type) type {
         }
 
     };
+}
+
+fn texture_sample(comptime texture_pixel_type: type, texture_data: []texture_pixel_type, texture_width: usize, texture_height: usize, uv: Vector2f) texture_pixel_type {
+    const u: usize = @intFromFloat(uv.x * @as(f32, @floatFromInt(texture_width-1)));
+    const v: usize = @intFromFloat(uv.y * @as(f32, @floatFromInt(texture_height-1)));
+    return texture_data[u + texture_width*v];
 }
 
 fn bilinear_filtering(texture: Buffer2D(RGBA), uv: Vector2f) RGBA {
@@ -1597,7 +1603,7 @@ const imgui_win32_impl = struct {
         imgui.c.ImFontAtlas_SetTexID(io.*.Fonts, out_font_texture);
     }
 
-    fn render_draw_data(pixel_buffer: *Buffer2D(win32.RGBA)) void {
+    fn render_draw_data(pixel_buffer: Buffer2D(win32.RGBA)) void {
         const draw_data = imgui.c.igGetDrawData();
         const clip_offset = draw_data.*.DisplayPos;
         const projection_matrix = M44.orthographic_projection(draw_data.*.DisplayPos.x, draw_data.*.DisplayPos.x + draw_data.*.DisplaySize.x, draw_data.*.DisplayPos.y, draw_data.*.DisplayPos.y + draw_data.*.DisplaySize.y, 0.1, 1000);
@@ -1614,22 +1620,20 @@ const imgui_win32_impl = struct {
                 const clip_min = Vector2f { .x = command.ClipRect.x - clip_offset.x, .y = command.ClipRect.y - clip_offset.y };
                 const clip_max = Vector2f { .x = command.ClipRect.z - clip_offset.x, .y = command.ClipRect.w - clip_offset.y };
                 if (clip_max.x <= clip_min.x or clip_max.y <= clip_min.y) continue;
-                
                 const texture: *Buffer2D(RGBA) = @as(*Buffer2D(RGBA), @alignCast(@ptrCast(command.TextureId.?)));
                 std.debug.assert(texture == &state.imgui_font_texture);
-                const render_context = DearImguiRendererContext {
-                    .pixel_buffer = pixel_buffer,
+                const vertex_data: []const ImguiRendererVertex = std.mem.bytesAsSlice(ImguiRendererVertex, std.mem.sliceAsBytes(vertex_buffer.used_slice()))[command.VtxOffset..];
+                const render_context = ImguiRendererContext {
                     .texture = texture.*,
                     .texture_width = texture.width,
                     .texture_height = texture.height(),
                     .projection_matrix = projection_matrix,
+                };
+                const render_requirements = ImguiRendererRequirements {
                     .viewport_matrix = viewport_matrix,
                     .index_buffer = index_buffer.used_slice()[command.IdxOffset..],
-                    .clip_min = clip_min,
-                    .clip_max = clip_max,
                 };
-                const vertex_buffer_asf32: []f32 = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(vertex_buffer.used_slice()));
-                DearImguiRenderer.render(render_context, vertex_buffer_asf32[command.VtxOffset..], command.ElemCount / 3);
+                ImguiRenderer.render(pixel_buffer, render_context, vertex_data, command.ElemCount / 3, render_requirements);
             }
         }
     }
@@ -2083,7 +2087,7 @@ pub fn main() !void {
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
                 // TODO there is part of the pixel buffer being rendered below the status bar from windows
-                render_text(allocator, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 300) }, "ms {d: <9.2}", .{ms});
+                if (true) render_text(allocator, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 300) }, "ms {d: <9.2}", .{ms});
 
                 {
                     const context_quad_2 = QuadRendererContext {
@@ -2108,7 +2112,7 @@ pub fn main() !void {
                         w, h, 0, 1, 1,
                         0, h, 0, 0, 1,
                     };
-                    QuadRenderer.render(context_quad_2, quad_vertex_buffer_2[0..quad_vertex_buffer_2.len], 2);
+                    if (false) QuadRenderer.render(context_quad_2, quad_vertex_buffer_2[0..quad_vertex_buffer_2.len], 2);
                 }
 
                 {
@@ -2137,9 +2141,8 @@ pub fn main() !void {
                         w, h, 0, 1, 1,
                         0, h, 0, 0, 1,
                     };
-                    QuadRenderer.render(context_quad_2, quad_vertex_buffer_2[0..quad_vertex_buffer_2.len], 2);
+                    if (false) QuadRenderer.render(context_quad_2, quad_vertex_buffer_2[0..quad_vertex_buffer_2.len], 2);
                 }
-                
 
                 // Some kind of performance visualizer
                 var performance_color: win32.RGBA = win32.rgb(255, 0, 0);
@@ -2147,16 +2150,16 @@ pub fn main() !void {
                 if (ms < 64) { performance_base = 64; performance_color = win32.rgb(255, 150, 0); }
                 if (ms < 32) { performance_base = 32; performance_color = win32.rgb(240, 204, 0); }
                 if (ms < 16) { performance_base = 16; performance_color = win32.rgb(174, 255, 0); }
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 49) }, Vector2i { .x = @intFromFloat(@min(ms / @as(f64, @floatCast(performance_base)) * @as(f64, @floatFromInt(state.pixel_buffer.width)), @as(f64, @floatFromInt(state.pixel_buffer.width)))), .y = @intCast(state.pixel_buffer.height() - 49) }, performance_color);
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 48) }, Vector2i { .x = @intFromFloat(@min(ms / @as(f64, @floatCast(performance_base)) * @as(f64, @floatFromInt(state.pixel_buffer.width)), @as(f64, @floatFromInt(state.pixel_buffer.width)))), .y = @intCast(state.pixel_buffer.height() - 48) }, performance_color);
+                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 100) }, Vector2i { .x = @intFromFloat(@min(ms / @as(f64, @floatCast(performance_base)) * @as(f64, @floatFromInt(state.pixel_buffer.width)), @as(f64, @floatFromInt(state.pixel_buffer.width)))), .y = @intCast(state.pixel_buffer.height() - 49) }, performance_color);
+                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 101) }, Vector2i { .x = @intFromFloat(@min(ms / @as(f64, @floatCast(performance_base)) * @as(f64, @floatFromInt(state.pixel_buffer.width)), @as(f64, @floatFromInt(state.pixel_buffer.width)))), .y = @intCast(state.pixel_buffer.height() - 48) }, performance_color);
                 // line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 49) }, Vector2i { .x = 100, .y = @intCast(state.pixel_buffer.height() - 49) }, green);
 
-                // imgui.c.igShowDemoWindow(&open);
-                _ = open;
-                _ = imgui.c.igButton("OK", .{ .x = 20, .y = 10 });
+                imgui.c.igShowDemoWindow(&open);
+                // _ = open;
+                // _ = imgui.c.igButton("OK", .{ .x = 20, .y = 10 });
                 imgui.c.igEndFrame();
                 imgui.c.igRender();
-                imgui_win32_impl.render_draw_data(&state.pixel_buffer);
+                imgui_win32_impl.render_draw_data(state.pixel_buffer);
             }
 
             state.running = state.running and !app_close_requested;
@@ -2694,7 +2697,7 @@ const GraphicsPipelineConfiguration = struct {
     do_depth_testing: bool = false,
     do_perspective_correct_interpolation: bool = false,
     pub fn Requirements(comptime self: GraphicsPipelineConfiguration) type {
-        var fields: []const std.builtin.Type.StructField = [_] std.builtin.Type.StructField {
+        var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField {
             std.builtin.Type.StructField {
                 .default_value = null,
                 .is_comptime = false,
@@ -2703,24 +2706,29 @@ const GraphicsPipelineConfiguration = struct {
                 .alignment = @alignOf(M44)
             },
         };
-        if (self.use_index_buffer) fields = fields ++ std.builtin.Type.StructField {
-            .default_value = null,
-            .is_comptime = false,
-            .name = "index_buffer",
-            .type = []const u16,
-            .alignment = @alignOf([]const u16)
+        if (self.use_index_buffer) fields = fields ++ [_]std.builtin.Type.StructField {
+                std.builtin.Type.StructField {
+                .default_value = null,
+                .is_comptime = false,
+                .name = "index_buffer",
+                .type = []const u16,
+                .alignment = @alignOf([]const u16)
+            }
         };
-        if (self.do_depth_testing) fields = fields ++ std.builtin.Type.StructField {
-            .default_value = null,
-            .is_comptime = false,
-            .name = "depth_buffer",
-            .type = Buffer2D(f32),
-            .alignment = @alignOf([]f32)
+        if (self.do_depth_testing) fields = fields ++ [_]std.builtin.Type.StructField {
+                std.builtin.Type.StructField {
+                .default_value = null,
+                .is_comptime = false,
+                .name = "depth_buffer",
+                .type = Buffer2D(f32),
+                .alignment = @alignOf([]f32)
+            }
         };
         // TODO what exactly should I do with declarations?
-        var declarations: []const std.builtin.Type.Declaration = [_] std.builtin.Type.Declaration {
-            .{ .name = "" },
-            .{ .name = "" },
+        // according to the compiler, when I put any declaration whatsoever I ger `error: reified structs must have no decls`
+        // not sure what that means
+        var declarations: []const std.builtin.Type.Declaration = &[_]std.builtin.Type.Declaration {
+            // .{ .name = "" },
         };
         const requirements = std.builtin.Type {
             .Struct = .{
@@ -2740,13 +2748,12 @@ fn GraphicsPipeline(
     comptime invariant_type: type,
     comptime vertex_type: type,
     comptime pipeline_configuration: GraphicsPipelineConfiguration,
-    comptime pipeline_requirements: pipeline_configuration.Requirements(),
     comptime vertex_shader: fn(context: context_type, vertex_buffer: vertex_type, out_invariant: *invariant_type) Vector4f,
     comptime fragment_shader: fn(context: context_type, invariants: invariant_type) final_color_type,
 ) type {
     return struct {
         const Self = @This();
-        fn render(pixel_buffer: Buffer2D(final_color_type), context: context_type, vertex_buffer: []const vertex_type, face_count: usize) void {
+        fn render(pixel_buffer: Buffer2D(final_color_type), context: context_type, vertex_buffer: []const vertex_type, face_count: usize, requirements: pipeline_configuration.Requirements()) void {
             
             var face_index: usize = 0;
             label_outer: while (face_index < face_count) : (face_index += 1) {
@@ -2761,7 +2768,7 @@ fn GraphicsPipeline(
                 inline for(0..3) |i| {
                     const vertex_index = index: {
                         if (!pipeline_configuration.use_index_buffer) break :index face_index * 3 + i
-                        else break :index pipeline_requirements.index_buffer[face_index * 3 + i];
+                        else break :index requirements.index_buffer[face_index * 3 + i];
                     };
                     const vertex_data: vertex_type = vertex_buffer[vertex_index];
                     const clip_space_position = vertex_shader(context, vertex_data, &invariants[i]);
@@ -2778,7 +2785,7 @@ fn GraphicsPipeline(
                     }
                     if (pipeline_configuration.do_depth_testing) depth[i] = ndc.z;
                     if (pipeline_configuration.do_perspective_correct_interpolation) w_used_for_perspective_correction[i] = clip_space_position.z;
-                    const screen_space_position = pipeline_requirements.viewport_matrix.apply_to_vec3(ndc).perspective_division();
+                    const screen_space_position = requirements.viewport_matrix.apply_to_vec3(ndc).perspective_division();
                     tri[i] = screen_space_position;
                 }
 
@@ -2833,14 +2840,14 @@ fn GraphicsPipeline(
 
                         if (pipeline_configuration.do_depth_testing) {
                             const z = depth[0] * w + depth[1] * u + depth[2] * v;
-                            if (pipeline_requirements.depth_buffer.get(x, y) >= z) continue;
-                            pipeline_requirements.depth_buffer.set(x, y, z);
+                            if (requirements.depth_buffer.get(x, y) >= z) continue;
+                            requirements.depth_buffer.set(x, y, z);
                         }
 
                         var interpolated_invariants: invariant_type = undefined;
                         if (pipeline_configuration.do_perspective_correct_interpolation) {
                             const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * w + 1/w_used_for_perspective_correction[2] * w;
-                            for (@typeInfo(invariant_type).Struct.fields) |invariant| {
+                            inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
                                 @field(interpolated_invariants, invariant.name) =
                                     switch (invariant.type) {
                                         Vector2f => Vector2f {
@@ -2853,12 +2860,13 @@ fn GraphicsPipeline(
                                             .b = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b))/w_used_for_perspective_correction[2] * v) / perspective_correction),
                                             .a = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a))/w_used_for_perspective_correction[2] * v) / perspective_correction),
                                         },
-                                        f32 => (@field(invariants[0], invariant.name)/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name)/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name)/w_used_for_perspective_correction[2] * v) / perspective_correction
+                                        f32 => (@field(invariants[0], invariant.name)/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name)/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name)/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                        else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
                                     };
                             }
                         }
                         else {
-                            for (@typeInfo(invariant_type).Struct.fields) |invariant| {
+                            inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
                                 @field(interpolated_invariants, invariant.name) =
                                     switch (invariant.type) {
                                         Vector2f => Vector2f {
@@ -2866,12 +2874,13 @@ fn GraphicsPipeline(
                                             .y = @field(invariants[0], invariant.name).y * w + @field(invariants[1], invariant.name).y * u + @field(invariants[2], invariant.name).y * v,
                                         },
                                         RGBA => RGBA {
-                                            .r = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.r)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.r)) * v),
-                                            .g = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.g)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.g)) * v),
-                                            .b = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b)) * v),
-                                            .a = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a)) * v),
+                                            .r = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).r)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).r)) * v),
+                                            .g = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).g)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).g)) * v),
+                                            .b = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).b)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).b)) * v),
+                                            .a = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).a)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).a)) * v),
                                         },
-                                        f32 => @field(invariants[0], invariant.name) * w + @field(invariants[1], invariant.name) * u + @field(invariants[2], invariant.name) * v
+                                        f32 => @field(invariants[0], invariant.name) * w + @field(invariants[1], invariant.name) * u + @field(invariants[2], invariant.name) * v,
+                                        else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
                                     };
                             }
                         }
@@ -2890,6 +2899,53 @@ fn GraphicsPipeline(
         }
     };
 }
+
+const imgui_renderer_pipeline_config = GraphicsPipelineConfiguration {
+    .blend_with_background = false,
+    .use_index_buffer = true,
+    .do_triangle_clipping = false,
+    .do_depth_testing = false,
+    .do_perspective_correct_interpolation = false,
+};
+const ImguiRendererRequirements = imgui_renderer_pipeline_config.Requirements();
+const ImguiRendererContext = struct {
+    texture: Buffer2D(RGBA),
+    texture_width: usize,
+    texture_height: usize,
+    projection_matrix: M44,
+};
+const ImguiRendererInvariant = struct {
+    texture_uv: Vector2f,
+    color: RGBA,
+};
+const ImguiRendererVertex = struct {
+    pos: Vector2f,
+    uv: Vector2f,
+    color: RGBA,
+};
+const ImguiRenderer = GraphicsPipeline(
+    win32.RGBA,
+    ImguiRendererContext,
+    ImguiRendererInvariant,
+    ImguiRendererVertex,
+    imgui_renderer_pipeline_config,
+    struct {
+        fn vertex_shader(context: ImguiRendererContext, vertex: ImguiRendererVertex, out_invariant: *ImguiRendererInvariant) Vector4f {
+            // _ = context;
+            out_invariant.color = vertex.color;
+            out_invariant.texture_uv = vertex.uv;
+            return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0 });
+            // return Vector4f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0, .w = 1 };
+        }
+    }.vertex_shader,
+    struct {
+        fn fragment_shader(context: ImguiRendererContext, invariants: ImguiRendererInvariant) win32.RGBA {
+            const sample = texture_sample(RGBA, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+            const rgba = invariants.color.blend(sample);
+            return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a);
+        }
+    }.fragment_shader,
+);
 
 // TODO implement a backend for dear imgui
 // 1. Get imgui working in a zig project
