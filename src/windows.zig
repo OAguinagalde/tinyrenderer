@@ -77,6 +77,17 @@ const win32 = struct {
                 .a = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.a)) * factor))),
             };
         }
+
+        fn blend(c1: win32.RGBA, c2: win32.RGBA) win32.RGBA {
+        const a1: f32 = @as(f32, @floatFromInt(c1.a)) / 255;
+        const result = win32.RGBA {
+            .r = @intFromFloat((@as(f32, @floatFromInt(c1.r))/255*a1 + @as(f32, @floatFromInt(c2.r))/255*(1-a1))*255),
+            .g = @intFromFloat((@as(f32, @floatFromInt(c1.g))/255*a1 + @as(f32, @floatFromInt(c2.g))/255*(1-a1))*255),
+            .b = @intFromFloat((@as(f32, @floatFromInt(c1.b))/255*a1 + @as(f32, @floatFromInt(c2.b))/255*(1-a1))*255),
+            .a = @intFromFloat((@as(f32, @floatFromInt(c1.a))/255*a1 + @as(f32, @floatFromInt(c2.a))/255*(1-a1))*255),
+        };
+        return result;
+    }
     };
 
     fn rgb(r: u8, g: u8, b: u8) win32.RGBA {
@@ -664,6 +675,14 @@ const RGBA = extern struct {
         };
         return result;
     }
+    fn scale_raw(self: RGBA, factor: f32) RGBA {
+        return RGBA {
+            .r = @intFromFloat(@as(f32, @floatFromInt(self.r)) * factor),
+            .g = @intFromFloat(@as(f32, @floatFromInt(self.g)) * factor),
+            .b = @intFromFloat(@as(f32, @floatFromInt(self.b)) * factor),
+            .a = @intFromFloat(@as(f32, @floatFromInt(self.a)) * factor),
+        };
+    }
     /// This assumes that the sum of any channel is inside the range of u8, there is no checks!
     fn add_raw(c1: RGBA, c2: RGBA) RGBA {
         const result = RGBA {
@@ -779,6 +798,41 @@ fn texture_sample(comptime texture_pixel_type: type, texture_data: []texture_pix
     const u: usize = @intFromFloat(uv.x * @as(f32, @floatFromInt(texture_width-1)));
     const v: usize = @intFromFloat(uv.y * @as(f32, @floatFromInt(texture_height-1)));
     return texture_data[u + texture_width*v];
+}
+
+fn texture_sample_bilinear(comptime texture_pixel_type: type, texture_data: []texture_pixel_type, texture_width: usize, texture_height: usize, uv: Vector2f) texture_pixel_type {
+    const texel_x: f32 = uv.x * @as(f32, @floatFromInt(texture_width));
+    const texel_y: f32 = uv.y * @as(f32, @floatFromInt(texture_height));
+
+    const u_frac: f32 = texel_x - @floor(texel_x);
+    const v_frac: f32 = texel_y - @floor(texel_y);
+
+    const t00 = texture_data[(std.math.clamp(@as(usize, @intFromFloat(@floor(texel_x))), 0, texture_width - 1)) + (texture_width * (std.math.clamp(@as(usize, @intFromFloat(@floor(texel_y))), 0, texture_height - 1)))];
+    const t01 = texture_data[(std.math.clamp(@as(usize, @intFromFloat(@ceil(texel_x))), 0, texture_width - 1)) + (texture_width * (std.math.clamp(@as(usize, @intFromFloat(@floor(texel_y))), 0, texture_height - 1)))];
+    const t10 = texture_data[(std.math.clamp(@as(usize, @intFromFloat(@floor(texel_x))), 0, texture_width - 1)) + (texture_width * (std.math.clamp(@as(usize, @intFromFloat(@ceil(texel_y))), 0, texture_height - 1)))];
+    const t11 = texture_data[(std.math.clamp(@as(usize, @intFromFloat(@ceil(texel_x))), 0, texture_width - 1)) + (texture_width * (std.math.clamp(@as(usize, @intFromFloat(@ceil(texel_y))), 0, texture_height - 1)))];
+
+    return t00.scale_raw(1 - v_frac).add_raw(t01.scale_raw(v_frac)).scale_raw(1 - u_frac).add_raw(
+        t10.scale_raw((1 - v_frac)).add_raw(t11.scale_raw(v_frac)).scale_raw(u_frac)
+    );
+}
+
+// NOTE in my text renderer my uv are not in [0, 1] so for testing bilinear filtering of the texture I dont multiply against texture dimensions. Its just temporary
+fn texture_sample_bilinear_2(comptime texture_pixel_type: type, texture_data: []texture_pixel_type, texture_width: usize, texture_height: usize, uv: Vector2f) texture_pixel_type {
+    const texel_x: f32 = uv.x;
+    const texel_y: f32 = uv.y;
+
+    const u_frac: f32 = texel_x - @floor(texel_x);
+    const v_frac: f32 = texel_y - @floor(texel_y);
+
+    const t00 = texture_data[(std.math.clamp(@as(usize, @intFromFloat(@floor(texel_x))), 0, texture_width - 1)) + (texture_width * (std.math.clamp(@as(usize, @intFromFloat(@floor(texel_y))), 0, texture_height - 1)))];
+    const t01 = texture_data[(std.math.clamp(@as(usize, @intFromFloat(@ceil(texel_x))), 0, texture_width - 1)) + (texture_width * (std.math.clamp(@as(usize, @intFromFloat(@floor(texel_y))), 0, texture_height - 1)))];
+    const t10 = texture_data[(std.math.clamp(@as(usize, @intFromFloat(@floor(texel_x))), 0, texture_width - 1)) + (texture_width * (std.math.clamp(@as(usize, @intFromFloat(@ceil(texel_y))), 0, texture_height - 1)))];
+    const t11 = texture_data[(std.math.clamp(@as(usize, @intFromFloat(@ceil(texel_x))), 0, texture_width - 1)) + (texture_width * (std.math.clamp(@as(usize, @intFromFloat(@ceil(texel_y))), 0, texture_height - 1)))];
+
+    return t00.scale_raw(1 - v_frac).add_raw(t01.scale_raw(v_frac)).scale_raw(1 - u_frac).add_raw(
+        t10.scale_raw((1 - v_frac)).add_raw(t11.scale_raw(v_frac)).scale_raw(u_frac)
+    );
 }
 
 fn bilinear_filtering(texture: Buffer2D(RGBA), uv: Vector2f) RGBA {
@@ -1590,7 +1644,7 @@ const imgui_win32_impl = struct {
         main_viewport.*.PlatformHandle = window_handle;
         main_viewport.*.PlatformHandleRaw = window_handle;
 
-        // io.*.Fonts.*.Flags = io.*.Fonts.*.Flags | imgui.c.ImFontAtlasFlags_NoBakedLines;
+        io.*.Fonts.*.Flags = io.*.Fonts.*.Flags | imgui.c.ImFontAtlasFlags_NoBakedLines;
         var out_width: i32 = undefined;
         var out_height: i32 = undefined;
         var out_bytes_per_pixel: i32 = undefined;
@@ -1606,8 +1660,10 @@ const imgui_win32_impl = struct {
     fn render_draw_data(pixel_buffer: Buffer2D(win32.RGBA)) void {
         const draw_data = imgui.c.igGetDrawData();
         const clip_offset = draw_data.*.DisplayPos;
-        const projection_matrix = M44.orthographic_projection(draw_data.*.DisplayPos.x, draw_data.*.DisplayPos.x + draw_data.*.DisplaySize.x, draw_data.*.DisplayPos.y, draw_data.*.DisplayPos.y + draw_data.*.DisplaySize.y, 0.1, 1000);
-        const viewport_matrix = M44.viewport(draw_data.*.DisplayPos.x, draw_data.*.DisplayPos.y, draw_data.*.DisplaySize.x, draw_data.*.DisplaySize.y, 255);
+        const pos = Vector2f { .x = draw_data.*.DisplayPos.x, .y = draw_data.*.DisplayPos.y };
+        const dimensions = Vector2f { .x = draw_data.*.DisplaySize.x, .y = draw_data.*.DisplaySize.y };
+        const projection_matrix = M44.orthographic_projection(pos.x, pos.x + dimensions.x, pos.y, pos.y + dimensions.y, 0.1, 1000);
+        const viewport_matrix = M44.viewport(pos.x, pos.y, dimensions.x, dimensions.y, 255);
         if (draw_data.*.CmdLists.Data == null) return;
         const command_lists = imgui.im_vector_from(draw_data.*.CmdLists);
         const command_lists_count: usize = @intCast(draw_data.*.CmdListsCount);
@@ -2154,9 +2210,9 @@ pub fn main() !void {
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 101) }, Vector2i { .x = @intFromFloat(@min(ms / @as(f64, @floatCast(performance_base)) * @as(f64, @floatFromInt(state.pixel_buffer.width)), @as(f64, @floatFromInt(state.pixel_buffer.width)))), .y = @intCast(state.pixel_buffer.height() - 48) }, performance_color);
                 // line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 49) }, Vector2i { .x = 100, .y = @intCast(state.pixel_buffer.height() - 49) }, green);
 
-                imgui.c.igShowDemoWindow(&open);
-                // _ = open;
-                // _ = imgui.c.igButton("OK", .{ .x = 20, .y = 10 });
+                // imgui.c.igShowDemoWindow(&open);
+                _ = open;
+                _ = imgui.c.igButton("A", .{ .x = 20, .y = 10 });
                 imgui.c.igEndFrame();
                 imgui.c.igRender();
                 imgui_win32_impl.render_draw_data(state.pixel_buffer);
@@ -2506,7 +2562,8 @@ const TextRenderer = Shader(
                 .x = in_invariants[0].texture_uv.x * w + in_invariants[1].texture_uv.x * u + in_invariants[2].texture_uv.x * v,
                 .y = in_invariants[0].texture_uv.y * w + in_invariants[1].texture_uv.y * u + in_invariants[2].texture_uv.y * v,
             };
-            const bilinear_texture_sample: RGBA = bilinear_filtering(context.texture, uv);
+            // const bilinear_texture_sample: RGBA = bilinear_filtering(context.texture, uv);
+            const bilinear_texture_sample: RGBA = texture_sample_bilinear_2(RGBA, context.texture.data, context.texture_width, context.texture_height, uv);
             // const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(uv.x)), 0, context.texture_width-1);
             // const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(uv.y)), 0, context.texture_height-1);
             const old_color = context.pixel_buffer.get(@intCast(x), @intCast(y));
@@ -2771,6 +2828,8 @@ fn GraphicsPipeline(
                         else break :index requirements.index_buffer[face_index * 3 + i];
                     };
                     const vertex_data: vertex_type = vertex_buffer[vertex_index];
+                    // As far as I know, in your standard opengl vertex shader, the returned position is usually in
+                    // clip space, which is a homogeneous coordinate system. The `w` will be used for perspective correction.
                     const clip_space_position = vertex_shader(context, vertex_data, &invariants[i]);
                     const ndc = clip_space_position.perspective_division();
                     if (ndc.x >= 1 or ndc.x <= -1 or ndc.y >= 1 or ndc.y <= -1 or ndc.z >= 1 or ndc.z <= -1) {
@@ -2784,7 +2843,7 @@ fn GraphicsPipeline(
                         else continue :label_outer;
                     }
                     if (pipeline_configuration.do_depth_testing) depth[i] = ndc.z;
-                    if (pipeline_configuration.do_perspective_correct_interpolation) w_used_for_perspective_correction[i] = clip_space_position.z;
+                    if (pipeline_configuration.do_perspective_correct_interpolation) w_used_for_perspective_correction[i] = clip_space_position.w;
                     const screen_space_position = requirements.viewport_matrix.apply_to_vec3(ndc).perspective_division();
                     tri[i] = screen_space_position;
                 }
@@ -2901,7 +2960,7 @@ fn GraphicsPipeline(
 }
 
 const imgui_renderer_pipeline_config = GraphicsPipelineConfiguration {
-    .blend_with_background = false,
+    .blend_with_background = true,
     .use_index_buffer = true,
     .do_triangle_clipping = false,
     .do_depth_testing = false,
@@ -2931,16 +2990,14 @@ const ImguiRenderer = GraphicsPipeline(
     imgui_renderer_pipeline_config,
     struct {
         fn vertex_shader(context: ImguiRendererContext, vertex: ImguiRendererVertex, out_invariant: *ImguiRendererInvariant) Vector4f {
-            // _ = context;
             out_invariant.color = vertex.color;
             out_invariant.texture_uv = vertex.uv;
-            return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0 });
-            // return Vector4f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0, .w = 1 };
+            return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = -1 });
         }
     }.vertex_shader,
     struct {
         fn fragment_shader(context: ImguiRendererContext, invariants: ImguiRendererInvariant) win32.RGBA {
-            const sample = texture_sample(RGBA, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+            const sample = texture_sample_bilinear(RGBA, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
             const rgba = invariants.color.blend(sample);
             return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a);
         }
