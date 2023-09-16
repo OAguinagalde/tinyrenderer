@@ -794,9 +794,18 @@ fn Buffer2D(comptime T: type) type {
     };
 }
 
+// Point Sampling
 fn texture_sample(comptime texture_pixel_type: type, texture_data: []texture_pixel_type, texture_width: usize, texture_height: usize, uv: Vector2f) texture_pixel_type {
     const u: usize = @intFromFloat(uv.x * @as(f32, @floatFromInt(texture_width-1)));
     const v: usize = @intFromFloat(uv.y * @as(f32, @floatFromInt(texture_height-1)));
+    return texture_data[u + texture_width*v];
+}
+
+// Point Sampling
+fn texture_sample_2(comptime texture_pixel_type: type, texture_data: []texture_pixel_type, texture_width: usize, texture_height: usize, uv: Vector2f) texture_pixel_type {
+    _ = texture_height;
+    const u: usize = @intFromFloat(uv.x);
+    const v: usize = @intFromFloat(uv.y);
     return texture_data[u + texture_width*v];
 }
 
@@ -1644,7 +1653,7 @@ const imgui_win32_impl = struct {
         main_viewport.*.PlatformHandle = window_handle;
         main_viewport.*.PlatformHandleRaw = window_handle;
 
-        io.*.Fonts.*.Flags = io.*.Fonts.*.Flags | imgui.c.ImFontAtlasFlags_NoBakedLines;
+        // io.*.Fonts.*.Flags = io.*.Fonts.*.Flags | imgui.c.ImFontAtlasFlags_NoBakedLines;
         var out_width: i32 = undefined;
         var out_height: i32 = undefined;
         var out_bytes_per_pixel: i32 = undefined;
@@ -1675,6 +1684,7 @@ const imgui_win32_impl = struct {
                 
                 const clip_min = Vector2f { .x = command.ClipRect.x - clip_offset.x, .y = command.ClipRect.y - clip_offset.y };
                 const clip_max = Vector2f { .x = command.ClipRect.z - clip_offset.x, .y = command.ClipRect.w - clip_offset.y };
+                const clip = Vector4f { .x = clip_min.x, .y = clip_max.y, .z = clip_max.x, .w = clip_min.y };
                 if (clip_max.x <= clip_min.x or clip_max.y <= clip_min.y) continue;
                 const texture: *Buffer2D(RGBA) = @as(*Buffer2D(RGBA), @alignCast(@ptrCast(command.TextureId.?)));
                 std.debug.assert(texture == &state.imgui_font_texture);
@@ -1688,6 +1698,7 @@ const imgui_win32_impl = struct {
                 const render_requirements = ImguiRendererRequirements {
                     .viewport_matrix = viewport_matrix,
                     .index_buffer = index_buffer.used_slice()[command.IdxOffset..],
+                    .scissor_rect = clip,
                 };
                 ImguiRenderer.render(pixel_buffer, render_context, vertex_data, command.ElemCount / 3, render_requirements);
             }
@@ -2563,7 +2574,9 @@ const TextRenderer = Shader(
                 .y = in_invariants[0].texture_uv.y * w + in_invariants[1].texture_uv.y * u + in_invariants[2].texture_uv.y * v,
             };
             // const bilinear_texture_sample: RGBA = bilinear_filtering(context.texture, uv);
+            // const bilinear_texture_sample: RGBA = texture_sample_2(RGBA, context.texture.data, context.texture_width, context.texture_height, uv);
             const bilinear_texture_sample: RGBA = texture_sample_bilinear_2(RGBA, context.texture.data, context.texture_width, context.texture_height, uv);
+            // const bilinear_texture_sample: RGBA = texture_sample_bilinear_2(RGBA, context.texture.data, context.texture_width, context.texture_height, uv);
             // const texture_u: usize = std.math.clamp(@as(usize, @intFromFloat(uv.x)), 0, context.texture_width-1);
             // const texture_v: usize = std.math.clamp(@as(usize, @intFromFloat(uv.y)), 0, context.texture_height-1);
             const old_color = context.pixel_buffer.get(@intCast(x), @intCast(y));
@@ -2677,25 +2690,25 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA)
         vertex_buffer[offset + 6] = @floatFromInt(u_2);
         vertex_buffer[offset + 7] = @floatFromInt(v_1);
 
-        vertex_buffer[offset + 8] = @floatFromInt(x);
+        vertex_buffer[offset + 8] = @floatFromInt(x + char_width * size);
         vertex_buffer[offset + 9] = @floatFromInt(y - char_height * size);
-        vertex_buffer[offset + 10] = @floatFromInt(u_1);
+        vertex_buffer[offset + 10] = @floatFromInt(u_2);
         vertex_buffer[offset + 11] = @floatFromInt(v_2);
 
         vertex_buffer[offset + 12] = @floatFromInt(x);
-        vertex_buffer[offset + 13] = @floatFromInt(y - char_height * size);
+        vertex_buffer[offset + 13] = @floatFromInt(y);
         vertex_buffer[offset + 14] = @floatFromInt(u_1);
-        vertex_buffer[offset + 15] = @floatFromInt(v_2);
+        vertex_buffer[offset + 15] = @floatFromInt(v_1);
 
         vertex_buffer[offset + 16] = @floatFromInt(x + char_width * size);
         vertex_buffer[offset + 17] = @floatFromInt(y - char_height * size);
         vertex_buffer[offset + 18] = @floatFromInt(u_2);
         vertex_buffer[offset + 19] = @floatFromInt(v_2);
 
-        vertex_buffer[offset + 20] = @floatFromInt(x + char_width * size);
-        vertex_buffer[offset + 21] = @floatFromInt(y);
-        vertex_buffer[offset + 22] = @floatFromInt(u_2);
-        vertex_buffer[offset + 23] = @floatFromInt(v_1);
+        vertex_buffer[offset + 20] = @floatFromInt(x);
+        vertex_buffer[offset + 21] = @floatFromInt(y - char_height * size);
+        vertex_buffer[offset + 22] = @floatFromInt(u_1);
+        vertex_buffer[offset + 23] = @floatFromInt(v_2);
     }
 
     const context = TextRendererContext {
@@ -2753,6 +2766,7 @@ const GraphicsPipelineConfiguration = struct {
     do_triangle_clipping: bool = false,
     do_depth_testing: bool = false,
     do_perspective_correct_interpolation: bool = false,
+    do_scissoring: bool = false,
     pub fn Requirements(comptime self: GraphicsPipelineConfiguration) type {
         var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField {
             std.builtin.Type.StructField {
@@ -2779,6 +2793,15 @@ const GraphicsPipelineConfiguration = struct {
                 .name = "depth_buffer",
                 .type = Buffer2D(f32),
                 .alignment = @alignOf([]f32)
+            }
+        };
+        if (self.do_scissoring) fields = fields ++ [_]std.builtin.Type.StructField {
+                std.builtin.Type.StructField {
+                .default_value = null,
+                .is_comptime = false,
+                .name = "scissor_rect",
+                .type = Vector4f,
+                .alignment = @alignOf(Vector4f)
             }
         };
         // TODO what exactly should I do with declarations?
@@ -2854,18 +2877,24 @@ fn GraphicsPipeline(
                 const c = &tri[2];
 
                 // calculate the bounding of the triangle's projection on the screen
-                const left: usize = @intFromFloat(@min(a.x, @min(b.x, c.x)));
-                const top: usize = @intFromFloat(@min(a.y, @min(b.y, c.y)));
-                const right: usize = @intFromFloat(@max(a.x, @max(b.x, c.x)));
-                const bottom: usize = @intFromFloat(@max(a.y, @max(b.y, c.y)));
+                var left: usize = @intFromFloat(@min(a.x, @min(b.x, c.x)));
+                var bottom: usize = @intFromFloat(@min(a.y, @min(b.y, c.y)));
+                var right: usize = @intFromFloat(@max(a.x, @max(b.x, c.x)));
+                var top: usize = @intFromFloat(@max(a.y, @max(b.y, c.y)));
+                if (pipeline_configuration.do_scissoring) {
+                    left = @min(left, @as(usize, @intFromFloat(requirements.scissor_rect.x)));
+                    bottom = @min(bottom, @as(usize, @intFromFloat(requirements.scissor_rect.y)));
+                    right = @max(right, @as(usize, @intFromFloat(requirements.scissor_rect.z)));
+                    top = @max(top, @as(usize, @intFromFloat(requirements.scissor_rect.w)));
+                }
 
                 // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
                 // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
                 // test it just in case
 
-                // bottom to top
-                var y: usize = bottom;
-                while (y >= top) : (y -= 1) {
+                // top to bottom
+                var y: usize = top;
+                while (y >= bottom) : (y -= 1) {
                     
                     // left to right
                     var x: usize = left;
@@ -2965,6 +2994,7 @@ const imgui_renderer_pipeline_config = GraphicsPipelineConfiguration {
     .do_triangle_clipping = false,
     .do_depth_testing = false,
     .do_perspective_correct_interpolation = false,
+    .do_scissoring = true,
 };
 const ImguiRendererRequirements = imgui_renderer_pipeline_config.Requirements();
 const ImguiRendererContext = struct {
