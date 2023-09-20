@@ -2736,8 +2736,9 @@ fn GraphicsPipeline(
                         }
 
                         var interpolated_invariants: invariant_type = undefined;
+
                         if (pipeline_configuration.do_perspective_correct_interpolation) {
-                            const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * w + 1/w_used_for_perspective_correction[2] * w;
+                            const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * u + 1/w_used_for_perspective_correction[2] * v;
                             inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
                                 @field(interpolated_invariants, invariant.name) =
                                     switch (invariant.type) {
@@ -2844,8 +2845,7 @@ const quad_renderer_pipeline_config = GraphicsPipelineConfiguration {
     .use_index_buffer = true,
     .do_triangle_clipping = false,
     .do_depth_testing = true,
-    // TODO fix this when true
-    .do_perspective_correct_interpolation = false,
+    .do_perspective_correct_interpolation = true,
     .do_scissoring = false,
 };
 const QuadRendererRequirements = quad_renderer_pipeline_config.Requirements();
