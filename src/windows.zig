@@ -738,6 +738,22 @@ const RGB = extern struct {
             .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
         };
     }
+    fn scale_raw(self: RGB, factor: f32) RGB {
+        return RGB {
+            .r = @intFromFloat(@as(f32, @floatFromInt(self.r)) * factor),
+            .g = @intFromFloat(@as(f32, @floatFromInt(self.g)) * factor),
+            .b = @intFromFloat(@as(f32, @floatFromInt(self.b)) * factor),
+        };
+    }
+    /// This assumes that the sum of any channel is inside the range of u8, there is no checks!
+    fn add_raw(c1: RGB, c2: RGB) RGB {
+        const result = RGB {
+            .r = c1.r + c2.r,
+            .g = c1.g + c2.g,
+            .b = c1.b + c2.b,
+        };
+        return result;
+    }
     comptime { std.debug.assert(@sizeOf(RGB) == 3); }
 };
 
@@ -834,7 +850,6 @@ fn texture_bilinear_sample(comptime texture_pixel_type: type, comptime uv_is_01:
             
             const weight_y: f32 = ty - (@floor(ty-0.5) + 0.5);
             
-            // std.log.debug("{}, {}, {}, {}, {}", .{ty, @floor(ty-0.5), (@floor(ty-0.5) + 0.5), weight_y, 1 - weight_y});
             const interpolated_color = color_bottom.scale_raw(1 - weight_y).add_raw(color_top.scale_raw(weight_y));
             return interpolated_color;
         }
@@ -858,11 +873,9 @@ fn texture_bilinear_sample(comptime texture_pixel_type: type, comptime uv_is_01:
         const weight_x: f32 = tx - (@floor(tx-0.5) + 0.5);
         const weight_y: f32 = ty - (@floor(ty-0.5) + 0.5);
         
-        // std.log.debug("{}, {}, {}, {}, {}", .{tx, @floor(tx-0.5), (@floor(tx-0.5) + 0.5), weight_x, 1 - weight_x});
-
         const interpolated_color_1 = color_bottom_left.scale_raw(1 - weight_x).add_raw(color_bottom_right.scale_raw(weight_x));
         const interpolated_color_2 = color_top_left.scale_raw(1 - weight_x).add_raw(color_top_right.scale_raw(weight_x));
-        const interpolated_color_3 = interpolated_color_1.scale_raw(1 - weight_y).add(interpolated_color_2.scale_raw(weight_y));
+        const interpolated_color_3 = interpolated_color_1.scale_raw(1 - weight_y).add_raw(interpolated_color_2.scale_raw(weight_y));
 
         return interpolated_color_3;
     }
@@ -2065,7 +2078,6 @@ pub fn main() !void {
                 if (state.keys['P']) bilinear = !bilinear;
 
                 _ = counted_since_start;
-                // const horizontally_spinning_position = Vector3f { .x = std.math.cos(@as(f32, @floatCast(state.time)) / 2000), .y = 0, .z = std.math.sin(@as(f32, @floatCast(state.time)) / 2000) };
                 
                 if (false) {
                     line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red);
@@ -2082,24 +2094,34 @@ pub fn main() !void {
                 }
 
                 // TODO I think windows is rendering upside down, (or me, lol) so invert it
-                
-                // const texture_width = switch (state.texture) { inline else => |buffer| buffer.width };
-                // const texture_height = @divExact(switch (state.texture) { inline else => |buffer| buffer.data.len }, texture_width);
-                // const context = GouraudShaderContext {
-                //     .pixel_buffer = &state.pixel_buffer,
-                //     .depth_buffer = &state.depth_buffer,
-                //     .texture = state.texture,
-                //     .texture_width = texture_width,
-                //     .texture_height = texture_height,
-                //     .viewport_matrix = state.viewport_matrix,
-                //     .projection_matrix = state.projection_matrix,
-                //     .view_model_matrix = state.view_matrix.multiply(
-                //         M44.translation(Vector3f { .x = 0, .y = 0, .z = -2 }).multiply(M44.scale(0.8))
-                //     ),
-                //     .light_source = state.view_matrix.apply_to_vec3(horizontally_spinning_position).discard_w(),
-                // };
-                // const number_of_triangles = @divExact(state.vertex_buffer.len, 8*3);
-                // if (false) GouraudRenderer.render(context, state.vertex_buffer, number_of_triangles);
+                // TODO the light intensity varies as the camera moves which shouldnt happen since its static, fix that
+                // TODO Im pretty sure the pixel data is being read in a weird way on the TGA reader, the color is a bit off
+                {
+                    const horizontally_spinning_position = Vector3f { .x = std.math.cos(@as(f32, @floatCast(state.time)) / 2000), .y = 0, .z = std.math.sin(@as(f32, @floatCast(state.time)) / 2000) };
+                    const render_context = gouraud_renderer.Context {
+                        .light_position_camera_space = state.view_matrix.apply_to_vec3(horizontally_spinning_position).discard_w(),
+                        .projection_matrix = state.projection_matrix,
+                        .texture = state.texture.rgb,
+                        .texture_height = state.texture.rgb.height(),
+                        .texture_width = state.texture.rgb.width,
+                        .view_model_matrix = state.view_matrix.multiply(
+                            M44.translation(Vector3f { .x = 0, .y = 0, .z = -2 }).multiply(M44.scale(0.8))
+                        ),
+                    };
+                    var i: usize = 0;
+                    var vertex_buffer = std.ArrayList(gouraud_renderer.Vertex).initCapacity(allocator, @divExact(state.vertex_buffer.len, 8)) catch unreachable;
+                    while (i < state.vertex_buffer.len) : (i = i + 8) {
+                        const pos: Vector3f = .{ .x=state.vertex_buffer[i+0], .y=state.vertex_buffer[i+1], .z=state.vertex_buffer[i+2] };
+                        const uv: Vector2f = .{ .x=state.vertex_buffer[i+3], .y=state.vertex_buffer[i+4] };
+                        const normal: Vector3f = .{ .x=state.vertex_buffer[i+5], .y=state.vertex_buffer[i+6], .z=state.vertex_buffer[i+7] };
+                        vertex_buffer.appendAssumeCapacity(.{ .pos = pos, .uv = uv, .normal = normal });
+                    }
+                    const render_requirements: gouraud_renderer.pipeline_configuration.Requirements() = .{
+                        .depth_buffer = state.depth_buffer,
+                        .viewport_matrix = state.viewport_matrix,
+                    };
+                    gouraud_renderer.Pipeline.render(state.pixel_buffer, render_context, vertex_buffer.items, @divExact(vertex_buffer.items.len, 3), render_requirements);
+                }
 
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
@@ -2152,7 +2174,7 @@ pub fn main() !void {
                         .viewport_matrix = state.viewport_matrix,
                         .index_buffer = &index_buffer,
                     };
-                    QuadRenderer.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
+                    if (false) QuadRenderer.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
                 }
 
                 // imgui.c.igShowDemoWindow(&open);
@@ -2737,6 +2759,7 @@ fn GraphicsPipeline(
 
                         var interpolated_invariants: invariant_type = undefined;
 
+                        // Get every invariant given out by the vertex shader and interpolate the values which will be passed to the fragment shader 
                         if (pipeline_configuration.do_perspective_correct_interpolation) {
                             const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * u + 1/w_used_for_perspective_correction[2] * v;
                             inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
@@ -2883,3 +2906,58 @@ const QuadRenderer = GraphicsPipeline(
         }
     }.fragment_shader,
 );
+
+const gouraud_renderer = struct {
+    
+    const Context = struct {
+        texture: Buffer2D(RGB),
+        texture_width: usize,
+        texture_height: usize,
+        view_model_matrix: M44,
+        projection_matrix: M44,
+        light_position_camera_space: Vector3f,
+    };
+    
+    const Invariant = struct {
+        texture_uv: Vector2f,
+        light_intensity: f32,
+    };
+    
+    const Vertex = struct {
+        pos: Vector3f,
+        uv: Vector2f,
+        normal: Vector3f,
+    };
+    
+    const pipeline_configuration = GraphicsPipelineConfiguration {
+        .blend_with_background = false,
+        .use_index_buffer = false,
+        .do_triangle_clipping = false,
+        .do_depth_testing = true,
+        .do_perspective_correct_interpolation = true,
+        .do_scissoring = false,
+    };
+
+    const Pipeline = GraphicsPipeline(
+        win32.RGBA, Context, Invariant, Vertex, pipeline_configuration,
+        struct {
+            fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector4f {
+                const position_camera_space = context.view_model_matrix.apply_to_vec3(vertex.pos);
+                const light_direction = context.light_position_camera_space.substract(position_camera_space.discard_w()).normalized();
+                out_invariant.light_intensity = std.math.clamp(vertex.normal.normalized().dot(light_direction), 0, 1);
+                out_invariant.texture_uv = vertex.uv;
+                return context.projection_matrix.apply_to_vec4(position_camera_space);
+            }
+        }.vertex_shader,
+        struct {
+            fn fragment_shader(context: Context, invariants: Invariant) win32.RGBA {
+                const sample =
+                    if (bilinear) texture_bilinear_sample(RGB, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
+                    else texture_point_sample(RGB, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+                const rgba = sample.scale(invariants.light_intensity);
+                return win32.rgba(rgba.r, rgba.g, rgba.b, 255);
+            }
+        }.fragment_shader,
+    );
+
+};
