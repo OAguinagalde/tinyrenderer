@@ -551,7 +551,7 @@ const M44 = struct {
         // Scale factor for Y
         result.data[5] = 2 / (top - bottom);
         // Scale factor for Z
-        result.data[10] = -2 / (far - near);
+        result.data[10] = 2 / (far - near);
         // Translate X
         result.data[12] = -(right + left) / (right - left);
         // Translate Y
@@ -1658,6 +1658,8 @@ const imgui_win32_impl = struct {
         const clip_offset = draw_data.*.DisplayPos;
         const pos = Vector2f { .x = draw_data.*.DisplayPos.x, .y = draw_data.*.DisplayPos.y };
         const dimensions = Vector2f { .x = draw_data.*.DisplaySize.x, .y = draw_data.*.DisplaySize.y };
+        // In DearImgui 0, 0 is the top left corner but on this renderer is bottom left, so I make the projection matrix with "top" and "bottom"
+        // inverted so that they every point trasformed by it has its y coordinate inverted
         const projection_matrix = M44.orthographic_projection(pos.x, pos.x + dimensions.x, pos.y, pos.y + dimensions.y, 0.1, 1000);
         const viewport_matrix = M44.viewport(pos.x, pos.y, dimensions.x, dimensions.y, 255);
         if (draw_data.*.CmdLists.Data == null) return;
@@ -1674,19 +1676,19 @@ const imgui_win32_impl = struct {
                 if (clip_max.x <= clip_min.x or clip_max.y <= clip_min.y) continue;
                 const texture: *Buffer2D(RGBA) = @as(*Buffer2D(RGBA), @alignCast(@ptrCast(command.TextureId.?)));
                 std.debug.assert(texture == &state.imgui_font_texture);
-                const vertex_data: []const ImguiRendererVertex = std.mem.bytesAsSlice(ImguiRendererVertex, std.mem.sliceAsBytes(vertex_buffer.used_slice()))[command.VtxOffset..];
-                const render_context = ImguiRendererContext {
+                const vertex_data: []const imgui_renderer.Vertex = std.mem.bytesAsSlice(imgui_renderer.Vertex, std.mem.sliceAsBytes(vertex_buffer.used_slice()))[command.VtxOffset..];
+                const render_context = imgui_renderer.Context {
                     .texture = texture.*,
                     .texture_width = texture.width,
                     .texture_height = texture.height(),
                     .projection_matrix = projection_matrix,
                 };
-                const render_requirements = ImguiRendererRequirements {
+                const render_requirements = imgui_renderer.pipeline_configuration.Requirements() {
                     .viewport_matrix = viewport_matrix,
                     .index_buffer = index_buffer.used_slice()[command.IdxOffset..],
                     .scissor_rect = clip,
                 };
-                ImguiRenderer.render(pixel_buffer, render_context, vertex_data, command.ElemCount / 3, render_requirements);
+                imgui_renderer.Pipeline.render(pixel_buffer, render_context, vertex_data, command.ElemCount / 3, render_requirements);
             }
         }
     }
@@ -2096,7 +2098,7 @@ pub fn main() !void {
                 // TODO I think windows is rendering upside down, (or me, lol) so invert it
                 // TODO the light intensity varies as the camera moves which shouldnt happen since its static, fix that
                 // TODO Im pretty sure the pixel data is being read in a weird way on the TGA reader, the color is a bit off
-                {
+                if (true) {
                     const horizontally_spinning_position = Vector3f { .x = std.math.cos(@as(f32, @floatCast(state.time)) / 2000), .y = 0, .z = std.math.sin(@as(f32, @floatCast(state.time)) / 2000) };
                     const render_context = gouraud_renderer.Context {
                         .light_position_camera_space = state.view_matrix.apply_to_vec3(horizontally_spinning_position).discard_w(),
@@ -2126,9 +2128,9 @@ pub fn main() !void {
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
                 line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
                 // TODO there is part of the pixel buffer being rendered below the status bar from windows
-                if (true) render_text(allocator, &state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 300) }, "ms {d: <9.2}", .{ms});
+                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 300) }, "ms {d: <9.2}", .{ms});
 
-                {
+                if (true) {
                     const texture = @import("font_embedded.zig");
                     // const c_red = RGBA { .r = 255, .g = 0, .b = 0, .a = 255 };
                     // const c_green = RGBA { .r = 0, .g = 255, .b = 0, .a = 255 };
@@ -2148,33 +2150,30 @@ pub fn main() !void {
                     const texture_data = texture.data;
                     const w: f32 = @floatFromInt(texture.width);
                     const h: f32 = @floatFromInt(texture.height);
-                    const quad_context = QuadRendererContext {
+                    const quad_context = quad_renderer.Context {
                         .texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&texture_data)), texture.width),
                         .texture_width = texture.width,
                         .texture_height = texture.height,
                         .projection_matrix =
-                            // Projection
                             state.projection_matrix.multiply(
-                                // View
                                 state.view_matrix.multiply(
-                                    // Model
                                     M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 0 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
                                 )
                             ),
                     };
-                    const vertex_buffer = [_]QuadRendererVertex{
+                    const vertex_buffer = [_]quad_renderer.Vertex{
                         .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
                         .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
                         .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
                         .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
                     };
                     const index_buffer = [_]u16{0,1,2,0,2,3};
-                    const requirements = QuadRendererRequirements {
+                    const requirements = quad_renderer.pipeline_configuration.Requirements() {
                         .depth_buffer = state.depth_buffer,
                         .viewport_matrix = state.viewport_matrix,
                         .index_buffer = &index_buffer,
                     };
-                    if (false) QuadRenderer.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
+                    quad_renderer.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
                 }
 
                 // imgui.c.igShowDemoWindow(&open);
@@ -2182,7 +2181,7 @@ pub fn main() !void {
                 imgui.c.igText("Hello, world");  
                 imgui.c.igEndFrame();
                 imgui.c.igRender();
-                // imgui_win32_impl.render_draw_data(state.pixel_buffer);
+                imgui_win32_impl.render_draw_data(state.pixel_buffer);
             }
 
             state.running = state.running and !app_close_requested;
@@ -2264,235 +2263,34 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
     return win32.DefWindowProcW(window_handle, message_type, w_param, l_param);
 }
 
-const PipelineConfiguration = struct {
-    do_depth_testing: bool = true,
-};
-
-fn Shader(
-    comptime context_type: type,
-    comptime invariant_type: type,
-    comptime vertex_shader: fn(context: context_type, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *invariant_type) ?Vector3f,
-    comptime fragment_shader: fn(context: context_type, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]invariant_type) void,
-) type {
-    return struct {
-        const Self = @This();
-        fn render(context: context_type, vertex_buffer: []const f32, face_count: usize) void {
-            
-            var clipped: usize = 0;
-            var face_index: usize = 0;
-            label_outer: while (face_index < face_count) : (face_index += 1) {
-                
-                var invariants: [3]invariant_type = undefined;
-                var tri: [3]Vector3f = undefined;
-
-                // std.debug.print("fi {}\n", .{face_index});
-                
-                // pass all 3 vertices of this face through the vertex shader
-                inline for(0..3) |i| {
-                    const vertex_index = face_index * 3 + i;
-                    if (vertex_shader(context, vertex_buffer, vertex_index, &invariants[i])) |result| {
-                        tri[i] = result;
-                    }
-                    else {
-                        clipped += 1;
-                        continue :label_outer;
-                    }
-                }
-
-                // top = y = window height, bottom = y = 0
-
-                const a = &tri[0];
-                const b = &tri[1];
-                const c = &tri[2];
-
-                // calculate the bounding of the triangle's projection on the screen
-                const left: i32 = @intFromFloat(@min(a.x, @min(b.x, c.x)));
-                const top: i32 = @intFromFloat(@min(a.y, @min(b.y, c.y)));
-                const right: i32 = @intFromFloat(@max(a.x, @max(b.x, c.x)));
-                const bottom: i32 = @intFromFloat(@max(a.y, @max(b.y, c.y)));
-
-                // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
-                // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
-                // test it just in case
-
-                // bottom to top
-                var y: i32 = bottom;
-                while (y >= top) : (y -= 1) {
-                    
-                    // left to right
-                    var x: i32 = left;
-                    while (x <= right) : (x += 1) {
-                        
-                        // barycentric coordinates of the current pixel
-                        const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
-
-                        const ab = b.substract(a.*);
-                        const ac = c.substract(a.*);
-                        const ap = pixel.substract(a.*);
-                        const bp = pixel.substract(b.*);
-                        const ca = a.substract(c.*);
-
-                        // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
-                        // the magnitude of the cross product can be interpreted as the area of the parallelogram.
-                        const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
-                        const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
-                        const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
-
-                        const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
-                        const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
-                        const w: f32 = (1 - u - v);
-
-                        // The inverse of the barycentric would be `P=wA+uB+vC`
-
-                        // determine if a pixel is in fact part of the triangle
-                        if (u < 0 or u >= 1) continue;
-                        if (v < 0 or v >= 1) continue;
-                        if (w < 0 or w >= 1) continue;
-
-                        fragment_shader(context, u, v, w, x, y, invariants);
-
-                    }
-                }
-            }
-            std.log.debug("clipped: {}", .{clipped});
-        }
-    };
-}
-
-const GouraudShaderContext = struct {
-    pixel_buffer: *Buffer2D(win32.RGBA),
-    depth_buffer: *Buffer2D(f32),
-    texture: AnyBuffer2D,
-    texture_width: usize,
-    texture_height: usize,
-    viewport_matrix: M44,
-    projection_matrix: M44,
-    view_model_matrix: M44,
-    light_source: Vector3f,
-};
-
-const GouraudShaderInvariant = struct {
-    light_intensity: f32,
-    depth: f32,
-    texture_uv: Vector3f,
-};
-
-const GouraudRenderer = Shader(
-    GouraudShaderContext,
-    GouraudShaderInvariant,
-    struct {
-        fn vertex_shader(context: GouraudShaderContext, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *GouraudShaderInvariant) ?Vector3f {
-            const position: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*8+0], .y = vertex_buffer[vertex_index*8+1], .z = vertex_buffer[vertex_index*8+2] };
-            const uv: Vector2f = Vector2f { .x = vertex_buffer[vertex_index*8+3], .y = vertex_buffer[vertex_index*8+4] };
-            const normal: Vector3f = Vector3f { .x = vertex_buffer[vertex_index*8+5], .y = vertex_buffer[vertex_index*8+6], .z = vertex_buffer[vertex_index*8+7] };
-            const view_space_position = context.view_model_matrix.apply_to_vec3(position);
-            const clip_space_position = context.projection_matrix.apply_to_vec4(view_space_position);
-            const ndc = clip_space_position.perspective_division();
-            if (ndc.x >= 1 or ndc.x <= -1 or ndc.y >= 1 or ndc.y <= -1 or ndc.z >= 1 or ndc.z <= -1) return null;
-            const screen_space_position = context.viewport_matrix.apply_to_vec3(ndc).perspective_division();
-            const light_direction = context.light_source.substract(view_space_position.discard_w()).normalized();
-            out_invariant.light_intensity = @min(1, @max(0, normal.normalized().dot(light_direction)));
-            out_invariant.texture_uv = Vector3f { .x = uv.x * @as(f32, @floatFromInt(context.texture_width)) / clip_space_position.w, .y = uv.y * @as(f32, @floatFromInt(context.texture_height)) / clip_space_position.w, .z = 1 / clip_space_position.w };
-            out_invariant.depth = ndc.z;
-            return screen_space_position;
-        }
-    }.vertex_shader,
-    struct {
-        fn fragment_shader(context: GouraudShaderContext, u: f32, v: f32, w: f32, x: i32, y: i32, in_invariants: [3]GouraudShaderInvariant) void {
-            const z = in_invariants[0].depth * w + in_invariants[1].depth * u + in_invariants[2].depth * v;
-            if (context.depth_buffer.get(@intCast(x), @intCast(y)) >= z) return;
-            context.depth_buffer.set(@intCast(x), @intCast(y), z);
-            // interpolate the light intensity for the current pixel
-            var light_intensity: f32 = 0;
-            light_intensity += in_invariants[0].light_intensity * w;
-            light_intensity += in_invariants[1].light_intensity * u;
-            light_intensity += in_invariants[2].light_intensity * v;
-            // interpolate texture uvs for the current pixel
-            const texture_uv =
-                in_invariants[0].texture_uv.scale(w).add(
-                    in_invariants[1].texture_uv.scale(u).add(
-                        in_invariants[2].texture_uv.scale(v)
-                    )
-                );
-            const texture_u: usize = @intFromFloat(texture_uv.x/texture_uv.z);
-            const texture_v: usize = @intFromFloat(texture_uv.y/texture_uv.z);
-            switch (context.texture) {
-                .rgb => |texture| {
-                    const rgb: RGB = texture.get(texture_u, texture_v).scale(light_intensity);
-                    context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgb(rgb.r, rgb.g, rgb.b));
-                },
-                .rgba =>  |texture| {
-                    const rgba: RGBA = texture.get(texture_u, texture_v).scale(light_intensity);
-                    context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
-                },
-                else => unreachable
-            }
-
-        }
-    }.fragment_shader,
-);
-
-const TextRendererContext = struct {
-    pixel_buffer: *Buffer2D(win32.RGBA),
-    texture: Buffer2D(RGBA),
-    texture_width: usize,
-    texture_height: usize,
-};
-
-const TextRendererInvariant = struct {
-    texture_uv: Vector2f,
-};
-
-const TextRenderer = Shader(
-    TextRendererContext,
-    TextRendererInvariant,
-    struct {
-        fn vertex_shader(context: TextRendererContext, vertex_buffer: []const f32, vertex_index: usize, out_invariant: *TextRendererInvariant) ?Vector3f {
-            _ = context;
-            out_invariant.texture_uv = Vector2f { .x = vertex_buffer[vertex_index*4+2], .y = vertex_buffer[vertex_index*4+3] };
-            return Vector3f { .x = vertex_buffer[vertex_index*4+0], .y = vertex_buffer[vertex_index*4+1], .z = 0 };
-        }
-    }.vertex_shader,
-    struct {
-        fn fragment_shader(context: TextRendererContext, u: f32, v: f32, w: f32, x: i32, y: i32, invariants: [3]TextRendererInvariant) void {
-            const uv: Vector2f = .{
-                .x = invariants[0].texture_uv.x * w + invariants[1].texture_uv.x * u + invariants[2].texture_uv.x * v,
-                .y = invariants[0].texture_uv.y * w + invariants[1].texture_uv.y * u + invariants[2].texture_uv.y * v,
-            };
-            const bilinear_texture_sample: RGBA = 
-                if (bilinear) texture_bilinear_sample(RGBA, false, context.texture.data, context.texture_width, context.texture_height, uv)
-                else texture_point_sample(RGBA, false, context.texture.data, context.texture_width, context.texture_height, uv);
-            const old_color = context.pixel_buffer.get(@intCast(x), @intCast(y));
-            const old_color_rgba = RGBA {.r=old_color.r,.g=old_color.g,.b=old_color.b,.a=old_color.a};
-            const rgba: RGBA = bilinear_texture_sample.blend(old_color_rgba);
-            context.pixel_buffer.set(@intCast(x), @intCast(y), win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a));
-        }
-    }.fragment_shader,
-);
+var bilinear: bool = false;
 
 fn render_line(pixel_buffer: *Buffer2D(win32.RGBA), a: Vector2i, b: Vector2i, color: win32.RGBA) void {
     line(win32.RGBA, pixel_buffer, a, b, color);
 }
 
-fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA), pos: Vector2i, comptime format: []const u8, args: anytype) void {
+fn render_text(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(win32.RGBA), pos: Vector2i, comptime format: []const u8, args: anytype) void {
     // bitmap font embedded in the executable
     const font = @import("font_embedded.zig");
-    // TODO what happens if I write to the pointer that has the data lol
+
     const texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&font.data)), font.width);
+    const context = text_renderer.Context {
+        .texture = texture,
+        .texture_width = texture.width,
+        .texture_height = texture.height(),
+        .projection_matrix = M44.orthographic_projection(0, @floatFromInt(state.w), @floatFromInt(state.h), 0, 0.1, 1000)
+    };
     var text_buffer: [1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&text_buffer);
     std.fmt.format(fbs.writer(), format, args) catch @panic("failed to format text while rendering it");
     const text = fbs.getWritten();
-    // 1 vertex = 4 floats { location_x, location_y, text_u, text_v }
-    // 1 triangle = 3 vertices
-    // 1 quad = 2 triangles
-    // 1 char = 1 quad
-    // Up to 1024 characters
-    var vertex_buffer = allocator.alloc(f32, 4*3*2*1024) catch unreachable;
+
+    var vertex_buffer = allocator.alloc(text_renderer.Vertex, text.len*4) catch unreachable;
     defer allocator.free(vertex_buffer);
+
     const char_width: i32 = 4;
     const char_height: i32 = 7;
-    const size = 2;
+    const size = 8;
     for (text, 0..) |c, i| {
         const x: i32 = pos.x + @as(i32, @intCast(i)) * char_width * size;
         const y: i32 = pos.y;
@@ -2502,46 +2300,27 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: *Buffer2D(win32.RGBA)
         const u_2: i32 = u_1 + char_width;
         const v_2: i32 = v_1 + char_height;
 
-        const offset: usize = i*4*3*2;
+        const offset: usize = i*4;
 
-        vertex_buffer[offset + 0] = @floatFromInt(x);
-        vertex_buffer[offset + 1] = @floatFromInt(y);
-        vertex_buffer[offset + 2] = @floatFromInt(u_1);
-        vertex_buffer[offset + 3] = @floatFromInt(v_1);
-
-        vertex_buffer[offset + 4] = @floatFromInt(x + char_width * size);
-        vertex_buffer[offset + 5] = @floatFromInt(y);
-        vertex_buffer[offset + 6] = @floatFromInt(u_2);
-        vertex_buffer[offset + 7] = @floatFromInt(v_1);
-
-        vertex_buffer[offset + 8] = @floatFromInt(x + char_width * size);
-        vertex_buffer[offset + 9] = @floatFromInt(y - char_height * size);
-        vertex_buffer[offset + 10] = @floatFromInt(u_2);
-        vertex_buffer[offset + 11] = @floatFromInt(v_2);
-
-        vertex_buffer[offset + 12] = @floatFromInt(x);
-        vertex_buffer[offset + 13] = @floatFromInt(y);
-        vertex_buffer[offset + 14] = @floatFromInt(u_1);
-        vertex_buffer[offset + 15] = @floatFromInt(v_1);
-
-        vertex_buffer[offset + 16] = @floatFromInt(x + char_width * size);
-        vertex_buffer[offset + 17] = @floatFromInt(y - char_height * size);
-        vertex_buffer[offset + 18] = @floatFromInt(u_2);
-        vertex_buffer[offset + 19] = @floatFromInt(v_2);
-
-        vertex_buffer[offset + 20] = @floatFromInt(x);
-        vertex_buffer[offset + 21] = @floatFromInt(y - char_height * size);
-        vertex_buffer[offset + 22] = @floatFromInt(u_1);
-        vertex_buffer[offset + 23] = @floatFromInt(v_2);
+        vertex_buffer[offset + 0] = .{
+            .pos = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) },
+            .uv = .{ .x = @floatFromInt(u_1), .y = @floatFromInt(v_1) },
+        };
+        vertex_buffer[offset + 1] = .{
+            .pos = .{ .x = @floatFromInt(x + char_width * size), .y = @floatFromInt(y) },
+            .uv = .{ .x = @floatFromInt(u_2), .y = @floatFromInt(v_1) },
+        };
+        vertex_buffer[offset + 2] = .{
+            .pos = .{ .x = @floatFromInt(x + char_width * size), .y = @floatFromInt(y - char_height * size) },
+            .uv = .{ .x = @floatFromInt(u_2), .y = @floatFromInt(v_2) },
+        };
+        vertex_buffer[offset + 3] = .{
+            .pos = .{ .x = @floatFromInt(x), .y = @floatFromInt(y - char_height * size) },
+            .uv = .{ .x = @floatFromInt(u_1), .y = @floatFromInt(v_2) },
+        };
     }
-
-    const context = TextRendererContext {
-        .pixel_buffer = pixel_buffer,
-        .texture = texture,
-        .texture_width = texture.width,
-        .texture_height = texture.height(),
-    };
-    TextRenderer.render(context, vertex_buffer[0..vertex_buffer.len], text.len * 2);
+    
+    text_renderer.Pipeline.render(pixel_buffer, context, vertex_buffer[0..text.len*4], text.len * 2, .{ .viewport_matrix = state.viewport_matrix, });
 }
 
 // TODO finish this...
@@ -2586,6 +2365,7 @@ const Plane = struct {
 
 const GraphicsPipelineConfiguration = struct {
     blend_with_background: bool = false,
+    use_index_buffer_auto: bool = false,
     use_index_buffer: bool = false,
     do_triangle_clipping: bool = false,
     do_depth_testing: bool = false,
@@ -2601,15 +2381,18 @@ const GraphicsPipelineConfiguration = struct {
                 .alignment = @alignOf(M44)
             },
         };
-        if (self.use_index_buffer) fields = fields ++ [_]std.builtin.Type.StructField {
+        if (self.use_index_buffer) {
+            if (self.use_index_buffer_auto) @compileError("Only one option can be active: `use_index_buffer_auto`, or `use_index_buffer`");
+            fields = fields ++ [_]std.builtin.Type.StructField {
                 std.builtin.Type.StructField {
-                .default_value = null,
-                .is_comptime = false,
-                .name = "index_buffer",
-                .type = []const u16,
-                .alignment = @alignOf([]const u16)
-            }
-        };
+                    .default_value = null,
+                    .is_comptime = false,
+                    .name = "index_buffer",
+                    .type = []const u16,
+                    .alignment = @alignOf([]const u16)
+                }
+            };
+        }
         if (self.do_depth_testing) fields = fields ++ [_]std.builtin.Type.StructField {
                 std.builtin.Type.StructField {
                 .default_value = null,
@@ -2671,9 +2454,11 @@ fn GraphicsPipeline(
                 var clipped: usize = 0;
                 inline for(0..3) |i| {
                     const vertex_index = index: {
-                        if (!pipeline_configuration.use_index_buffer) break :index face_index * 3 + i
-                        else break :index requirements.index_buffer[face_index * 3 + i];
-                        // TODO add option to autogenerate standard indexes 0 1 2 0 2 3 4 5 6 4 6 7 ...
+                        if (pipeline_configuration.use_index_buffer) break :index requirements.index_buffer[face_index * 3 + i]
+                        else if (pipeline_configuration.use_index_buffer_auto) break :index
+                            // Generates the sequence 0 1 2 0 2 3 4 5 6 4 6 7 8 9 10 8 10 11 ...
+                            if (face_index%2==0) face_index * 2 + i else if (i==0) (face_index-1) * 2 else ((face_index-1) * 2) + i + 1
+                        else break :index face_index * 3 + i;
                     };
                     const vertex_data: vertex_type = vertex_buffer[vertex_index];
                     // As far as I know, in your standard opengl vertex shader, the returned position is usually in
@@ -2815,97 +2600,160 @@ fn GraphicsPipeline(
     };
 }
 
-const imgui_renderer_pipeline_config = GraphicsPipelineConfiguration {
-    .blend_with_background = true,
-    .use_index_buffer = true,
-    .do_triangle_clipping = false,
-    .do_depth_testing = false,
-    .do_perspective_correct_interpolation = false,
-    .do_scissoring = true,
+const imgui_renderer = struct {
+    
+    const Context = struct {
+        texture: Buffer2D(RGBA),
+        texture_width: usize,
+        texture_height: usize,
+        projection_matrix: M44,
+    };
+    
+    const Invariant = struct {
+        texture_uv: Vector2f,
+        color: RGBA,
+    };
+    
+    const Vertex = struct {
+        pos: Vector2f,
+        uv: Vector2f,
+        color: RGBA,
+    };
+
+    const pipeline_configuration = GraphicsPipelineConfiguration {
+        .blend_with_background = true,
+        .use_index_buffer = true,
+        .do_triangle_clipping = false,
+        .do_depth_testing = false,
+        .do_perspective_correct_interpolation = false,
+        .do_scissoring = true,
+    };
+
+    const Pipeline = GraphicsPipeline(
+        win32.RGBA,
+        Context,
+        Invariant,
+        Vertex,
+        pipeline_configuration,
+        struct {
+            fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector4f {
+                out_invariant.color = vertex.color;
+                out_invariant.texture_uv = vertex.uv;
+                return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 1 });
+            }
+        }.vertex_shader,
+        struct {
+            fn fragment_shader(context: Context, invariants: Invariant) win32.RGBA {
+                const sample =
+                    if (bilinear) texture_bilinear_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
+                    else texture_point_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+                const rgba = invariants.color.multiply(sample);
+                return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a);
+            }
+        }.fragment_shader,
+    );
 };
-const ImguiRendererRequirements = imgui_renderer_pipeline_config.Requirements();
-const ImguiRendererContext = struct {
-    texture: Buffer2D(RGBA),
-    texture_width: usize,
-    texture_height: usize,
-    projection_matrix: M44,
+
+const quad_renderer = struct {
+    
+    const Context = struct {
+        texture: Buffer2D(RGBA),
+        texture_width: usize,
+        texture_height: usize,
+        projection_matrix: M44
+    };
+
+    const Invariant = struct {
+        texture_uv: Vector2f,
+    };
+
+    const Vertex = struct {
+        pos: Vector2f,
+        uv: Vector2f,
+    };
+
+    const pipeline_configuration = GraphicsPipelineConfiguration {
+        .blend_with_background = true,
+        .use_index_buffer = true,
+        .do_triangle_clipping = false,
+        .do_depth_testing = true,
+        .do_perspective_correct_interpolation = true,
+        .do_scissoring = false,
+    };
+
+    const Pipeline = GraphicsPipeline(
+        win32.RGBA,
+        Context,
+        Invariant,
+        Vertex,
+        pipeline_configuration,
+        struct {
+            fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector4f {
+                out_invariant.texture_uv = vertex.uv;
+                return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0 });
+            }
+        }.vertex_shader,
+        struct {
+            fn fragment_shader(context: Context, invariants: Invariant) win32.RGBA {
+                const rgba =
+                    if (bilinear) texture_bilinear_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
+                    else texture_point_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+                return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a);
+            }
+        }.fragment_shader,
+    );
+
 };
-const ImguiRendererInvariant = struct {
-    texture_uv: Vector2f,
-    color: RGBA,
+
+const text_renderer = struct {
+    
+    const Context = struct {
+        texture: Buffer2D(RGBA),
+        texture_width: usize,
+        texture_height: usize,
+        projection_matrix: M44,
+    };
+
+    const Invariant = struct {
+        texture_uv: Vector2f,
+    };
+
+    const Vertex = struct {
+        pos: Vector2f,
+        uv: Vector2f,
+    };
+
+    const Pipeline = GraphicsPipeline(
+        win32.RGBA,
+        Context,
+        Invariant,
+        Vertex,
+        GraphicsPipelineConfiguration {
+            .blend_with_background = true,
+            .use_index_buffer_auto = true,
+            .use_index_buffer = false,
+            .do_triangle_clipping = false,
+            .do_depth_testing = false,
+            .do_perspective_correct_interpolation = false,
+            .do_scissoring = false,
+        },
+        struct {
+            fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector4f {
+                out_invariant.texture_uv = vertex.uv;
+                return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 1 });
+            }
+        }.vertex_shader,
+        struct {
+            fn fragment_shader(context: Context, invariants: Invariant) win32.RGBA {
+                const rgba =
+                    if (bilinear) texture_bilinear_sample(RGBA, false, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
+                    else texture_point_sample(RGBA, false, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+                return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a);
+            }
+        }.fragment_shader,
+    );
+
 };
-const ImguiRendererVertex = struct {
-    pos: Vector2f,
-    uv: Vector2f,
-    color: RGBA,
-};
-const ImguiRenderer = GraphicsPipeline(
-    win32.RGBA,
-    ImguiRendererContext,
-    ImguiRendererInvariant,
-    ImguiRendererVertex,
-    imgui_renderer_pipeline_config,
-    struct {
-        fn vertex_shader(context: ImguiRendererContext, vertex: ImguiRendererVertex, out_invariant: *ImguiRendererInvariant) Vector4f {
-            out_invariant.color = vertex.color;
-            out_invariant.texture_uv = vertex.uv;
-            return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = -1 });
-        }
-    }.vertex_shader,
-    struct {
-        fn fragment_shader(context: ImguiRendererContext, invariants: ImguiRendererInvariant) win32.RGBA {
-            const sample =
-                if (bilinear) texture_bilinear_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
-                else texture_point_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
-            const rgba = invariants.color.multiply(sample);
-            return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a);
-        }
-    }.fragment_shader,
-);
-var bilinear: bool = true;
-const quad_renderer_pipeline_config = GraphicsPipelineConfiguration {
-    .blend_with_background = true,
-    .use_index_buffer = true,
-    .do_triangle_clipping = false,
-    .do_depth_testing = true,
-    .do_perspective_correct_interpolation = true,
-    .do_scissoring = false,
-};
-const QuadRendererRequirements = quad_renderer_pipeline_config.Requirements();
-const QuadRendererContext = struct {
-    texture: Buffer2D(RGBA),
-    texture_width: usize,
-    texture_height: usize,
-    projection_matrix: M44
-};
-const QuadRendererInvariant = struct {
-    texture_uv: Vector2f,
-};
-const QuadRendererVertex = struct {
-    pos: Vector2f,
-    uv: Vector2f,
-};
-const QuadRenderer = GraphicsPipeline(
-    win32.RGBA,
-    QuadRendererContext,
-    QuadRendererInvariant,
-    QuadRendererVertex,
-    quad_renderer_pipeline_config,
-    struct {
-        fn vertex_shader(context: QuadRendererContext, vertex: QuadRendererVertex, out_invariant: *QuadRendererInvariant) Vector4f {
-            out_invariant.texture_uv = vertex.uv;
-            return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0 });
-        }
-    }.vertex_shader,
-    struct {
-        fn fragment_shader(context: QuadRendererContext, invariants: QuadRendererInvariant) win32.RGBA {
-            const rgba =
-                if (bilinear) texture_bilinear_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
-                else texture_point_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
-            return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a);
-        }
-    }.fragment_shader,
-);
 
 const gouraud_renderer = struct {
     
