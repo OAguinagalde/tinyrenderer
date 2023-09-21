@@ -2125,8 +2125,8 @@ pub fn main() !void {
                     gouraud_renderer.Pipeline.render(state.pixel_buffer, render_context, vertex_buffer.items, @divExact(vertex_buffer.items.len, 3), render_requirements);
                 }
 
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
-                line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
+                if (true) line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
+                if (true) line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
                 // TODO there is part of the pixel buffer being rendered below the status bar from windows
                 if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 300) }, "ms {d: <9.2}", .{ms});
 
@@ -2371,6 +2371,7 @@ const GraphicsPipelineConfiguration = struct {
     do_depth_testing: bool = false,
     do_perspective_correct_interpolation: bool = false,
     do_scissoring: bool = false,
+    use_triangle_2: bool = false,
     pub fn Requirements(comptime self: GraphicsPipelineConfiguration) type {
         var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField {
             std.builtin.Type.StructField {
@@ -2481,118 +2482,395 @@ fn GraphicsPipeline(
                     tri[i] = screen_space_position;
                 }
 
-                // top = y = window height, bottom = y = 0
-                const a = &tri[0];
-                const b = &tri[1];
-                const c = &tri[2];
+                if (pipeline_configuration.use_triangle_2) {
 
-                // calculate the bounding of the triangle's projection on the screen
-                var left: usize = @intFromFloat(@min(a.x, @min(b.x, c.x)));
-                var bottom: usize = @intFromFloat(@min(a.y, @min(b.y, c.y)));
-                var right: usize = @intFromFloat(@max(a.x, @max(b.x, c.x)));
-                var top: usize = @intFromFloat(@max(a.y, @max(b.y, c.y)));
-                if (pipeline_configuration.do_scissoring) {
-                    left = @min(left, @as(usize, @intFromFloat(requirements.scissor_rect.x)));
-                    bottom = @min(bottom, @as(usize, @intFromFloat(requirements.scissor_rect.y)));
-                    right = @max(right, @as(usize, @intFromFloat(requirements.scissor_rect.z)));
-                    top = @max(top, @as(usize, @intFromFloat(requirements.scissor_rect.w)));
+                    const a = &tri[0];
+                    const b = &tri[1];
+                    const c = &tri[2];
+
+                    var top: *Vector3f = &tri[0];
+                    var mid: *Vector3f = &tri[1];
+                    var bot: *Vector3f = &tri[2];
+
+                    // order the vertices based on their y axis
+                    if (bot.y > mid.y) {
+                        const aux: *Vector3f = mid;
+                        mid = bot;
+                        bot = aux;
+                    }
+                    if (bot.y > top.y) {
+                        const aux: *Vector3f = top;
+                        top = bot;
+                        bot = aux;
+                    }
+                    if (mid.y > top.y) {
+                        const aux: *Vector3f = top;
+                        top = mid;
+                        mid = aux;
+                    }
+                    std.debug.assert(top.y >= mid.y and mid.y >= bot.y);
+
+                    // calculate dy between them
+                    const dyTopMid: f32 = top.y - mid.y;
+                    const dyMidBot: f32 = mid.y - bot.y;
+                    const dyTopBot: f32 = top.y - bot.y;
+
+                    const dxTopMid: f32 = top.x - mid.x;
+                    const dxTopBot: f32 = top.x - bot.x;
+                    const dxMidBot: f32 = mid.x - bot.x;
+
+                    // At this point we know that line(T-B) is going to be longer than line(T-M) or (M-B)
+                    // So we can split the triangle in 2 triangles, divided by the horizontal line(y == mid.y)
+                    const exists_top_half = dyTopMid >= 0.5;
+                    const exists_bot_half = dyMidBot >= 0.5;
+
+                    var side1: f32 = top.x;
+                    var side2: f32 = top.x;
+                    if (exists_top_half) {
+                        // Calculate the increments (steepness) of the segments of the triangle as we progress with its filling
+                        const incrementLongLine: f32 = dxTopBot / dyTopBot;
+                        const incrementShortLine: f32 = dxTopMid / dyTopMid;
+
+                        // draw top half
+                        var y: usize = @intFromFloat(top.y);
+                        while (y > @as(usize, @intFromFloat(mid.y))) : (y -= 1) {
+                            
+                            // TODO I can probably skip doing this on every line and just do it once
+                            var left: usize = @intFromFloat(side1);
+                            var right: usize = @intFromFloat(side2);
+                            if (left > right) {
+                                const aux = left;
+                                left = right;
+                                right = aux;
+                            }
+                            
+                            var x: usize = left;
+                            // draw a horizontal line from left to right
+                            while (x < right) : (x += 1) {
+                                
+                                // barycentric coordinates of the current pixel
+                                const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
+
+                                const ab = b.substract(a.*);
+                                const ac = c.substract(a.*);
+                                const ap = pixel.substract(a.*);
+                                const bp = pixel.substract(b.*);
+                                const ca = a.substract(c.*);
+
+                                // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
+                                // the magnitude of the cross product can be interpreted as the area of the parallelogram.
+                                const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+                                const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
+                                const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
+
+                                const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
+                                const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
+                                const w: f32 = (1 - u - v);
+
+                                // The inverse of the barycentric would be `P=wA+uB+vC`
+
+                                // determine if a pixel is in fact part of the triangle
+                                if (u < 0 or u >= 1) continue;
+                                if (v < 0 or v >= 1) continue;
+                                if (w < 0 or w >= 1) continue;
+
+                                if (pipeline_configuration.do_depth_testing) {
+                                    const z = depth[0] * w + depth[1] * u + depth[2] * v;
+                                    if (requirements.depth_buffer.get(x, y) >= z) continue;
+                                    requirements.depth_buffer.set(x, y, z);
+                                }
+
+                                var interpolated_invariants: invariant_type = undefined;
+
+                                // Get every invariant given out by the vertex shader and interpolate the values which will be passed to the fragment shader 
+                                if (pipeline_configuration.do_perspective_correct_interpolation) {
+                                    const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * u + 1/w_used_for_perspective_correction[2] * v;
+                                    inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
+                                        @field(interpolated_invariants, invariant.name) =
+                                            switch (invariant.type) {
+                                                Vector2f => Vector2f {
+                                                    .x = (@field(invariants[0], invariant.name).x/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).x/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).x/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                                    .y = (@field(invariants[0], invariant.name).y/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).y/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).y/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                                },
+                                                RGBA => RGBA {
+                                                    .r = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.r))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.r))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                    .g = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.g))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.g))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                    .b = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                    .a = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                },
+                                                f32 => (@field(invariants[0], invariant.name)/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name)/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name)/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                                else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
+                                            };
+                                    }
+                                }
+                                else {
+                                    inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
+                                        @field(interpolated_invariants, invariant.name) =
+                                            switch (invariant.type) {
+                                                Vector2f => Vector2f {
+                                                    .x = @field(invariants[0], invariant.name).x * w + @field(invariants[1], invariant.name).x * u + @field(invariants[2], invariant.name).x * v,
+                                                    .y = @field(invariants[0], invariant.name).y * w + @field(invariants[1], invariant.name).y * u + @field(invariants[2], invariant.name).y * v,
+                                                },
+                                                RGBA => RGBA {
+                                                    .r = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).r)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).r)) * v),
+                                                    .g = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).g)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).g)) * v),
+                                                    .b = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).b)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).b)) * v),
+                                                    .a = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).a)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).a)) * v),
+                                                },
+                                                f32 => @field(invariants[0], invariant.name) * w + @field(invariants[1], invariant.name) * u + @field(invariants[2], invariant.name) * v,
+                                                else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
+                                            };
+                                    }
+                                }
+
+                                const final_color = fragment_shader(context, interpolated_invariants);
+                                
+                                if (pipeline_configuration.blend_with_background) {
+                                    const old_color = pixel_buffer.get(x, y);
+                                    pixel_buffer.set(x, y, final_color.blend(old_color));
+                                }
+                                else pixel_buffer.set(x, y, final_color);
+                            }
+
+                            side1 -= incrementLongLine;
+                            side2 -= incrementShortLine;
+                        }
+
+                    }
+
+                    if (exists_bot_half) {
+                        // Calculate the increments (steepness) of the segments of the triangle as we progress with its filling
+                        const incrementLongLine: f32 = dxTopBot / dyTopBot;
+                        const incrementShortLine: f32 = dxMidBot / dyMidBot;
+                        side2 = mid.x;
+
+                        // draw bottom half
+                        var y: usize = @intFromFloat(mid.y);
+                        while (y > @as(usize, @intFromFloat(bot.y))) : (y -= 1) {
+                            
+                            // TODO I can probably skip doing this on every line and just do it once
+                            var left: usize = @intFromFloat(side1);
+                            var right: usize = @intFromFloat(side2);
+                            if (left > right) {
+                                const aux = left;
+                                left = right;
+                                right = aux;
+                            }
+                            
+                            var x: usize = left;
+                            // draw a horizontal line from left to right
+                            while (x < right) : (x += 1) {
+                                
+                                // barycentric coordinates of the current pixel
+                                const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
+
+                                const ab = b.substract(a.*);
+                                const ac = c.substract(a.*);
+                                const ap = pixel.substract(a.*);
+                                const bp = pixel.substract(b.*);
+                                const ca = a.substract(c.*);
+
+                                // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
+                                // the magnitude of the cross product can be interpreted as the area of the parallelogram.
+                                const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+                                const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
+                                const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
+
+                                const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
+                                const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
+                                const w: f32 = (1 - u - v);
+
+                                // The inverse of the barycentric would be `P=wA+uB+vC`
+
+                                // determine if a pixel is in fact part of the triangle
+                                if (u < 0 or u >= 1) continue;
+                                if (v < 0 or v >= 1) continue;
+                                if (w < 0 or w >= 1) continue;
+
+                                if (pipeline_configuration.do_depth_testing) {
+                                    const z = depth[0] * w + depth[1] * u + depth[2] * v;
+                                    if (requirements.depth_buffer.get(x, y) >= z) continue;
+                                    requirements.depth_buffer.set(x, y, z);
+                                }
+
+                                var interpolated_invariants: invariant_type = undefined;
+
+                                // Get every invariant given out by the vertex shader and interpolate the values which will be passed to the fragment shader 
+                                if (pipeline_configuration.do_perspective_correct_interpolation) {
+                                    const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * u + 1/w_used_for_perspective_correction[2] * v;
+                                    inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
+                                        @field(interpolated_invariants, invariant.name) =
+                                            switch (invariant.type) {
+                                                Vector2f => Vector2f {
+                                                    .x = (@field(invariants[0], invariant.name).x/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).x/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).x/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                                    .y = (@field(invariants[0], invariant.name).y/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).y/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).y/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                                },
+                                                RGBA => RGBA {
+                                                    .r = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.r))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.r))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                    .g = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.g))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.g))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                    .b = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                    .a = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                },
+                                                f32 => (@field(invariants[0], invariant.name)/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name)/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name)/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                                else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
+                                            };
+                                    }
+                                }
+                                else {
+                                    inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
+                                        @field(interpolated_invariants, invariant.name) =
+                                            switch (invariant.type) {
+                                                Vector2f => Vector2f {
+                                                    .x = @field(invariants[0], invariant.name).x * w + @field(invariants[1], invariant.name).x * u + @field(invariants[2], invariant.name).x * v,
+                                                    .y = @field(invariants[0], invariant.name).y * w + @field(invariants[1], invariant.name).y * u + @field(invariants[2], invariant.name).y * v,
+                                                },
+                                                RGBA => RGBA {
+                                                    .r = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).r)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).r)) * v),
+                                                    .g = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).g)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).g)) * v),
+                                                    .b = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).b)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).b)) * v),
+                                                    .a = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).a)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).a)) * v),
+                                                },
+                                                f32 => @field(invariants[0], invariant.name) * w + @field(invariants[1], invariant.name) * u + @field(invariants[2], invariant.name) * v,
+                                                else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
+                                            };
+                                    }
+                                }
+
+                                const final_color = fragment_shader(context, interpolated_invariants);
+                                
+                                if (pipeline_configuration.blend_with_background) {
+                                    const old_color = pixel_buffer.get(x, y);
+                                    pixel_buffer.set(x, y, final_color.blend(old_color));
+                                }
+                                else pixel_buffer.set(x, y, final_color);
+                            }
+
+                            side1 -= incrementLongLine;
+                            side2 -= incrementShortLine;
+                        }
+                    }
+
+                    if (!exists_top_half and !exists_bot_half and dyTopBot >= 0.5) {
+                        // If neither half is big enough by itself to be drawn, but together they are big enough, then draw it
+                        // even though it will be just a line of pixels
+                        // TODO draw a line from left to right. figure out which side is mor to the left and which one is more to the right
+                    }
+
                 }
+                else {
+                    // top = y = window height, bottom = y = 0
+                    const a = &tri[0];
+                    const b = &tri[1];
+                    const c = &tri[2];
 
-                // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
-                // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
-                // test it just in case
+                    // calculate the bounding of the triangle's projection on the screen
+                    var left: usize = @intFromFloat(@min(a.x, @min(b.x, c.x)));
+                    var bottom: usize = @intFromFloat(@min(a.y, @min(b.y, c.y)));
+                    var right: usize = @intFromFloat(@max(a.x, @max(b.x, c.x)));
+                    var top: usize = @intFromFloat(@max(a.y, @max(b.y, c.y)));
+                    if (pipeline_configuration.do_scissoring) {
+                        left = @min(left, @as(usize, @intFromFloat(requirements.scissor_rect.x)));
+                        bottom = @min(bottom, @as(usize, @intFromFloat(requirements.scissor_rect.y)));
+                        right = @max(right, @as(usize, @intFromFloat(requirements.scissor_rect.z)));
+                        top = @max(top, @as(usize, @intFromFloat(requirements.scissor_rect.w)));
+                    }
 
-                // top to bottom
-                var y: usize = top;
-                while (y >= bottom) : (y -= 1) {
-                    
-                    // left to right
-                    var x: usize = left;
-                    while (x <= right) : (x += 1) {
+                    // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
+                    // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
+                    // test it just in case
+
+                    // top to bottom
+                    var y: usize = top;
+                    while (y > bottom) : (y -= 1) {
                         
-                        // barycentric coordinates of the current pixel
-                        const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
+                        // left to right
+                        var x: usize = left;
+                        while (x <= right) : (x += 1) {
+                            
+                            // barycentric coordinates of the current pixel
+                            const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
 
-                        const ab = b.substract(a.*);
-                        const ac = c.substract(a.*);
-                        const ap = pixel.substract(a.*);
-                        const bp = pixel.substract(b.*);
-                        const ca = a.substract(c.*);
+                            const ab = b.substract(a.*);
+                            const ac = c.substract(a.*);
+                            const ap = pixel.substract(a.*);
+                            const bp = pixel.substract(b.*);
+                            const ca = a.substract(c.*);
 
-                        // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
-                        // the magnitude of the cross product can be interpreted as the area of the parallelogram.
-                        const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
-                        const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
-                        const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
+                            // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
+                            // the magnitude of the cross product can be interpreted as the area of the parallelogram.
+                            const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+                            const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
+                            const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
 
-                        const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
-                        const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
-                        const w: f32 = (1 - u - v);
+                            const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
+                            const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
+                            const w: f32 = (1 - u - v);
 
-                        // The inverse of the barycentric would be `P=wA+uB+vC`
+                            // The inverse of the barycentric would be `P=wA+uB+vC`
 
-                        // determine if a pixel is in fact part of the triangle
-                        if (u < 0 or u >= 1) continue;
-                        if (v < 0 or v >= 1) continue;
-                        if (w < 0 or w >= 1) continue;
+                            // determine if a pixel is in fact part of the triangle
+                            if (u < 0 or u >= 1) continue;
+                            if (v < 0 or v >= 1) continue;
+                            if (w < 0 or w >= 1) continue;
 
-                        if (pipeline_configuration.do_depth_testing) {
-                            const z = depth[0] * w + depth[1] * u + depth[2] * v;
-                            if (requirements.depth_buffer.get(x, y) >= z) continue;
-                            requirements.depth_buffer.set(x, y, z);
-                        }
-
-                        var interpolated_invariants: invariant_type = undefined;
-
-                        // Get every invariant given out by the vertex shader and interpolate the values which will be passed to the fragment shader 
-                        if (pipeline_configuration.do_perspective_correct_interpolation) {
-                            const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * u + 1/w_used_for_perspective_correction[2] * v;
-                            inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
-                                @field(interpolated_invariants, invariant.name) =
-                                    switch (invariant.type) {
-                                        Vector2f => Vector2f {
-                                            .x = (@field(invariants[0], invariant.name).x/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).x/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).x/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                            .y = (@field(invariants[0], invariant.name).y/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).y/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).y/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                        },
-                                        RGBA => RGBA {
-                                            .r = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.r))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.r))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                            .g = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.g))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.g))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                            .b = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                            .a = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                        },
-                                        f32 => (@field(invariants[0], invariant.name)/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name)/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name)/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                        else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
-                                    };
+                            if (pipeline_configuration.do_depth_testing) {
+                                const z = depth[0] * w + depth[1] * u + depth[2] * v;
+                                if (requirements.depth_buffer.get(x, y) >= z) continue;
+                                requirements.depth_buffer.set(x, y, z);
                             }
-                        }
-                        else {
-                            inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
-                                @field(interpolated_invariants, invariant.name) =
-                                    switch (invariant.type) {
-                                        Vector2f => Vector2f {
-                                            .x = @field(invariants[0], invariant.name).x * w + @field(invariants[1], invariant.name).x * u + @field(invariants[2], invariant.name).x * v,
-                                            .y = @field(invariants[0], invariant.name).y * w + @field(invariants[1], invariant.name).y * u + @field(invariants[2], invariant.name).y * v,
-                                        },
-                                        RGBA => RGBA {
-                                            .r = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).r)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).r)) * v),
-                                            .g = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).g)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).g)) * v),
-                                            .b = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).b)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).b)) * v),
-                                            .a = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).a)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).a)) * v),
-                                        },
-                                        f32 => @field(invariants[0], invariant.name) * w + @field(invariants[1], invariant.name) * u + @field(invariants[2], invariant.name) * v,
-                                        else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
-                                    };
+
+                            var interpolated_invariants: invariant_type = undefined;
+
+                            // Get every invariant given out by the vertex shader and interpolate the values which will be passed to the fragment shader 
+                            if (pipeline_configuration.do_perspective_correct_interpolation) {
+                                const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * u + 1/w_used_for_perspective_correction[2] * v;
+                                inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
+                                    @field(interpolated_invariants, invariant.name) =
+                                        switch (invariant.type) {
+                                            Vector2f => Vector2f {
+                                                .x = (@field(invariants[0], invariant.name).x/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).x/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).x/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                                .y = (@field(invariants[0], invariant.name).y/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).y/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).y/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                            },
+                                            RGBA => RGBA {
+                                                .r = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.r))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.r))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                .g = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.g))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.g))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                .b = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                                .a = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a))/w_used_for_perspective_correction[2] * v) / perspective_correction),
+                                            },
+                                            f32 => (@field(invariants[0], invariant.name)/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name)/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name)/w_used_for_perspective_correction[2] * v) / perspective_correction,
+                                            else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
+                                        };
+                                }
                             }
-                        }
+                            else {
+                                inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
+                                    @field(interpolated_invariants, invariant.name) =
+                                        switch (invariant.type) {
+                                            Vector2f => Vector2f {
+                                                .x = @field(invariants[0], invariant.name).x * w + @field(invariants[1], invariant.name).x * u + @field(invariants[2], invariant.name).x * v,
+                                                .y = @field(invariants[0], invariant.name).y * w + @field(invariants[1], invariant.name).y * u + @field(invariants[2], invariant.name).y * v,
+                                            },
+                                            RGBA => RGBA {
+                                                .r = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).r)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).r)) * v),
+                                                .g = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).g)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).g)) * v),
+                                                .b = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).b)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).b)) * v),
+                                                .a = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).a)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).a)) * v),
+                                            },
+                                            f32 => @field(invariants[0], invariant.name) * w + @field(invariants[1], invariant.name) * u + @field(invariants[2], invariant.name) * v,
+                                            else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
+                                        };
+                                }
+                            }
 
-                        const final_color = fragment_shader(context, interpolated_invariants);
-                        
-                        if (pipeline_configuration.blend_with_background) {
-                            const old_color = pixel_buffer.get(x, y);
-                            pixel_buffer.set(x, y, final_color.blend(old_color));
-                        }
-                        else pixel_buffer.set(x, y, final_color);
+                            const final_color = fragment_shader(context, interpolated_invariants);
+                            
+                            if (pipeline_configuration.blend_with_background) {
+                                const old_color = pixel_buffer.get(x, y);
+                                pixel_buffer.set(x, y, final_color.blend(old_color));
+                            }
+                            else pixel_buffer.set(x, y, final_color);
 
+                        }
                     }
                 }
             }
@@ -2627,6 +2905,7 @@ const imgui_renderer = struct {
         .do_depth_testing = false,
         .do_perspective_correct_interpolation = false,
         .do_scissoring = true,
+        .use_triangle_2 = use_triangle_2,
     };
 
     const Pipeline = GraphicsPipeline(
@@ -2679,6 +2958,7 @@ const quad_renderer = struct {
         .do_depth_testing = true,
         .do_perspective_correct_interpolation = true,
         .do_scissoring = false,
+        .use_triangle_2 = use_triangle_2,
     };
 
     const Pipeline = GraphicsPipeline(
@@ -2736,6 +3016,7 @@ const text_renderer = struct {
             .do_depth_testing = false,
             .do_perspective_correct_interpolation = false,
             .do_scissoring = false,
+            .use_triangle_2 = use_triangle_2,
         },
         struct {
             fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector4f {
@@ -2784,6 +3065,7 @@ const gouraud_renderer = struct {
         .do_depth_testing = true,
         .do_perspective_correct_interpolation = true,
         .do_scissoring = false,
+        .use_triangle_2 = use_triangle_2,
     };
 
     const Pipeline = GraphicsPipeline(
@@ -2809,3 +3091,5 @@ const gouraud_renderer = struct {
     );
 
 };
+
+const use_triangle_2 = true;
