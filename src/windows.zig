@@ -264,6 +264,24 @@ const Vector4f = struct {
 };
 
 /// column major 4x4 matrix
+/// meaning its stored like in a contiguous array like this:
+///
+///     [16]f32 { m11, m21, m31, m41, m12, m22, m32, m42, m13, m23, m33, m43, m14, m24, m34, m44 }
+///
+/// So to access the matrix
+/// 
+///     m11, m12, m13, m14
+///     m21, m22, m23, m24
+///     m31, m32, m33, m34
+///     m41, m42, m43, m44
+/// 
+/// The index used would be
+///
+///     0    4    8    12
+///     1    5    9    13
+///     2    6    10   14
+///     3    7    11   15
+/// 
 const M44 = struct {
     data: [16]f32,
 
@@ -2329,6 +2347,17 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(win32.RGBA),
 // if 1 or 2 (but not 3) points of a given triangle are outside the plane, then calculate the 1 or 2 clipped triangles that need to be rendered
 // continue implementing this ...
 
+const Frustum = struct {
+    left: Plane,
+    right: Plane,
+    top: Plane,
+    bottom: Plane,
+    near: Plane,
+    far: Plane,
+};
+
+/// Check Appendix A for more info:
+/// https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
 const Plane = struct {
     
     a: f32,
@@ -2341,11 +2370,68 @@ const Plane = struct {
         return Plane { .a = normal.a, .b = normal.b, .c = normal.c, .d = d };
     }
 
+
+    /// https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
+    pub fn extract_frustum_from_mvp(mvp_matrix: M44) Frustum {
+        var frustum: Frustum = undefined;
+        // Left clipping plane
+        frustum.left.a = mvp_matrix.data[3] + mvp_matrix.data[0];
+        frustum.left.b = mvp_matrix.data[7] + mvp_matrix.data[4];
+        frustum.left.c = mvp_matrix.data[11] + mvp_matrix.data[8];
+        frustum.left.d = mvp_matrix.data[15] + mvp_matrix.data[12];
+        // Right clipping plane
+        frustum.right.a = mvp_matrix.data[3] - mvp_matrix.data[0];
+        frustum.right.b = mvp_matrix.data[7] - mvp_matrix.data[4];
+        frustum.right.c = mvp_matrix.data[11] - mvp_matrix.data[8];
+        frustum.right.d = mvp_matrix.data[15] - mvp_matrix.data[12];
+        // Top clipping plane
+        frustum.top.a = mvp_matrix.data[3] - mvp_matrix.data[1];
+        frustum.top.b = mvp_matrix.data[7] - mvp_matrix.data[5];
+        frustum.top.c = mvp_matrix.data[11] - mvp_matrix.data[9];
+        frustum.top.d = mvp_matrix.data[15] - mvp_matrix.data[13];
+        // Bottom clipping plane
+        frustum.bottom.a = mvp_matrix.data[3] + mvp_matrix.data[1];
+        frustum.bottom.b = mvp_matrix.data[7] + mvp_matrix.data[5];
+        frustum.bottom.c = mvp_matrix.data[11] + mvp_matrix.data[9];
+        frustum.bottom.d = mvp_matrix.data[15] + mvp_matrix.data[13];
+        // Near clipping plane
+        frustum.near.a = mvp_matrix.data[3] + mvp_matrix.data[2];
+        frustum.near.b = mvp_matrix.data[7] + mvp_matrix.data[6];
+        frustum.near.c = mvp_matrix.data[11] + mvp_matrix.data[10];
+        frustum.near.d = mvp_matrix.data[15] + mvp_matrix.data[14];
+        // Far clipping plane
+        frustum.far.a = mvp_matrix.data[3] - mvp_matrix.data[2];
+        frustum.far.b = mvp_matrix.data[7] - mvp_matrix.data[6];
+        frustum.far.c = mvp_matrix.data[11] - mvp_matrix.data[10];
+        frustum.far.d = mvp_matrix.data[15] - mvp_matrix.data[14];
+    }
+
+    /// > A plane cuts three-dimensional space into two separate parts. These parts are called `halfspaces`. The halfspace the
+    /// > plane's normals vector points into is called the positive halfspace, and the other halfspace is called the negative halfspace.
+    pub const Halfspace = enum(i32) {
+        negative = -1,
+        on_plane = 0,
+        positive = 1,
+    };
+
+    /// > This distance is not necessarily a 'true' distance.
+    /// > Instead it is the signed distance in units of the magnitude of the plane’s normal vector.
+    /// > To obtain a 'true' distance, you need to normalize the plane equation first.
+    /// >
+    /// > If the plane equation is not normalized, then we can still get some valuable information from the 'non-true' distance:
+    /// > 1. If dist < 0 , then the point p lies in the negative halfspace.
+    /// > 2. If dist = 0 , then the point p lies in the plane.
+    /// > 3. If dist > 0 , then the point p lies in the positive halfspace
     pub fn signed_distance_to_point(plane: Plane, point: Vector3f) f32 {
         return plane.a * point.x +
             plane.b * point.y +
             plane.c * point.z +
             plane.d;
+    }
+
+    pub fn classify_point(plane: Plane, point: Vector3f) Halfspace {
+        const distance: f32 = signed_distance_to_point(plane, point);
+        return if (distance < 0) Halfspace.negative else if (distance > 0) Halfspace.positive else Halfspace.on_plane;
     }
 
     pub fn intersection(plane: Plane, p1: Vector3f, p2: Vector3f) Vector3f {
@@ -2361,6 +2447,16 @@ const Plane = struct {
 
         return intersection_point;
     }
+
+    /// > means to change the plane equation, such that the normal becomes a unit vector.
+    pub fn normalize(self: *Plane) void {
+        const magnitude: f32 = std.math.sqrt(self.a * self.a + self.b * self.b + self.c * self.c);
+        self.a /= magnitude;
+        self.b /= magnitude;
+        self.c /= magnitude;
+        self.d /= magnitude;
+    }
+
 };
 
 const GraphicsPipelineConfiguration = struct {
@@ -2372,6 +2468,8 @@ const GraphicsPipelineConfiguration = struct {
     do_perspective_correct_interpolation: bool = false,
     do_scissoring: bool = false,
     use_triangle_2: bool = false,
+    
+    /// returns a comptime tpye (an struct, basically) which needs to be filled, and passed as a value to the render pipeline when calling `render`
     pub fn Requirements(comptime self: GraphicsPipelineConfiguration) type {
         var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField {
             std.builtin.Type.StructField {
