@@ -1706,7 +1706,7 @@ const imgui_win32_impl = struct {
                     .index_buffer = index_buffer.used_slice()[command.IdxOffset..],
                     .scissor_rect = clip,
                 };
-                imgui_renderer.Pipeline.render(pixel_buffer, render_context, vertex_data, command.ElemCount / 3, render_requirements);
+                if (false) imgui_renderer.Pipeline.render(pixel_buffer, render_context, vertex_data, command.ElemCount / 3, render_requirements);
             }
         }
     }
@@ -1737,7 +1737,7 @@ const imgui_win32_impl = struct {
 
 };
 /// top = y = window height, bottom = y = 0
-fn line(comptime pixel_type: type, buffer: *Buffer2D(pixel_type), a: Vector2i, b: Vector2i, color: pixel_type) void {
+fn line(comptime pixel_type: type, buffer: Buffer2D(pixel_type), a: Vector2i, b: Vector2i, color: pixel_type) void {
     
     if (a.x == b.x and a.y == b.y) {
         // a point
@@ -1780,8 +1780,8 @@ fn line(comptime pixel_type: type, buffer: *Buffer2D(pixel_type), a: Vector2i, b
         return;
     }
 
-    const delta_x_abs = std.math.absInt(delta.x) catch unreachable;
-    const delta_y_abs = std.math.absInt(delta.y) catch unreachable;
+    const delta_x_abs = @abs(delta.x);
+    const delta_y_abs = @abs(delta.y);
 
     if (delta_x_abs == delta_y_abs) {
         if (a.y < b.y) { // draw a to b so that memory is modified in the "correct order"
@@ -2098,19 +2098,19 @@ pub fn main() !void {
                 if (state.keys['P']) bilinear = !bilinear;
 
                 _ = counted_since_start;
-                
+
                 if (false) {
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red);
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 50 }, green);
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 50, .y = 100 }, blue);
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 1, .y = 100 }, white);
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 100 }, turquoise);
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 1 }, red); 
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 50 }, green);
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 50, .y = 100 }, blue);
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 1, .y = 100 }, white);
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 100 }, turquoise);
-                    line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 70, .y = 10 }, Vector2i { .x = 70, .y = 10 }, white);
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red);
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 50 }, green);
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 50, .y = 100 }, blue);
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 1, .y = 100 }, white);
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 100 }, turquoise);
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 1 }, red); 
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 50 }, green);
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 50, .y = 100 }, blue);
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 1, .y = 100 }, white);
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 100 }, turquoise);
+                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 70, .y = 10 }, Vector2i { .x = 70, .y = 10 }, white);
                 }
 
                 // TODO I think windows is rendering upside down, (or me, lol) so invert it
@@ -2140,11 +2140,11 @@ pub fn main() !void {
                         .depth_buffer = state.depth_buffer,
                         .viewport_matrix = state.viewport_matrix,
                     };
-                    gouraud_renderer.Pipeline.render(state.pixel_buffer, render_context, vertex_buffer.items, @divExact(vertex_buffer.items.len, 3), render_requirements);
+                    if (false) gouraud_renderer.Pipeline.render(state.pixel_buffer, render_context, vertex_buffer.items, @divExact(vertex_buffer.items.len, 3), render_requirements);
                 }
 
-                if (true) line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
-                if (true) line(win32.RGBA, &state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
+                if (true) line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 200, .y = 200 }, Vector2i { .x = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 200 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
+                if (true) line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
                 // TODO there is part of the pixel buffer being rendered below the status bar from windows
                 if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height() - 300) }, "ms {d: <9.2}", .{ms});
 
@@ -2190,6 +2190,7 @@ pub fn main() !void {
                         .depth_buffer = state.depth_buffer,
                         .viewport_matrix = state.viewport_matrix,
                         .index_buffer = &index_buffer,
+                        .projection_matrix = state.projection_matrix,
                     };
                     quad_renderer.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
                 }
@@ -2283,7 +2284,7 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
 
 var bilinear: bool = false;
 
-fn render_line(pixel_buffer: *Buffer2D(win32.RGBA), a: Vector2i, b: Vector2i, color: win32.RGBA) void {
+fn render_line(pixel_buffer: Buffer2D(win32.RGBA), a: Vector2i, b: Vector2i, color: win32.RGBA) void {
     line(win32.RGBA, pixel_buffer, a, b, color);
 }
 
@@ -2338,14 +2339,8 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(win32.RGBA),
         };
     }
     
-    text_renderer.Pipeline.render(pixel_buffer, context, vertex_buffer[0..text.len*4], text.len * 2, .{ .viewport_matrix = state.viewport_matrix, });
+    if (false) text_renderer.Pipeline.render(pixel_buffer, context, vertex_buffer[0..text.len*4], text.len * 2, .{ .viewport_matrix = state.viewport_matrix, });
 }
-
-// TODO finish this...
-// triangle clipping on at least one plane
-// 
-// if 1 or 2 (but not 3) points of a given triangle are outside the plane, then calculate the 1 or 2 clipped triangles that need to be rendered
-// continue implementing this ...
 
 const Frustum = struct {
     left: Plane,
@@ -2370,40 +2365,48 @@ const Plane = struct {
         return Plane { .a = normal.a, .b = normal.b, .c = normal.c, .d = d };
     }
 
-
     /// https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
-    pub fn extract_frustum_from_mvp(mvp_matrix: M44) Frustum {
+    pub fn extract_frustum_from_projection(projection_matrix: M44) Frustum {
         var frustum: Frustum = undefined;
         // Left clipping plane
-        frustum.left.a = mvp_matrix.data[3] + mvp_matrix.data[0];
-        frustum.left.b = mvp_matrix.data[7] + mvp_matrix.data[4];
-        frustum.left.c = mvp_matrix.data[11] + mvp_matrix.data[8];
-        frustum.left.d = mvp_matrix.data[15] + mvp_matrix.data[12];
+        frustum.left.a = projection_matrix.data[3] + projection_matrix.data[0];
+        frustum.left.b = projection_matrix.data[7] + projection_matrix.data[4];
+        frustum.left.c = projection_matrix.data[11] + projection_matrix.data[8];
+        frustum.left.d = projection_matrix.data[15] + projection_matrix.data[12];
         // Right clipping plane
-        frustum.right.a = mvp_matrix.data[3] - mvp_matrix.data[0];
-        frustum.right.b = mvp_matrix.data[7] - mvp_matrix.data[4];
-        frustum.right.c = mvp_matrix.data[11] - mvp_matrix.data[8];
-        frustum.right.d = mvp_matrix.data[15] - mvp_matrix.data[12];
+        frustum.right.a = projection_matrix.data[3] - projection_matrix.data[0];
+        frustum.right.b = projection_matrix.data[7] - projection_matrix.data[4];
+        frustum.right.c = projection_matrix.data[11] - projection_matrix.data[8];
+        frustum.right.d = projection_matrix.data[15] - projection_matrix.data[12];
         // Top clipping plane
-        frustum.top.a = mvp_matrix.data[3] - mvp_matrix.data[1];
-        frustum.top.b = mvp_matrix.data[7] - mvp_matrix.data[5];
-        frustum.top.c = mvp_matrix.data[11] - mvp_matrix.data[9];
-        frustum.top.d = mvp_matrix.data[15] - mvp_matrix.data[13];
+        frustum.top.a = projection_matrix.data[3] - projection_matrix.data[1];
+        frustum.top.b = projection_matrix.data[7] - projection_matrix.data[5];
+        frustum.top.c = projection_matrix.data[11] - projection_matrix.data[9];
+        frustum.top.d = projection_matrix.data[15] - projection_matrix.data[13];
         // Bottom clipping plane
-        frustum.bottom.a = mvp_matrix.data[3] + mvp_matrix.data[1];
-        frustum.bottom.b = mvp_matrix.data[7] + mvp_matrix.data[5];
-        frustum.bottom.c = mvp_matrix.data[11] + mvp_matrix.data[9];
-        frustum.bottom.d = mvp_matrix.data[15] + mvp_matrix.data[13];
+        frustum.bottom.a = projection_matrix.data[3] + projection_matrix.data[1];
+        frustum.bottom.b = projection_matrix.data[7] + projection_matrix.data[5];
+        frustum.bottom.c = projection_matrix.data[11] + projection_matrix.data[9];
+        frustum.bottom.d = projection_matrix.data[15] + projection_matrix.data[13];
         // Near clipping plane
-        frustum.near.a = mvp_matrix.data[3] + mvp_matrix.data[2];
-        frustum.near.b = mvp_matrix.data[7] + mvp_matrix.data[6];
-        frustum.near.c = mvp_matrix.data[11] + mvp_matrix.data[10];
-        frustum.near.d = mvp_matrix.data[15] + mvp_matrix.data[14];
+        frustum.near.a = projection_matrix.data[3] + projection_matrix.data[2];
+        frustum.near.b = projection_matrix.data[7] + projection_matrix.data[6];
+        frustum.near.c = projection_matrix.data[11] + projection_matrix.data[10];
+        frustum.near.d = projection_matrix.data[15] + projection_matrix.data[14];
         // Far clipping plane
-        frustum.far.a = mvp_matrix.data[3] - mvp_matrix.data[2];
-        frustum.far.b = mvp_matrix.data[7] - mvp_matrix.data[6];
-        frustum.far.c = mvp_matrix.data[11] - mvp_matrix.data[10];
-        frustum.far.d = mvp_matrix.data[15] - mvp_matrix.data[14];
+        frustum.far.a = projection_matrix.data[3] - projection_matrix.data[2];
+        frustum.far.b = projection_matrix.data[7] - projection_matrix.data[6];
+        frustum.far.c = projection_matrix.data[11] - projection_matrix.data[10];
+        frustum.far.d = projection_matrix.data[15] - projection_matrix.data[14];
+
+        // frustum.left.normalize();
+        // frustum.right.normalize();
+        // frustum.top.normalize();
+        // frustum.bottom.normalize();
+        // frustum.near.normalize();
+        // frustum.far.normalize();
+
+        return frustum;
     }
 
     /// > A plane cuts three-dimensional space into two separate parts. These parts are called `halfspaces`. The halfspace the
@@ -2510,6 +2513,15 @@ const GraphicsPipelineConfiguration = struct {
                 .alignment = @alignOf(Vector4f)
             }
         };
+        if (self.do_triangle_clipping) fields = fields ++ [_]std.builtin.Type.StructField {
+                std.builtin.Type.StructField {
+                .default_value = null,
+                .is_comptime = false,
+                .name = "projection_matrix",
+                .type = M44,
+                .alignment = @alignOf(M44)
+            }
+        };
         // TODO what exactly should I do with declarations?
         // according to the compiler, when I put any declaration whatsoever I ger `error: reified structs must have no decls`
         // not sure what that means
@@ -2541,16 +2553,26 @@ fn GraphicsPipeline(
         const Self = @This();
         fn render(pixel_buffer: Buffer2D(final_color_type), context: context_type, vertex_buffer: []const vertex_type, face_count: usize, requirements: pipeline_configuration.Requirements()) void {
             
+            var frustum = if (pipeline_configuration.do_triangle_clipping) Plane.extract_frustum_from_projection(requirements.projection_matrix) else undefined;
             var face_index: usize = 0;
             label_outer: while (face_index < face_count) : (face_index += 1) {
                 
-                var invariants: [3]invariant_type = undefined;
-                var tri: [3]Vector3f = undefined;
-                var w_used_for_perspective_correction: [3]f32 = undefined;
-                var depth: [3]f32 = undefined;
+                const vertex_count = if (pipeline_configuration.do_triangle_clipping) 4 else 3;
+
+                // 0, 1 and 2 will be the original triangle vertices.
+                // if there is clipping however
+                var invariants: [vertex_count]invariant_type = undefined;
+                var clip_space_positions: [vertex_count]Vector4f = undefined;
+                var ndcs: [vertex_count]Vector3f = undefined;
+                var tri: [vertex_count]Vector3f = undefined;
+                var w_used_for_perspective_correction: [vertex_count]f32 = undefined;
+                var depth: [vertex_count]f32 = undefined;
+
+                const possible_index = enum (usize) { first = 0, second = 1, third = 2, none = 3 };
+                var clipped = [3]possible_index { .none, .none, .none };
+                var clipped_count: usize = 0;
 
                 // pass all 3 vertices of this face through the vertex shader
-                var clipped: usize = 0;
                 inline for(0..3) |i| {
                     const vertex_index = index: {
                         if (pipeline_configuration.use_index_buffer) break :index requirements.index_buffer[face_index * 3 + i]
@@ -2562,328 +2584,348 @@ fn GraphicsPipeline(
                     const vertex_data: vertex_type = vertex_buffer[vertex_index];
                     // As far as I know, in your standard opengl vertex shader, the returned position is usually in
                     // clip space, which is a homogeneous coordinate system. The `w` will be used for perspective correction.
-                    const clip_space_position = vertex_shader(context, vertex_data, &invariants[i]);
-                    const ndc = clip_space_position.perspective_division();
+                    clip_space_positions[i] = vertex_shader(context, vertex_data, &invariants[i]);
+                    
+                    const ndc = clip_space_positions[i].perspective_division();
+                    ndcs[i] = ndc;
                     if (ndc.x >= 1 or ndc.x <= -1 or ndc.y >= 1 or ndc.y <= -1 or ndc.z >= 1 or ndc.z <= -1) {
                         if (pipeline_configuration.do_triangle_clipping) {
-                            clipped += 1;
-                            @panic("triangle clipping not yet implemented");
-                            // TODO how can I get a point and the normal of the frustrum? Maybe I can take those directly from the projection matrix?
-                            // Once I have the plane I can check for intersection points and form new triangles (that form the clipped triangle)
-                            // Plane.from(point, normal)
+                            clipped[clipped_count] = @enumFromInt(i);
+                            clipped_count += 1;
+                            std.log.debug("clipped {}", .{i});
+                            if (clipped_count == 3) continue :label_outer;
                         }
                         else continue :label_outer;
                     }
                     if (pipeline_configuration.do_depth_testing) depth[i] = ndc.z;
-                    if (pipeline_configuration.do_perspective_correct_interpolation) w_used_for_perspective_correction[i] = clip_space_position.w;
+                    if (pipeline_configuration.do_perspective_correct_interpolation) w_used_for_perspective_correction[i] = clip_space_positions[i].w;
                     const screen_space_position = requirements.viewport_matrix.apply_to_vec3(ndc).perspective_division();
                     tri[i] = screen_space_position;
                 }
 
-                if (pipeline_configuration.use_triangle_2) {
-
-                    const a = &tri[0];
-                    const b = &tri[1];
-                    const c = &tri[2];
-
-                    var top: *Vector3f = &tri[0];
-                    var mid: *Vector3f = &tri[1];
-                    var bot: *Vector3f = &tri[2];
-
-                    // order the vertices based on their y axis
-                    if (bot.y > mid.y) {
-                        const aux: *Vector3f = mid;
-                        mid = bot;
-                        bot = aux;
+                if (pipeline_configuration.do_triangle_clipping) {
+                    
+                    if (clipped_count == 0) {
+                        if (pipeline_configuration.use_triangle_2) rasterizers.rasterize_2(pixel_buffer, context, requirements, tri[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*)
+                        else rasterizers.rasterize_1(pixel_buffer, context, requirements, tri[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*);
+                        
+                        line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[0].x), .y = @intFromFloat(tri[0].y) }, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
+                        line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
+                        line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, Vector2i { .x = @intFromFloat(tri[0].x), .y = @intFromFloat(tri[0].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
                     }
-                    if (bot.y > top.y) {
-                        const aux: *Vector3f = top;
-                        top = bot;
-                        bot = aux;
-                    }
-                    if (mid.y > top.y) {
-                        const aux: *Vector3f = top;
-                        top = mid;
-                        mid = aux;
-                    }
-                    std.debug.assert(top.y >= mid.y and mid.y >= bot.y);
-
-                    // calculate dy between them
-                    const dyTopMid: f32 = top.y - mid.y;
-                    const dyMidBot: f32 = mid.y - bot.y;
-                    const dyTopBot: f32 = top.y - bot.y;
-
-                    const dxTopMid: f32 = top.x - mid.x;
-                    const dxTopBot: f32 = top.x - bot.x;
-                    const dxMidBot: f32 = mid.x - bot.x;
-
-                    // At this point we know that line(T-B) is going to be longer than line(T-M) or (M-B)
-                    // So we can split the triangle in 2 triangles, divided by the horizontal line(y == mid.y)
-                    const exists_top_half = dyTopMid >= 0.5;
-                    const exists_bot_half = dyMidBot >= 0.5;
-
-                    var side1: f32 = top.x;
-                    var side2: f32 = top.x;
-                    if (exists_top_half) {
-                        // Calculate the increments (steepness) of the segments of the triangle as we progress with its filling
-                        const incrementLongLine: f32 = dxTopBot / dyTopBot;
-                        const incrementShortLine: f32 = dxTopMid / dyTopMid;
-
-                        // draw top half
-                        var y: usize = @intFromFloat(top.y);
-                        while (y > @as(usize, @intFromFloat(mid.y))) : (y -= 1) {
-                            
-                            // TODO I can probably skip doing this on every line and just do it once
-                            var left: usize = @intFromFloat(side1);
-                            var right: usize = @intFromFloat(side2);
-                            if (left > right) {
-                                const aux = left;
-                                left = right;
-                                right = aux;
+                    else {
+                        
+                        const TriangleQueue = std.DoublyLinkedList([3]Vector3f);
+                        var data: std.ArrayList(TriangleQueue.Node) = std.ArrayList(TriangleQueue.Node).initCapacity(std.heap.c_allocator, 30) catch unreachable;
+                        defer data.clearAndFree();
+                        data.appendAssumeCapacity(.{.data=ndcs[0..3].*});
+                        var final = TriangleQueue {};
+                        var queue = TriangleQueue {};
+                        queue.append(&data.items[0]);
+                        inline for (@typeInfo(Frustum).Struct.fields) |field| {
+                            const p: Plane = @field(frustum, field.name);
+                            while (final.popFirst()) |t| {
+                                queue.append(t);
                             }
-                            
-                            var x: usize = left;
-                            // draw a horizontal line from left to right
-                            while (x < right) : (x += 1) {
-                                
-                                // barycentric coordinates of the current pixel
-                                const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
-
-                                const ab = b.substract(a.*);
-                                const ac = c.substract(a.*);
-                                const ap = pixel.substract(a.*);
-                                const bp = pixel.substract(b.*);
-                                const ca = a.substract(c.*);
-
-                                // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
-                                // the magnitude of the cross product can be interpreted as the area of the parallelogram.
-                                const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
-                                const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
-                                const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
-
-                                const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
-                                const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
-                                const w: f32 = (1 - u - v);
-
-                                // The inverse of the barycentric would be `P=wA+uB+vC`
-
-                                // determine if a pixel is in fact part of the triangle
-                                if (u < 0 or u >= 1) continue;
-                                if (v < 0 or v >= 1) continue;
-                                if (w < 0 or w >= 1) continue;
-
-                                if (pipeline_configuration.do_depth_testing) {
-                                    const z = depth[0] * w + depth[1] * u + depth[2] * v;
-                                    if (requirements.depth_buffer.get(x, y) >= z) continue;
-                                    requirements.depth_buffer.set(x, y, z);
-                                }
-
-                                var interpolated_invariants: invariant_type = undefined;
-
-                                // Get every invariant given out by the vertex shader and interpolate the values which will be passed to the fragment shader 
-                                if (pipeline_configuration.do_perspective_correct_interpolation) {
-                                    const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * u + 1/w_used_for_perspective_correction[2] * v;
-                                    inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
-                                        @field(interpolated_invariants, invariant.name) =
-                                            switch (invariant.type) {
-                                                Vector2f => Vector2f {
-                                                    .x = (@field(invariants[0], invariant.name).x/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).x/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).x/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                                    .y = (@field(invariants[0], invariant.name).y/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).y/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).y/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                                },
-                                                RGBA => RGBA {
-                                                    .r = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.r))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.r))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                    .g = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.g))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.g))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                    .b = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                    .a = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                },
-                                                f32 => (@field(invariants[0], invariant.name)/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name)/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name)/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                                else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
-                                            };
+                            while (queue.popFirst()) |t| {
+                                var new_tri_count: usize = 0;
+                                var new_tri: [2][3]Vector3f = undefined;
+                                {
+                                    var out: usize = 0;
+                                    var out_index: [3]usize = undefined;
+                                    inline for (0..3) |i| {
+                                        if (p.classify_point(t.data[i]) == .negative) {
+                                            out_index[out] = i;
+                                            out += 1;
+                                        }
+                                    }
+                                    if (out == 1) {
+                                        const i = out_index[0];
+                                        const intersection_a = p.intersection(t.data[i], t.data[(i+1)%3]);
+                                        const intersection_b = p.intersection(t.data[i], t.data[(i+2)%3]);
+                                        new_tri[new_tri_count] = [3]Vector3f{
+                                            intersection_a, intersection_b, t.data[(i+1)%3]
+                                        };
+                                        new_tri[new_tri_count+1] = [3]Vector3f{
+                                            t.data[(i+1)%3], t.data[(i+2)%3], intersection_b
+                                        };
+                                        new_tri_count += 2;
+                                    }
+                                    else if (out == 2) {
+                                        const index1 = out_index[0];
+                                        const index2 = out_index[1];
+                                        const index_ok = 3 - index1 - index2;
+                                        const intersection_a = p.intersection(t.data[index1], t.data[index_ok]);
+                                        const intersection_b = p.intersection(t.data[index2], t.data[index_ok]);
+                                        new_tri[new_tri_count] = [3]Vector3f{
+                                            intersection_a, intersection_b, t.data[index_ok]
+                                        };
+                                        new_tri_count += 1;
+                                    }
+                                    else {
+                                        final.append(t);
                                     }
                                 }
-                                else {
-                                    inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
-                                        @field(interpolated_invariants, invariant.name) =
-                                            switch (invariant.type) {
-                                                Vector2f => Vector2f {
-                                                    .x = @field(invariants[0], invariant.name).x * w + @field(invariants[1], invariant.name).x * u + @field(invariants[2], invariant.name).x * v,
-                                                    .y = @field(invariants[0], invariant.name).y * w + @field(invariants[1], invariant.name).y * u + @field(invariants[2], invariant.name).y * v,
-                                                },
-                                                RGBA => RGBA {
-                                                    .r = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).r)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).r)) * v),
-                                                    .g = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).g)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).g)) * v),
-                                                    .b = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).b)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).b)) * v),
-                                                    .a = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).a)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).a)) * v),
-                                                },
-                                                f32 => @field(invariants[0], invariant.name) * w + @field(invariants[1], invariant.name) * u + @field(invariants[2], invariant.name) * v,
-                                                else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
-                                            };
-                                    }
+                                if  (new_tri_count >= 1) {
+                                    const ptr = data.addOneAssumeCapacity();
+                                    ptr.* = .{.data = new_tri[0] };
+                                    final.append(ptr);
                                 }
-
-                                const final_color = fragment_shader(context, interpolated_invariants);
-                                
-                                if (pipeline_configuration.blend_with_background) {
-                                    const old_color = pixel_buffer.get(x, y);
-                                    pixel_buffer.set(x, y, final_color.blend(old_color));
+                                if  (new_tri_count >= 2) {
+                                    const ptr = data.addOneAssumeCapacity();
+                                    ptr.* = .{.data = new_tri[1] };
+                                    final.append(ptr);
                                 }
-                                else pixel_buffer.set(x, y, final_color);
                             }
-
-                            side1 -= incrementLongLine;
-                            side2 -= incrementShortLine;
                         }
 
-                    }
+                        const to_interpolate = struct {
+                            depth: f32,
+                            w_used_for_perspective_correction: f32,
+                        };
 
-                    if (exists_bot_half) {
-                        // Calculate the increments (steepness) of the segments of the triangle as we progress with its filling
-                        const incrementLongLine: f32 = dxTopBot / dyTopBot;
-                        const incrementShortLine: f32 = dxMidBot / dyMidBot;
-                        side2 = mid.x;
+                        const orig_triangle_data = [3]to_interpolate {
+                            .{
+                                .depth = depth[0],
+                                .w_used_for_perspective_correction = w_used_for_perspective_correction[0],
+                            },
+                            .{
+                                .depth = depth[1],
+                                .w_used_for_perspective_correction = w_used_for_perspective_correction[1],
+                            },
+                            .{
+                                .depth = depth[2],
+                                .w_used_for_perspective_correction = w_used_for_perspective_correction[2],
+                            },
+                        };
 
-                        // draw bottom half
-                        var y: usize = @intFromFloat(mid.y);
-                        while (y > @as(usize, @intFromFloat(bot.y))) : (y -= 1) {
+                        while (final.popFirst()) |t| {
+
+                            const screen_space_1 = requirements.viewport_matrix.apply_to_vec3(t.data[0]).perspective_division();
+                            const screen_space_2 = requirements.viewport_matrix.apply_to_vec3(t.data[1]).perspective_division();
+                            const screen_space_3 = requirements.viewport_matrix.apply_to_vec3(t.data[2]).perspective_division();
+
+                            var a = screen_space_1;
+                            a.z = 0;
+                            var b = screen_space_2;
+                            b.z = 0;
+                            var c = screen_space_3;
+                            c.z = 0;
+                            const bar_a = barycentric(tri[0..3].*, a);
+                            const bar_b = barycentric(tri[0..3].*, b);
+                            const bar_c = barycentric(tri[0..3].*, c);
+
+                            // if (bar_a.x < 0 or bar_a.x >= 1) continue;
+                            // if (bar_a.y < 0 or bar_a.y >= 1) continue;
+                            // if (bar_a.z < 0 or bar_a.z >= 1) continue;
+
+                            // if (bar_b.x < 0 or bar_b.x >= 1) continue;
+                            // if (bar_b.y < 0 or bar_b.y >= 1) continue;
+                            // if (bar_b.z < 0 or bar_b.z >= 1) continue;
                             
-                            // TODO I can probably skip doing this on every line and just do it once
-                            var left: usize = @intFromFloat(side1);
-                            var right: usize = @intFromFloat(side2);
-                            if (left > right) {
-                                const aux = left;
-                                left = right;
-                                right = aux;
-                            }
+                            // if (bar_c.x < 0 or bar_c.x >= 1) continue;
+                            // if (bar_c.y < 0 or bar_c.y >= 1) continue;
+                            // if (bar_c.z < 0 or bar_c.z >= 1) continue;
+
+                            const interpolated_a: to_interpolate = 
+                                if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(to_interpolate, orig_triangle_data, w_used_for_perspective_correction[0..3].*, bar_a.x, bar_a.y, bar_a.z)
+                                else interpolate(to_interpolate, orig_triangle_data, bar_a.x, bar_a.y, bar_a.z);
+                            const interpolated_b: to_interpolate = 
+                                if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(to_interpolate, orig_triangle_data, w_used_for_perspective_correction[0..3].*, bar_b.x, bar_b.y, bar_b.z)
+                                else interpolate(to_interpolate, orig_triangle_data, bar_b.x, bar_b.y, bar_b.z);
+                            const interpolated_c: to_interpolate = 
+                                if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(to_interpolate, orig_triangle_data, w_used_for_perspective_correction[0..3].*, bar_c.x, bar_c.y, bar_c.z)
+                                else interpolate(to_interpolate, orig_triangle_data, bar_c.x, bar_c.y, bar_c.z);
                             
-                            var x: usize = left;
-                            // draw a horizontal line from left to right
-                            while (x < right) : (x += 1) {
-                                
-                                // barycentric coordinates of the current pixel
-                                const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
+                            const invariants_a = if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants[0..3].*, w_used_for_perspective_correction[0..3].*, bar_a.x, bar_a.y, bar_a.z)
+                                else interpolate(invariant_type, invariants[0..3].*, bar_a.x, bar_a.y, bar_a.z);
+                            const invariants_b = if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants[0..3].*, w_used_for_perspective_correction[0..3].*, bar_b.x, bar_b.y, bar_b.z)
+                                else interpolate(invariant_type, invariants[0..3].*, bar_b.x, bar_b.y, bar_b.z);
+                            const invariants_c = if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants[0..3].*, w_used_for_perspective_correction[0..3].*, bar_c.x, bar_c.y, bar_c.z)
+                                else interpolate(invariant_type, invariants[0..3].*, bar_c.x, bar_c.y, bar_c.z);
 
-                                const ab = b.substract(a.*);
-                                const ac = c.substract(a.*);
-                                const ap = pixel.substract(a.*);
-                                const bp = pixel.substract(b.*);
-                                const ca = a.substract(c.*);
+                            rasterizers.rasterize_2(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c });
 
-                                // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
-                                // the magnitude of the cross product can be interpreted as the area of the parallelogram.
-                                const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
-                                const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
-                                const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
+                            line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
+                            line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, Vector2i { .x = @intFromFloat(screen_space_3.x), .y = @intFromFloat(screen_space_3.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
+                            line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_3.x), .y = @intFromFloat(screen_space_3.y) }, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
 
-                                const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
-                                const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
-                                const w: f32 = (1 - u - v);
 
-                                // The inverse of the barycentric would be `P=wA+uB+vC`
-
-                                // determine if a pixel is in fact part of the triangle
-                                if (u < 0 or u >= 1) continue;
-                                if (v < 0 or v >= 1) continue;
-                                if (w < 0 or w >= 1) continue;
-
-                                if (pipeline_configuration.do_depth_testing) {
-                                    const z = depth[0] * w + depth[1] * u + depth[2] * v;
-                                    if (requirements.depth_buffer.get(x, y) >= z) continue;
-                                    requirements.depth_buffer.set(x, y, z);
-                                }
-
-                                var interpolated_invariants: invariant_type = undefined;
-
-                                // Get every invariant given out by the vertex shader and interpolate the values which will be passed to the fragment shader 
-                                if (pipeline_configuration.do_perspective_correct_interpolation) {
-                                    const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * u + 1/w_used_for_perspective_correction[2] * v;
-                                    inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
-                                        @field(interpolated_invariants, invariant.name) =
-                                            switch (invariant.type) {
-                                                Vector2f => Vector2f {
-                                                    .x = (@field(invariants[0], invariant.name).x/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).x/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).x/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                                    .y = (@field(invariants[0], invariant.name).y/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).y/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).y/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                                },
-                                                RGBA => RGBA {
-                                                    .r = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.r))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.r))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                    .g = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.g))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.g))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                    .b = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                    .a = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                },
-                                                f32 => (@field(invariants[0], invariant.name)/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name)/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name)/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                                else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
-                                            };
-                                    }
-                                }
-                                else {
-                                    inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
-                                        @field(interpolated_invariants, invariant.name) =
-                                            switch (invariant.type) {
-                                                Vector2f => Vector2f {
-                                                    .x = @field(invariants[0], invariant.name).x * w + @field(invariants[1], invariant.name).x * u + @field(invariants[2], invariant.name).x * v,
-                                                    .y = @field(invariants[0], invariant.name).y * w + @field(invariants[1], invariant.name).y * u + @field(invariants[2], invariant.name).y * v,
-                                                },
-                                                RGBA => RGBA {
-                                                    .r = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).r)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).r)) * v),
-                                                    .g = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).g)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).g)) * v),
-                                                    .b = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).b)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).b)) * v),
-                                                    .a = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).a)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).a)) * v),
-                                                },
-                                                f32 => @field(invariants[0], invariant.name) * w + @field(invariants[1], invariant.name) * u + @field(invariants[2], invariant.name) * v,
-                                                else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
-                                            };
-                                    }
-                                }
-
-                                const final_color = fragment_shader(context, interpolated_invariants);
-                                
-                                if (pipeline_configuration.blend_with_background) {
-                                    const old_color = pixel_buffer.get(x, y);
-                                    pixel_buffer.set(x, y, final_color.blend(old_color));
-                                }
-                                else pixel_buffer.set(x, y, final_color);
-                            }
-
-                            side1 -= incrementLongLine;
-                            side2 -= incrementShortLine;
                         }
-                    }
+                        // const clipped_vertex_index: usize = @intFromEnum(clipped[0]);
 
-                    if (!exists_top_half and !exists_bot_half and dyTopBot >= 0.5) {
-                        // If neither half is big enough by itself to be drawn, but together they are big enough, then draw it
-                        // even though it will be just a line of pixels
-                        // TODO draw a line from left to right. figure out which side is mor to the left and which one is more to the right
+
+
+                        // const p: Plane = frustum.left;
+
+                        // const intersection_a = p.intersection(ndcs[clipped_vertex_index], ndcs[(clipped_vertex_index+1)%3]);
+                        // const intersection_a_screen_space = requirements.viewport_matrix.apply_to_vec3(intersection_a).perspective_division();
+
+                        // const intersection_b = p.intersection(ndcs[clipped_vertex_index], ndcs[(clipped_vertex_index+2)%3]);
+                        // const intersection_b_screen_space = requirements.viewport_matrix.apply_to_vec3(intersection_b).perspective_division();
+
+                        // now we have 4 points with indices:
+                        // 1. (clipped_vertex_index+1)%3
+                        // 2. (clipped_vertex_index+2)%3
+                        // 3. clipped_vertex_index
+                        // 4. 3
+                        // We have to raster 2 triangles out of those 4 points: 123 and 234
+
+                        // var a = intersection_a_screen_space;
+                        // a.z = 0;
+                        // var b = intersection_b_screen_space;
+                        // b.z = 0;
+                        // const bar_a = barycentric(tri[0..3].*, a);
+                        // const bar_b = barycentric(tri[0..3].*, b);
+                        
+                        // gg.plane(p);
+                        // gg.triangle(ndcs[0..3].*);
+                        // gg.point(intersection_a);
+                        // gg.point(intersection_b);
+
+                        // if (bar_a.x < 0 or bar_a.x >= 1) @panic("unreachable");
+                        // if (bar_a.y < 0 or bar_a.y >= 1) @panic("unreachable");
+                        // if (bar_a.z < 0 or bar_a.z >= 1) @panic("unreachable");
+
+                        // if (bar_b.x < 0 or bar_b.x >= 1) @panic("unreachable");
+                        // if (bar_b.y < 0 or bar_b.y >= 1) @panic("unreachable");
+                        // if (bar_b.z < 0 or bar_b.z >= 1) @panic("unreachable");
+
+                        // const to_interpolate = struct {
+                        //     depth: f32,
+                        //     w_used_for_perspective_correction: f32,
+                        // };
+                        // const orig_triangle_data = [3]to_interpolate {
+                        //     .{
+                        //         .depth = depth[0],
+                        //         .w_used_for_perspective_correction = w_used_for_perspective_correction[0],
+                        //     },
+                        //     .{
+                        //         .depth = depth[1],
+                        //         .w_used_for_perspective_correction = w_used_for_perspective_correction[1],
+                        //     },
+                        //     .{
+                        //         .depth = depth[2],
+                        //         .w_used_for_perspective_correction = w_used_for_perspective_correction[2],
+                        //     },
+                        // };
+
+                        // const interpolated_a: to_interpolate = 
+                        //     if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(to_interpolate, orig_triangle_data, w_used_for_perspective_correction[0..3].*, bar_a.x, bar_a.y, bar_a.z)
+                        //     else interpolate(to_interpolate, orig_triangle_data, bar_a.x, bar_a.y, bar_a.z);
+
+                        // const interpolated_b: to_interpolate = 
+                        //     if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(to_interpolate, orig_triangle_data, w_used_for_perspective_correction[0..3].*, bar_b.x, bar_b.y, bar_b.z)
+                        //     else interpolate(to_interpolate, orig_triangle_data, bar_b.x, bar_b.y, bar_b.z);
+                        
+                        // invariants[3] = if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants[0..3].*, w_used_for_perspective_correction[0..3].*, bar_b.x, bar_b.y, bar_b.z)
+                        //     else interpolate(invariant_type, invariants[0..3].*, bar_b.x, bar_b.y, bar_b.z);
+                        // invariants[clipped_vertex_index] = if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants[0..3].*, w_used_for_perspective_correction[0..3].*, bar_a.x, bar_a.y, bar_a.z)
+                        //     else interpolate(invariant_type, invariants[0..3].*, bar_a.x, bar_a.y, bar_a.z);
+
+                        // tri[clipped_vertex_index] = intersection_a_screen_space;
+                        // tri[3] = intersection_b_screen_space;
+                        
+                        // depth[clipped_vertex_index] = interpolated_a.depth;
+                        // depth[3] = interpolated_b.depth;
+                        
+                        // w_used_for_perspective_correction[clipped_vertex_index] = interpolated_a.w_used_for_perspective_correction;
+                        // w_used_for_perspective_correction[3] = interpolated_b.w_used_for_perspective_correction;
+
+                        // inline for (0..2) |i| {
+                        //     rasterizers.rasterize_1(pixel_buffer, context, requirements, tri[i..i+3].*, depth[i..i+3].*, w_used_for_perspective_correction[i..i+3].*, invariants[i..i+3].*);
+                        // }
+
+                        // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[0].x), .y = @intFromFloat(tri[0].y) }, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
+                        // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
+                        // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, Vector2i { .x = @intFromFloat(tri[0].x), .y = @intFromFloat(tri[0].y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
+
+                        // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, .{.r = 0, .g = 0, .b = 255, .a = 255 });
+                        // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, Vector2i { .x = @intFromFloat(tri[3].x), .y = @intFromFloat(tri[3].y) }, .{.r = 0, .g = 0, .b = 255, .a = 255 });
+                        // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[3].x), .y = @intFromFloat(tri[3].y) }, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, .{.r = 0, .g = 0, .b = 255, .a = 255 });
+
                     }
+                    // else if (clipped_count == 2) {
+                    //     // const clipped_vertex_a: usize = @intFromEnum(clipped[0]);
+                    //     // const clipped_vertex_b: usize = @intFromEnum(clipped[1]);
+                    //     // const p: Plane = frustum.left;
+                    // }
+                    // else {
+                    //     // unreachable;
+                    // }
 
                 }
-                else {
-                    // top = y = window height, bottom = y = 0
-                    const a = &tri[0];
-                    const b = &tri[1];
-                    const c = &tri[2];
+                else if (pipeline_configuration.use_triangle_2) rasterizers.rasterize_2(pixel_buffer, context, requirements, tri[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*)
+                else rasterizers.rasterize_1(pixel_buffer, context, requirements, tri[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*);
+            }
+        }
+    
+        const rasterizers = struct {
+            fn rasterize_2(pixel_buffer: Buffer2D(final_color_type), context: context_type, requirements: pipeline_configuration.Requirements(), tri: [3]Vector3f, depth: [3]f32, w_used_for_perspective_correction: [3]f32, invariants: [3]invariant_type) void {
+                
+                const a = &tri[0];
+                const b = &tri[1];
+                const c = &tri[2];
 
-                    // calculate the bounding of the triangle's projection on the screen
-                    var left: usize = @intFromFloat(@min(a.x, @min(b.x, c.x)));
-                    var bottom: usize = @intFromFloat(@min(a.y, @min(b.y, c.y)));
-                    var right: usize = @intFromFloat(@max(a.x, @max(b.x, c.x)));
-                    var top: usize = @intFromFloat(@max(a.y, @max(b.y, c.y)));
-                    if (pipeline_configuration.do_scissoring) {
-                        left = @min(left, @as(usize, @intFromFloat(requirements.scissor_rect.x)));
-                        bottom = @min(bottom, @as(usize, @intFromFloat(requirements.scissor_rect.y)));
-                        right = @max(right, @as(usize, @intFromFloat(requirements.scissor_rect.z)));
-                        top = @max(top, @as(usize, @intFromFloat(requirements.scissor_rect.w)));
-                    }
+                var top: *const Vector3f = &tri[0];
+                var mid: *const Vector3f = &tri[1];
+                var bot: *const Vector3f = &tri[2];
 
-                    // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
-                    // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
-                    // test it just in case
+                // order the vertices based on their y axis
+                if (bot.y > mid.y) {
+                    const aux: *const Vector3f = mid;
+                    mid = bot;
+                    bot = aux;
+                }
+                if (bot.y > top.y) {
+                    const aux: *const Vector3f = top;
+                    top = bot;
+                    bot = aux;
+                }
+                if (mid.y > top.y) {
+                    const aux: *const Vector3f = top;
+                    top = mid;
+                    mid = aux;
+                }
+                std.debug.assert(top.y >= mid.y and mid.y >= bot.y);
 
-                    // top to bottom
-                    var y: usize = top;
-                    while (y > bottom) : (y -= 1) {
+                // calculate dy between them
+                const dyTopMid: f32 = top.y - mid.y;
+                const dyMidBot: f32 = mid.y - bot.y;
+                const dyTopBot: f32 = top.y - bot.y;
+
+                const dxTopMid: f32 = top.x - mid.x;
+                const dxTopBot: f32 = top.x - bot.x;
+                const dxMidBot: f32 = mid.x - bot.x;
+
+                // At this point we know that line(T-B) is going to be longer than line(T-M) or (M-B)
+                // So we can split the triangle in 2 triangles, divided by the horizontal line(y == mid.y)
+                const exists_top_half = dyTopMid >= 0.5;
+                const exists_bot_half = dyMidBot >= 0.5;
+
+                var side1: f32 = top.x;
+                var side2: f32 = top.x;
+                if (exists_top_half) {
+                    // Calculate the increments (steepness) of the segments of the triangle as we progress with its filling
+                    const incrementLongLine: f32 = dxTopBot / dyTopBot;
+                    const incrementShortLine: f32 = dxTopMid / dyTopMid;
+
+                    // draw top half
+                    var y: usize = @intFromFloat(top.y);
+                    while (y > @as(usize, @intFromFloat(mid.y))) : (y -= 1) {
                         
-                        // left to right
+                        // TODO I can probably skip doing this on every line and just do it once
+                        var left: usize = @intFromFloat(side1);
+                        var right: usize = @intFromFloat(side2);
+                        if (left > right) {
+                            const aux = left;
+                            left = right;
+                            right = aux;
+                        }
+                        
                         var x: usize = left;
-                        while (x <= right) : (x += 1) {
+                        // draw a horizontal line from left to right
+                        while (x < right) : (x += 1) {
                             
                             // barycentric coordinates of the current pixel
                             const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
@@ -2917,48 +2959,9 @@ fn GraphicsPipeline(
                                 requirements.depth_buffer.set(x, y, z);
                             }
 
-                            var interpolated_invariants: invariant_type = undefined;
-
-                            // Get every invariant given out by the vertex shader and interpolate the values which will be passed to the fragment shader 
-                            if (pipeline_configuration.do_perspective_correct_interpolation) {
-                                const perspective_correction = 1/w_used_for_perspective_correction[0] * w + 1/w_used_for_perspective_correction[1] * u + 1/w_used_for_perspective_correction[2] * v;
-                                inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
-                                    @field(interpolated_invariants, invariant.name) =
-                                        switch (invariant.type) {
-                                            Vector2f => Vector2f {
-                                                .x = (@field(invariants[0], invariant.name).x/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).x/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).x/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                                .y = (@field(invariants[0], invariant.name).y/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name).y/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name).y/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                            },
-                                            RGBA => RGBA {
-                                                .r = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.r))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.r))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                .g = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.g))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.g))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                .b = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.b))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.b))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                                .a = @intFromFloat((@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a))/w_used_for_perspective_correction[0] * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).color.a))/w_used_for_perspective_correction[1] * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).color.a))/w_used_for_perspective_correction[2] * v) / perspective_correction),
-                                            },
-                                            f32 => (@field(invariants[0], invariant.name)/w_used_for_perspective_correction[0] * w + @field(invariants[1], invariant.name)/w_used_for_perspective_correction[1] * u + @field(invariants[2], invariant.name)/w_used_for_perspective_correction[2] * v) / perspective_correction,
-                                            else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
-                                        };
-                                }
-                            }
-                            else {
-                                inline for (@typeInfo(invariant_type).Struct.fields) |invariant| {
-                                    @field(interpolated_invariants, invariant.name) =
-                                        switch (invariant.type) {
-                                            Vector2f => Vector2f {
-                                                .x = @field(invariants[0], invariant.name).x * w + @field(invariants[1], invariant.name).x * u + @field(invariants[2], invariant.name).x * v,
-                                                .y = @field(invariants[0], invariant.name).y * w + @field(invariants[1], invariant.name).y * u + @field(invariants[2], invariant.name).y * v,
-                                            },
-                                            RGBA => RGBA {
-                                                .r = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).r)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).r)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).r)) * v),
-                                                .g = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).g)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).g)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).g)) * v),
-                                                .b = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).b)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).b)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).b)) * v),
-                                                .a = @intFromFloat(@as(f32, @floatFromInt(@field(invariants[0], invariant.name).a)) * w + @as(f32, @floatFromInt(@field(invariants[1], invariant.name).a)) * u + @as(f32, @floatFromInt(@field(invariants[2], invariant.name).a)) * v),
-                                            },
-                                            f32 => @field(invariants[0], invariant.name) * w + @field(invariants[1], invariant.name) * u + @field(invariants[2], invariant.name) * v,
-                                            else => @panic("type " ++ @tagName(invariant.type) ++ " has no implementation of interpolation")
-                                        };
-                                }
-                            }
+                            const interpolated_invariants: invariant_type = 
+                                if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants, w_used_for_perspective_correction, u, v, w)
+                                else interpolate(invariant_type, invariants, u, v, w);
 
                             const final_color = fragment_shader(context, interpolated_invariants);
                             
@@ -2967,11 +2970,311 @@ fn GraphicsPipeline(
                                 pixel_buffer.set(x, y, final_color.blend(old_color));
                             }
                             else pixel_buffer.set(x, y, final_color);
-
                         }
+
+                        side1 -= incrementLongLine;
+                        side2 -= incrementShortLine;
+                    }
+
+                }
+
+                if (exists_bot_half) {
+                    // Calculate the increments (steepness) of the segments of the triangle as we progress with its filling
+                    const incrementLongLine: f32 = dxTopBot / dyTopBot;
+                    const incrementShortLine: f32 = dxMidBot / dyMidBot;
+                    side2 = mid.x;
+
+                    // draw bottom half
+                    var y: usize = @intFromFloat(mid.y);
+                    while (y > @as(usize, @intFromFloat(bot.y))) : (y -= 1) {
+                        
+                        // TODO I can probably skip doing this on every line and just do it once
+                        var left: usize = @intFromFloat(side1);
+                        var right: usize = @intFromFloat(side2);
+                        if (left > right) {
+                            const aux = left;
+                            left = right;
+                            right = aux;
+                        }
+                        
+                        var x: usize = left;
+                        // draw a horizontal line from left to right
+                        while (x < right) : (x += 1) {
+                            
+                            // barycentric coordinates of the current pixel
+                            const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
+
+                            const ab = b.substract(a.*);
+                            const ac = c.substract(a.*);
+                            const ap = pixel.substract(a.*);
+                            const bp = pixel.substract(b.*);
+                            const ca = a.substract(c.*);
+
+                            // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
+                            // the magnitude of the cross product can be interpreted as the area of the parallelogram.
+                            const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+                            const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
+                            const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
+
+                            const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
+                            const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
+                            const w: f32 = (1 - u - v);
+
+                            // The inverse of the barycentric would be `P=wA+uB+vC`
+
+                            // determine if a pixel is in fact part of the triangle
+                            if (u < 0 or u >= 1) continue;
+                            if (v < 0 or v >= 1) continue;
+                            if (w < 0 or w >= 1) continue;
+
+                            if (pipeline_configuration.do_depth_testing) {
+                                const z = depth[0] * w + depth[1] * u + depth[2] * v;
+                                if (requirements.depth_buffer.get(x, y) >= z) continue;
+                                requirements.depth_buffer.set(x, y, z);
+                            }
+
+                            const interpolated_invariants: invariant_type = 
+                                if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants, w_used_for_perspective_correction, u, v, w)
+                                else interpolate(invariant_type, invariants, u, v, w);
+
+                            const final_color = fragment_shader(context, interpolated_invariants);
+                            
+                            if (pipeline_configuration.blend_with_background) {
+                                const old_color = pixel_buffer.get(x, y);
+                                pixel_buffer.set(x, y, final_color.blend(old_color));
+                            }
+                            else pixel_buffer.set(x, y, final_color);
+                        }
+
+                        side1 -= incrementLongLine;
+                        side2 -= incrementShortLine;
+                    }
+                }
+
+                if (!exists_top_half and !exists_bot_half and dyTopBot >= 0.5) {
+                    // If neither half is big enough by itself to be drawn, but together they are big enough, then draw it
+                    // even though it will be just a line of pixels
+                    // TODO draw a line from left to right. figure out which side is mor to the left and which one is more to the right
+                }
+            }
+            fn rasterize_1(pixel_buffer: Buffer2D(final_color_type), context: context_type, requirements: pipeline_configuration.Requirements(), tri: [3]Vector3f, depth: [3]f32, w_used_for_perspective_correction: [3]f32, invariants: [3]invariant_type) void {
+                
+                // top = y = window height, bottom = y = 0
+                const a = &tri[0];
+                const b = &tri[1];
+                const c = &tri[2];
+
+                // calculate the bounding of the triangle's projection on the screen
+                var left: usize = @intFromFloat(@min(a.x, @min(b.x, c.x)));
+                var bottom: usize = @intFromFloat(@min(a.y, @min(b.y, c.y)));
+                var right: usize = @intFromFloat(@max(a.x, @max(b.x, c.x)));
+                var top: usize = @intFromFloat(@max(a.y, @max(b.y, c.y)));
+                if (pipeline_configuration.do_scissoring) {
+                    left = @min(left, @as(usize, @intFromFloat(requirements.scissor_rect.x)));
+                    bottom = @min(bottom, @as(usize, @intFromFloat(requirements.scissor_rect.y)));
+                    right = @max(right, @as(usize, @intFromFloat(requirements.scissor_rect.z)));
+                    top = @max(top, @as(usize, @intFromFloat(requirements.scissor_rect.w)));
+                }
+
+                // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
+                // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
+                // test it just in case
+
+                // top to bottom
+                var y: usize = top;
+                while (y > bottom) : (y -= 1) {
+                    
+                    // left to right
+                    var x: usize = left;
+                    while (x <= right) : (x += 1) {
+                        
+                        // barycentric coordinates of the current pixel
+                        const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
+
+                        const ab = b.substract(a.*);
+                        const ac = c.substract(a.*);
+                        const ap = pixel.substract(a.*);
+                        const bp = pixel.substract(b.*);
+                        const ca = a.substract(c.*);
+
+                        // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
+                        // the magnitude of the cross product can be interpreted as the area of the parallelogram.
+                        const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+                        const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
+                        const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
+
+                        const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
+                        const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
+                        const w: f32 = (1 - u - v);
+
+                        // The inverse of the barycentric would be `P=wA+uB+vC`
+
+                        // determine if a pixel is in fact part of the triangle
+                        if (u < 0 or u >= 1) continue;
+                        if (v < 0 or v >= 1) continue;
+                        if (w < 0 or w >= 1) continue;
+
+                        if (pipeline_configuration.do_depth_testing) {
+                            const z = depth[0] * w + depth[1] * u + depth[2] * v;
+                            if (requirements.depth_buffer.get(x, y) >= z) continue;
+                            requirements.depth_buffer.set(x, y, z);
+                        }
+
+                        const interpolated_invariants: invariant_type = 
+                                if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants, w_used_for_perspective_correction, u, v, w)
+                                else interpolate(invariant_type, invariants, u, v, w);
+
+                        const final_color = fragment_shader(context, interpolated_invariants);
+                        
+                        if (pipeline_configuration.blend_with_background) {
+                            const old_color = pixel_buffer.get(x, y);
+                            pixel_buffer.set(x, y, final_color.blend(old_color));
+                        }
+                        else pixel_buffer.set(x, y, final_color);
+
                     }
                 }
             }
+        };
+
+        /// Here, `t` could be any struct that consists of either floats, ints, or structs.
+        /// Structs MUST in turn be composed of all floats or all ints
+        /// ex: struct { a: f32, b: Vector2f, c: RGBA }
+        /// NOTE I'm assuming that the order of fields inside a struct is kept... which is probably not true in some situations???? but it works for now
+        fn interpolate(comptime t: type, data: [3]t, u: f32, v: f32, w: f32) t {
+            
+            var interpolated_data: t = undefined;
+
+            inline for (@typeInfo(t).Struct.fields) |field| {
+                @field(interpolated_data, field.name) = blk: {
+                    
+                    const a: *field.type = &@field(data[0], field.name);
+                    const b: *field.type = &@field(data[1], field.name);
+                    const c: *field.type = &@field(data[2], field.name);
+                    var interpolated_result: field.type = switch (@typeInfo(field.type)) {
+                        .Float => a.* * w + b.* * u + c.* * v,
+                        .Int => @intFromFloat( @as(f32,@floatFromInt(a.*)) * w + @as(f32,@floatFromInt(b.*)) * u + @as(f32,@floatFromInt(c.*)) * v ),
+                        .Struct => |s| interpolate_struct: {
+                            
+                            var interpolated_struct_result: field.type = undefined;
+                            inline for (s.fields) |sub_field| {
+                                @field(interpolated_struct_result, sub_field.name) = interpolate_struct_field: {
+                                    const sub_a: *sub_field.type = &@field(a, sub_field.name);
+                                    const sub_b: *sub_field.type = &@field(b, sub_field.name);
+                                    const sub_c: *sub_field.type = &@field(c, sub_field.name);
+                                    break :interpolate_struct_field switch (@typeInfo(sub_field.type)) {
+                                        .Float => sub_a.* * w + sub_b.* * u + sub_c.* * v,
+                                        .Int => @intFromFloat( @as(f32,@floatFromInt(sub_a.*)) * w + @as(f32,@floatFromInt(sub_b.*)) * u + @as(f32,@floatFromInt(sub_c.*)) * v ),
+                                        else => @panic("inner struct type " ++ @tagName(sub_field.type) ++ " is neither a Float, Int so it cant be interpolated!")
+                                    };
+                                };
+                            }
+                            break :interpolate_struct interpolated_struct_result;
+
+                        },
+                        else => @panic("type " ++ @tagName(field.type) ++ " is neither a Float, Int or Struct, so it cant be interpolated!")
+                    };
+
+                    break :blk interpolated_result;
+                };
+            }
+
+            return interpolated_data;
+        }
+
+        /// Same as `interpolate` but applies perspective correction using the provided correction_values
+        /// Here, `t` could be any struct that consists of either floats, ints, or structs.
+        /// Structs MUST in turn be composed of all floats or all ints
+        /// ex: struct { a: f32, b: Vector2f, c: RGBA }
+        /// NOTE I'm assuming that the order of fields inside a struct is kept... which is probably not true in some situations???? but it works for now
+        fn interpolate_with_correction(comptime t: type, data: [3]t, correction_values: [3]f32, u: f32, v: f32, w: f32) t {
+            
+            var interpolated_data: t = undefined;
+
+            const correction = 1/correction_values[0] * w + 1/correction_values[1] * u + 1/correction_values[2] * v;
+
+            inline for (@typeInfo(t).Struct.fields) |field| {
+                @field(interpolated_data, field.name) = interpolate_field: {
+                    
+                    const a: *const field.type = &@field(data[0], field.name);
+                    const b: *const field.type = &@field(data[1], field.name);
+                    const c: *const field.type = &@field(data[2], field.name);
+                    var interpolated_result: field.type = switch (@typeInfo(field.type)) {
+                        .Float => blk: {
+                            const fa: f32 = a.* / correction_values[0];
+                            const fb: f32 = b.* / correction_values[1];
+                            const fc: f32 = c.* / correction_values[2];
+                            break :blk (fa * w + fb * u + fc * v) / correction;
+                        },
+                        .Int => blk: {
+                            const fa: f32 = @as(f32, @floatFromInt(a.*)) / correction_values[0];
+                            const fb: f32 = @as(f32, @floatFromInt(b.*)) / correction_values[1];
+                            const fc: f32 = @as(f32, @floatFromInt(c.*)) / correction_values[2];
+                            const result = (fa * w + fb * u + fc * v) / correction;
+                            break :blk @intFromFloat(result);
+                        },
+                        .Struct => |s| interpolate_struct: {
+                            
+                            var interpolated_struct_result: field.type = undefined;
+                            inline for (s.fields) |sub_field| {
+                                @field(interpolated_struct_result, sub_field.name) = interpolate_struct_field: {
+                                    
+                                    const sub_a: *const sub_field.type = &@field(a, sub_field.name);
+                                    const sub_b: *const sub_field.type = &@field(b, sub_field.name);
+                                    const sub_c: *const sub_field.type = &@field(c, sub_field.name);
+                                    break :interpolate_struct_field switch (@typeInfo(sub_field.type)) {
+                                        .Float => blk: {
+                                            const fa: f32 = sub_a.* / correction_values[0];
+                                            const fb: f32 = sub_b.* / correction_values[1];
+                                            const fc: f32 = sub_c.* / correction_values[2];
+                                            break :blk (fa * w + fb * u + fc * v) / correction;
+                                        },
+                                        .Int => blk: {
+                                            const fa: f32 = @as(f32, @floatFromInt(sub_a.*)) / correction_values[0];
+                                            const fb: f32 = @as(f32, @floatFromInt(sub_b.*)) / correction_values[1];
+                                            const fc: f32 = @as(f32, @floatFromInt(sub_c.*)) / correction_values[2];
+                                            const result = (fa * w + fb * u + fc * v) / correction;
+                                            break :blk @intFromFloat(result);
+                                        },
+                                        else => @panic("inner struct type " ++ @tagName(sub_field.type) ++ " is neither a Float, Int so it cant be interpolated!")
+                                    };
+                                };
+                            }
+                            break :interpolate_struct interpolated_struct_result;
+
+                        },
+                        else => @panic("type " ++ @tagName(field.type) ++ " is neither a Float, Int or Struct, so it cant be interpolated!")
+                    };
+
+                    break :interpolate_field interpolated_result;
+                };
+            }
+
+            return interpolated_data;
+        }
+
+        fn barycentric(triangle: [3]Vector3f, point: Vector3f) Vector3f {
+            
+            // point.z = 0;
+
+            // barycentric coordinates of the current pixel
+            const ab = triangle[1].substract(triangle[0]);
+            const ac = triangle[2].substract(triangle[0]);
+            const ap = point.substract(triangle[0]);
+            const bp = point.substract(triangle[1]);
+            const ca = triangle[0].substract(triangle[2]);
+
+            // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
+            // the magnitude of the cross product can be interpreted as the area of the parallelogram.
+            const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+            const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
+            const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
+
+            const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
+            const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
+            const w: f32 = (1 - u - v);
+
+            return .{.x = u, .y = v, .z = w};
         }
     };
 }
@@ -3037,7 +3340,7 @@ const quad_renderer = struct {
         texture: Buffer2D(RGBA),
         texture_width: usize,
         texture_height: usize,
-        projection_matrix: M44
+        projection_matrix: M44,
     };
 
     const Invariant = struct {
@@ -3052,7 +3355,7 @@ const quad_renderer = struct {
     const pipeline_configuration = GraphicsPipelineConfiguration {
         .blend_with_background = true,
         .use_index_buffer = true,
-        .do_triangle_clipping = false,
+        .do_triangle_clipping = true,
         .do_depth_testing = true,
         .do_perspective_correct_interpolation = true,
         .do_scissoring = false,
@@ -3163,7 +3466,7 @@ const gouraud_renderer = struct {
         .do_depth_testing = true,
         .do_perspective_correct_interpolation = true,
         .do_scissoring = false,
-        .use_triangle_2 = use_triangle_2,
+        .use_triangle_2 = false,
     };
 
     const Pipeline = GraphicsPipeline(
@@ -3190,4 +3493,28 @@ const gouraud_renderer = struct {
 
 };
 
-const use_triangle_2 = true;
+const use_triangle_2 = false;
+
+// helper for rendering in geogebra (sometimes I use it to debug and stuff)
+// https://www.geogebra.org/3d?lang=en
+const gg = struct {
+    fn plane(p: Plane) void {
+        std.debug.print("{d:.4}*x + {d:.4}*y + {d:.4}*z + {d:.4} = 0\n", .{p.a, p.b, p.c, p.d});
+    }
+    fn triangle(t: [3]Vector3f) void {
+        // std.debug.print("polygon({{point({{{d:.4}, {d:.4}, {d:.4}}}), point({{{d:.4}, {d:.4}, {d:.4}}}), point({{{d:.4}, {d:.4}, {d:.4}}})}})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
+        std.debug.print("({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
+    }
+    fn triangle4(t: [3]Vector4f) void {
+        // std.debug.print("polygon({{point({{{d:.4}, {d:.4}, {d:.4}}}), point({{{d:.4}, {d:.4}, {d:.4}}}), point({{{d:.4}, {d:.4}, {d:.4}}})}})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
+        std.debug.print("({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
+    }
+    fn point(p: Vector3f) void {
+        // std.debug.print("point({{{d:.4}, {d:.4}, {d:.4}}})\n", .{p.x, p.y, p.z});
+        std.debug.print("({d:.4}, {d:.4}, {d:.4})\n", .{p.x, p.y, p.z});
+    }
+    fn vector(a: Vector3f, b: Vector3f) void {
+        // std.debug.print("point({{{d:.4}, {d:.4}, {d:.4}}})\n", .{p.x, p.y, p.z});
+        std.debug.print("vector(({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4}))\n", .{a.x, a.y, a.z, b.x, b.y, b.z});
+    }
+};
