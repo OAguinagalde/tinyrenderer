@@ -2188,36 +2188,70 @@ pub fn main() !void {
                     //     const width: usize = 4;
                     //     const height: usize = 4;
                     // };
-                    const texture_data = texture.data;
-                    const w: f32 = @floatFromInt(texture.width);
-                    const h: f32 = @floatFromInt(texture.height);
-                    const quad_context = quad_renderer.Context {
-                        .texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&texture_data)), texture.width),
-                        .texture_width = texture.width,
-                        .texture_height = texture.height,
-                        .projection_matrix =
-                            state.projection_matrix.multiply(
-                                state.view_matrix.multiply(
-                                    M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 0 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
-                                )
-                            ),
-                    };
-                    const vertex_buffer = [_]quad_renderer.Vertex{
-                        .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
-                        .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
-                        .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
-                        .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
-                    };
-                    const index_buffer = [_]u16{0,1,2,0,2,3};
-                    const requirements = quad_renderer.pipeline_configuration.Requirements() {
-                        .depth_buffer = state.depth_buffer,
-                        .viewport_matrix = state.viewport_matrix,
-                        .index_buffer = &index_buffer,
-                        .projection_matrix = state.projection_matrix,
-                        // .projection_matrix = state.projection_matrix.multiply(state.view_matrix),
-                        // .projection_matrix = quad_context.projection_matrix,
-                    };
-                    quad_renderer.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/6, requirements);
+                    {
+                        const texture_data = texture.data;
+                        const w: f32 = @floatFromInt(texture.width);
+                        const h: f32 = @floatFromInt(texture.height);
+                        var quad_context = quad_renderer.Context {
+                            .texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&texture_data)), texture.width),
+                            .texture_width = texture.width,
+                            .texture_height = texture.height,
+                            .projection_matrix =
+                                state.projection_matrix.multiply(
+                                    state.view_matrix.multiply(
+                                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 0 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
+                                    )
+                                ),
+                        };
+                        const vertex_buffer = [_]quad_renderer.Vertex{
+                            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
+                            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
+                            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
+                            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
+                        };
+                        const index_buffer = [_]u16{0,1,2,0,2,3};
+                        const requirements = quad_renderer.pipeline_configuration.Requirements() {
+                            .depth_buffer = state.depth_buffer,
+                            .viewport_matrix = state.viewport_matrix,
+                            .index_buffer = &index_buffer,
+                            .projection_matrix = state.projection_matrix,
+                            // .projection_matrix = state.projection_matrix.multiply(state.view_matrix),
+                            // .projection_matrix = quad_context.projection_matrix,
+                        };
+                        quad_renderer.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/6, requirements);
+                    }
+                    {
+                        // const texture_data = state.texture.rgba.data;
+                        const w: f32 = @floatFromInt(state.texture.rgba.width);
+                        const h: f32 = @floatFromInt(state.texture.rgba.height());
+                        var quad_context = quad_renderer.Context {
+                            .texture = state.texture.rgba,
+                            .texture_width = state.texture.rgba.width,
+                            .texture_height = state.texture.rgba.height(),
+                            .projection_matrix =
+                                state.projection_matrix.multiply(
+                                    state.view_matrix.multiply(
+                                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = -1 }).multiply(M44.scale(1/w))
+                                    )
+                                ),
+                        };
+                        const vertex_buffer = [_]quad_renderer.Vertex{
+                            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
+                            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
+                            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
+                            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
+                        };
+                        const index_buffer = [_]u16{0,1,2,0,2,3};
+                        const requirements = quad_renderer.pipeline_configuration.Requirements() {
+                            .depth_buffer = state.depth_buffer,
+                            .viewport_matrix = state.viewport_matrix,
+                            .index_buffer = &index_buffer,
+                            .projection_matrix = state.projection_matrix,
+                            // .projection_matrix = state.projection_matrix.multiply(state.view_matrix),
+                            // .projection_matrix = quad_context.projection_matrix,
+                        };
+                        quad_renderer.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/6, requirements);
+                    }
                 }
 
                 // imgui.c.igShowDemoWindow(&open);
