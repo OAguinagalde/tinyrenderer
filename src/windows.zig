@@ -584,14 +584,16 @@ const M44 = struct {
         var result = M44.identity();
         const fov_radians = (@as(f32,std.math.pi)/180) * fov_degrees;
         const f = 1.0 / std.math.tan(fov_radians / 2.0);
-        // Calculate the tangent of half the vertical field of view angle (fovY)
-        // const tanHalfFovY: f32 = std.math.tan(fovY/2);
-        // Calculate the scaling factors for X and Y axes
-        result.data[0] = f / aspect_ratio;
+        result.data[0] = f * aspect_ratio;
         result.data[5] = f;
-        result.data[10] = (far + near) / (near - far);     // Depth scaling and translation
-        result.data[11] = -1;                              // Depth scaling
-        result.data[14] = (2 * far * near) / (near - far); // Depth translation
+        // NOTE that using `(near - far)` instead of `(far - near)` will make it so that things near will have a z to 1 and things
+        // further will have a z closer to 0, but we want things further to have a z closer to 1 instead
+        // NOTE the `(far + near)` and `(2 * far * near)` means that values will be mapped to a [-1, 1] cube.
+        // Different implementations might look different when their projection are mapping values to [0, 1] for example.
+        result.data[10] = (far + near) / (far - near);     // Depth scaling and translation
+        result.data[14] = (2 * far * near) / (far - near); // Depth translation
+        result.data[11] = -1;
+        // NOTE we are working with homogeneous coordinates, hence this being 0
         result.data[15] = 0;
         return result;
     }
@@ -2192,7 +2194,7 @@ pub fn main() !void {
                         const texture_data = texture.data;
                         const w: f32 = @floatFromInt(texture.width);
                         const h: f32 = @floatFromInt(texture.height);
-                        var quad_context = quad_renderer.Context {
+                        var quad_context = quad_renderer(RGBA).Context {
                             .texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&texture_data)), texture.width),
                             .texture_width = texture.width,
                             .texture_height = texture.height,
@@ -2203,14 +2205,14 @@ pub fn main() !void {
                                     )
                                 ),
                         };
-                        const vertex_buffer = [_]quad_renderer.Vertex{
+                        const vertex_buffer = [_]quad_renderer(RGBA).Vertex{
                             .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
                             .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
                             .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
                             .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
                         };
                         const index_buffer = [_]u16{0,1,2,0,2,3};
-                        const requirements = quad_renderer.pipeline_configuration.Requirements() {
+                        const requirements = quad_renderer(RGBA).pipeline_configuration.Requirements() {
                             .depth_buffer = state.depth_buffer,
                             .viewport_matrix = state.viewport_matrix,
                             .index_buffer = &index_buffer,
@@ -2218,16 +2220,16 @@ pub fn main() !void {
                             // .projection_matrix = state.projection_matrix.multiply(state.view_matrix),
                             // .projection_matrix = quad_context.projection_matrix,
                         };
-                        quad_renderer.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/6, requirements);
+                        quad_renderer(RGBA).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/6, requirements);
                     }
-                    {
+                    if (false) {
                         // const texture_data = state.texture.rgba.data;
-                        const w: f32 = @floatFromInt(state.texture.rgba.width);
-                        const h: f32 = @floatFromInt(state.texture.rgba.height());
-                        var quad_context = quad_renderer.Context {
-                            .texture = state.texture.rgba,
-                            .texture_width = state.texture.rgba.width,
-                            .texture_height = state.texture.rgba.height(),
+                        const w: f32 = @floatFromInt(state.texture.rgb.width);
+                        const h: f32 = @floatFromInt(state.texture.rgb.height());
+                        var quad_context = quad_renderer(RGB).Context {
+                            .texture = state.texture.rgb,
+                            .texture_width = state.texture.rgb.width,
+                            .texture_height = state.texture.rgb.height(),
                             .projection_matrix =
                                 state.projection_matrix.multiply(
                                     state.view_matrix.multiply(
@@ -2235,14 +2237,14 @@ pub fn main() !void {
                                     )
                                 ),
                         };
-                        const vertex_buffer = [_]quad_renderer.Vertex{
+                        const vertex_buffer = [_]quad_renderer(RGB).Vertex{
                             .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
                             .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
                             .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
                             .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
                         };
                         const index_buffer = [_]u16{0,1,2,0,2,3};
-                        const requirements = quad_renderer.pipeline_configuration.Requirements() {
+                        const requirements = quad_renderer(RGB).pipeline_configuration.Requirements() {
                             .depth_buffer = state.depth_buffer,
                             .viewport_matrix = state.viewport_matrix,
                             .index_buffer = &index_buffer,
@@ -2250,7 +2252,7 @@ pub fn main() !void {
                             // .projection_matrix = state.projection_matrix.multiply(state.view_matrix),
                             // .projection_matrix = quad_context.projection_matrix,
                         };
-                        quad_renderer.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/6, requirements);
+                        quad_renderer(RGB).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
                     }
                 }
 
@@ -2475,6 +2477,7 @@ const Plane = struct {
         gg.plane(frustum.bottom);
         gg.plane(frustum.near);
         gg.plane(frustum.far);
+        std.debug.print("\n",.{});
 
         return frustum;
     }
@@ -2658,11 +2661,11 @@ fn GraphicsPipeline(
                     
                     const ndc = clip_space_positions[i].perspective_division();
                     ndcs[i] = ndc;
-                    if (ndc.x >= 1 or ndc.x <= -1 or ndc.y >= 1 or ndc.y <= -1 or ndc.z >= 1 or ndc.z <= -1) {
+                    if (ndc.x > 1 or ndc.x < -1 or ndc.y > 1 or ndc.y < -1 or ndc.z > 1 or ndc.z < -1) {
                         if (pipeline_configuration.do_triangle_clipping) {
                             clipped[clipped_count] = @enumFromInt(i);
                             clipped_count += 1;
-                            // std.log.debug("clipped {}", .{i});
+                            std.log.debug("clipped {}", .{i});
                             if (clipped_count == 3) continue :label_outer;
                         }
                         else continue :label_outer;
@@ -2684,7 +2687,7 @@ fn GraphicsPipeline(
                         line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, Vector2i { .x = @intFromFloat(tri[0].x), .y = @intFromFloat(tri[0].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
                     }
                     else {
-                        
+                        gg.triangle(ndcs[0..3].*);
                         const TriangleQueue = std.DoublyLinkedList([3]Vector3f);
                         var data: std.ArrayList(TriangleQueue.Node) = std.ArrayList(TriangleQueue.Node).initCapacity(std.heap.c_allocator, 30) catch unreachable;
                         defer data.clearAndFree();
@@ -2814,6 +2817,7 @@ fn GraphicsPipeline(
                             const invariants_c = if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants[0..3].*, w_used_for_perspective_correction[0..3].*, bar_c.x, bar_c.y, bar_c.z)
                                 else interpolate(invariant_type, invariants[0..3].*, bar_c.x, bar_c.y, bar_c.z);
 
+                            gg.triangle(.{ t.data[0], t.data[1], t.data[2] });
                             rasterizers.rasterize_1(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c });
 
                             line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
@@ -3025,11 +3029,17 @@ fn GraphicsPipeline(
                 }
             }
             fn rasterize_1(pixel_buffer: Buffer2D(final_color_type), context: context_type, requirements: pipeline_configuration.Requirements(), tri: [3]Vector3f, depth: [3]f32, w_used_for_perspective_correction: [3]f32, invariants: [3]invariant_type) void {
-                
                 // top = y = window height, bottom = y = 0
                 const a = &tri[0];
                 const b = &tri[1];
                 const c = &tri[2];
+
+                // NOTE This is used later when calculating barycenter but since these are constant values no need to computer once per pixel down below
+                const ab = b.substract(a.*);
+                const ac = c.substract(a.*);
+                const ca = a.substract(c.*);
+                const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+
 
                 // calculate the bounding of the triangle's projection on the screen
                 var left: usize = @intFromFloat(@min(a.x, @min(b.x, c.x)));
@@ -3043,38 +3053,31 @@ fn GraphicsPipeline(
                     top = @max(top, @as(usize, @intFromFloat(requirements.scissor_rect.w)));
                 }
 
-                // TODO PERF rather than going pixel by pixel on the bounding box of the triangle, use linear interpolation to figure out the "left" and "right" of each row of pixels
-                // that way should be faster, although we still need to calculate the barycentric coords for zbuffer and texture sampling, but it might still be better since we skip many pixels
-                // test it just in case
-
                 // top to bottom
-                var y: usize = top;
-                while (y > bottom) : (y -= 1) {
+                // var y: usize = top;
+                // while (y > bottom) : (y -= 1) {
+                var y: usize = bottom;
+                while (y <= top) : (y += 1) {
                     
                     // left to right
                     var x: usize = left;
                     while (x <= right) : (x += 1) {
                         
-                        // barycentric coordinates of the current pixel
-                        const pixel = Vector3f { .x = @floatFromInt(x), .y = @floatFromInt(y), .z = 0 };
+                        // calculate barycentric coordinates of the current pixel
+                        // NOTE we are checking that THE MIDDLE point of the pixel itself is inside the triangle, hence the +0.5
+                        const pixel = Vector3f { .x = @as(f32, @floatFromInt(x)) + 0.5, .y = @as(f32, @floatFromInt(y)) + 0.5, .z = 0 };
 
-                        const ab = b.substract(a.*);
-                        const ac = c.substract(a.*);
                         const ap = pixel.substract(a.*);
                         const bp = pixel.substract(b.*);
-                        const ca = a.substract(c.*);
 
-                        // TODO PERF we dont actually need many of the calculations of cross_product here, just the z
-                        // the magnitude of the cross product can be interpreted as the area of the parallelogram.
-                        const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+                        // NOTE the magnitude of the cross product can be interpreted as the area of the parallelogram.
                         const paralelogram_area_abp: f32 = ab.cross_product(bp).z;
                         const paralelogram_area_cap: f32 = ca.cross_product(ap).z;
 
+                        // The inverse of the barycentric would be `P=wA+uB+vC`
                         const u: f32 = paralelogram_area_cap / paralelogram_area_abc;
                         const v: f32 = paralelogram_area_abp / paralelogram_area_abc;
                         const w: f32 = (1 - u - v);
-
-                        // The inverse of the barycentric would be `P=wA+uB+vC`
 
                         // determine if a pixel is in fact part of the triangle
                         if (u < 0 or u >= 1) continue;
@@ -3301,57 +3304,62 @@ const imgui_renderer = struct {
     );
 };
 
-const quad_renderer = struct {
-    
-    const Context = struct {
-        texture: Buffer2D(RGBA),
-        texture_width: usize,
-        texture_height: usize,
-        projection_matrix: M44,
+fn quad_renderer(comptime texture_type: type) type {
+    return struct {
+
+        const Self = @This();
+
+        const Context = struct {
+            texture: Buffer2D(texture_type),
+            texture_width: usize,
+            texture_height: usize,
+            projection_matrix: M44,
+        };
+
+        const Invariant = struct {
+            texture_uv: Vector2f,
+        };
+
+        const Vertex = struct {
+            pos: Vector2f,
+            uv: Vector2f,
+        };
+
+        const pipeline_configuration = GraphicsPipelineConfiguration {
+            .blend_with_background = true,
+            .use_index_buffer = true,
+            .do_triangle_clipping = true,
+            .do_depth_testing = true,
+            .do_perspective_correct_interpolation = true,
+            .do_scissoring = false,
+            .use_triangle_2 = use_triangle_2,
+        };
+
+        const Pipeline = GraphicsPipeline(
+            win32.RGBA,
+            Context,
+            Invariant,
+            Vertex,
+            pipeline_configuration,
+            struct {
+                fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector4f {
+                    out_invariant.texture_uv = vertex.uv;
+                    return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0 });
+                }
+            }.vertex_shader,
+            struct {
+                fn fragment_shader(context: Context, invariants: Invariant) win32.RGBA {
+                    const rgba =
+                        if (bilinear) texture_bilinear_sample(texture_type, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
+                        else texture_point_sample(texture_type, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+                    if (texture_type == RGBA) return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a)
+                    else return win32.rgba(rgba.r, rgba.g, rgba.b, 255);
+
+                }
+            }.fragment_shader,
+        );
     };
-
-    const Invariant = struct {
-        texture_uv: Vector2f,
-    };
-
-    const Vertex = struct {
-        pos: Vector2f,
-        uv: Vector2f,
-    };
-
-    const pipeline_configuration = GraphicsPipelineConfiguration {
-        .blend_with_background = true,
-        .use_index_buffer = true,
-        .do_triangle_clipping = true,
-        .do_depth_testing = true,
-        .do_perspective_correct_interpolation = true,
-        .do_scissoring = false,
-        .use_triangle_2 = use_triangle_2,
-    };
-
-    const Pipeline = GraphicsPipeline(
-        win32.RGBA,
-        Context,
-        Invariant,
-        Vertex,
-        pipeline_configuration,
-        struct {
-            fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector4f {
-                out_invariant.texture_uv = vertex.uv;
-                return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0 });
-            }
-        }.vertex_shader,
-        struct {
-            fn fragment_shader(context: Context, invariants: Invariant) win32.RGBA {
-                const rgba =
-                    if (bilinear) texture_bilinear_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
-                    else texture_point_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
-                return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a);
-            }
-        }.fragment_shader,
-    );
-
-};
+}
 
 const text_renderer = struct {
     
