@@ -399,141 +399,24 @@ const M44 = struct {
         return result;
     }
 
-    /// The camera is looking towards -Z.
+    /// The camera is looking towards +Z.
     /// The right direction is in the +X direction.
     /// The up direction is in the +Y direction.
     pub fn lookat_right_handed(camera_location: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
         
-        { // Some notes and articles, this things can be confusing lol
-
-            // https://stackoverflow.com/questions/349050/calculating-a-lookat-matrix
-            // > # Note the example given is a left-handed, row major matrix.
-            // > 
-            // > So the operation is: Translate to the origin first (move by -eye),
-            // > then rotate so that the vector from eye to At lines up with +z:
-            // > 
-            // > Basically you get the same result if you pre-multiply the rotation matrix by a translation -eye:
-            // > 
-            // >     [      1       0       0   0 ]   [ xaxis.x  yaxis.x  zaxis.x 0 ]
-            // >     [      0       1       0   0 ] * [ xaxis.y  yaxis.y  zaxis.y 0 ]
-            // >     [      0       0       1   0 ]   [ xaxis.z  yaxis.z  zaxis.z 0 ]
-            // >     [ -eye.x  -eye.y  -eye.z   1 ]   [       0        0        0 1 ]
-            // >     
-            // >       [         xaxis.x          yaxis.x          zaxis.x  0 ]
-            // >     = [         xaxis.y          yaxis.y          zaxis.y  0 ]
-            // >       [         xaxis.z          yaxis.z          zaxis.z  0 ]
-            // >       [ dot(xaxis,-eye)  dot(yaxis,-eye)  dot(zaxis,-eye)  1 ]
-            // > 
-            // > ## Additional notes:
-            // > 
-            // > Note that a viewing transformation is (intentionally) inverted: you multiply every vertex by
-            // > this matrix to "move the world" so that the portion you want to see ends up in the canonical view volume.
-            // > 
-            // > Also note that the rotation matrix (call it R) component of the LookAt
-            // > matrix is an inverted change of basis matrix where the rows of R are the new basis vectors in
-            // > terms of the old basis vectors (hence the variable names xaxis.x, .. xaxis is the new x axis
-            // > after the change of basis occurs). Because of the inversion, however, the rows and columns are transposed.
-            // > 
-            // > This would imply that the LookAt matrix is an orthonormal basis (they are all unit vectors and orthogonal to each other)
-            // > otherwise the transpose would not be equal to it's inverse
-
-            // http://davidlively.com/programming/graphics/opengl-matrices/row-major-vs-column-major/
-            // > # Row Major VS. Column Major
-            // > 
-            // > ## Column-Major
-            // > 
-            // > - Standard widely used for OpenGL.
-            // > - Values are stored in column-first order (see below)
-            // > - Transpose of row-major.
-            // > - The matrix must be to the LEFT of the multiply operator
-            // > - The vertex or vector must to the RIGHT of the operator
-            // > 
-            // > Given a matrix:
-            // > 
-            // >     a00 a01 a02 a03
-            // >     a10 a11 a12 a13
-            // >     a20 a21 a22 a23
-            // >     a30 a31 a32 a33
-            // > 
-            // > The values would be stored in memory in the order
-            // > 
-            // >     a00, a10, a20, a30, a01, a11, a21, a31, a02, a12, a22, a32, a03, a13, a23, a33
-            // > 
-            // > Translation matrix:
-            // > 
-            // >     | 1 0 0 tx |   | x |     | x+w*tx |
-            // >     | 0 1 0 ty |   | y |  =  | y+w*ty |
-            // >     | 0 0 1 tz |   | z |     | z+w*tz |
-            // >     | 0 0 0 tw |   | 1 |     |   tw   |
-            // > 
-            // > 
-            // > ## Row-Major
-            // > 
-            // > - Used in DirectX and HLSL
-            // > - Values are stored in row-first order
-            // > - Transpose of column-major
-            // > - The matrix must be to the RIGHT of the multiply operator
-            // > - The vertex or vector must to the LEFT of the operator
-            // > - When using the row-major convention, the matrix:
-            // > 
-            // > Given a matrix:
-            // > 
-            // >     a00 a01 a02 a03
-            // >     a10 a11 a12 a13
-            // >     a20 a21 a22 a23
-            // >     a30 a31 a32 a33
-            // > 
-            // > The values would be stored in memory in the order
-            // > 
-            // >     a00, a01, a02, a03, a10, a11, a12, a13, a20, a21, a22, a23, a30, a31, a32, a33
-            // >  
-            // > Translation matrix:
-            // >  
-            // >                     | 0  0  0  0  |
-            // >     | x, y, z, 1 |  | 0  0  0  0  |  =  | x+w∗tx, y+w∗ty, z+w∗tz, tw |
-            // >                     | 0  0  0  0  | 
-            // >                     | tx ty tz tw |
-            // > 
-            // > https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3dxmatrixlookatlh
-            // > https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3dxmatrixlookatrh
-            // > 
-            // > From D3D9, Left Handed Look At
-            // > 
-            // >     zaxis = normal(At - Eye)
-            // >     xaxis = normal(cross(Up, zaxis))
-            // >     yaxis = cross(zaxis, xaxis)
-            // >     
-            // >      xaxis.x           yaxis.x           zaxis.x          0
-            // >      xaxis.y           yaxis.y           zaxis.y          0
-            // >      xaxis.z           yaxis.z           zaxis.z          0
-            // >     -dot(xaxis, eye)  -dot(yaxis, eye)  -dot(zaxis, eye)  1
-            // > 
-            // > From D3D9, Right Handed Look At
-            // > 
-            // >     zaxis = normal(Eye - At)
-            // >     xaxis = normal(cross(Up, zaxis))
-            // >     yaxis = cross(zaxis, xaxis)
-            // >     
-            // >      xaxis.x            yaxis.x            zaxis.x           0
-            // >      xaxis.y            yaxis.y            zaxis.y           0
-            // >      xaxis.z            yaxis.z            zaxis.z           0
-            // >      -dot(xaxis, eye)   -dot(yaxis, eye)   -dot(zaxis, eye)  1
-            // > 
-        }
-
         // just in case, normalize the up direction
         const normalized_up = up.normalized();
         
-        // the camera looks towards the negative z axes
-        // the z axes got the direction `point looked at ------> camera location`
+        // the camera looks towards the positive z axes
+        // the z axes got the direction `point looked at <------ camera location`
         // 
-        //     The camera is looking towards -Z.
+        //     The camera is looking towards +Z.
         //     The right direction is in the +X direction.
         //     The up direction is in the +Y direction.
         // 
-        const new_forward: Vector3f = camera_location.substract(point_looked_at).normalized(); // z axis
-        const new_right: Vector3f = normalized_up.cross_product(new_forward).normalized(); // x axis
-        const new_up: Vector3f = new_forward.cross_product(new_right).normalized(); // y axis
+        const new_forward: Vector3f = point_looked_at.substract(camera_location).normalized(); // z axis
+        const new_right: Vector3f = normalized_up.cross_product(new_forward).scale(-1).normalized(); // x axis
+        const new_up: Vector3f = new_forward.cross_product(new_right).scale(-1).normalized(); // y axis
 
         // Create a change of basis matrix, in which, the camera position,
         // the points its looking at and the up vector form the three axes.
@@ -560,54 +443,61 @@ const M44 = struct {
         // 
         return change_of_basis_matrix.multiply(M44.translation(camera_location.scale(-1)));
     }
-
-    // the resulting matrix will map a point to NDC based on the input parameters
-    pub fn orthographic_projection(left: f32, right: f32, top: f32, bottom: f32, near: f32, far: f32) M44 {
-        var result = M44.identity();
-        // Scale factor for X
-        result.data[0] = 2 / (right - left);
-        // Scale factor for Y
-        result.data[5] = 2 / (top - bottom);
-        // Scale factor for Z
-        result.data[10] = 2 / (far - near);
-        // Translate X
-        result.data[12] = -(right + left) / (right - left);
-        // Translate Y
-        result.data[13] = -(top + bottom) / (top - bottom);
-        // Translate Z
-        result.data[14] = -(far + near) / (far - near);
-        // Homogeneous Coordinate
-        result.data[15] = 1;
-        return result;
+    
+    // constructs an orthographic projection matrix, which
+    // maps the cube [left..right][bottom..top][near..far] to the cube [-1..1][-1..1][0..1] cube
+    // and center it so that:
+    //        
+    //                                 !           (1    , 1  , 1  )
+    //                   O = origin  __!______.  < (right, top, far)
+    //                              /  !     /|
+    //                             /___!____/ |
+    //                             |   !    | |
+    //                         - - - - O - - -/- - - 
+    //    (left, bottom, near)  >  |___!____|/
+    //    (-1  , -1    , 0   )         !
+    //               
+    // https://www.youtube.com/watch?v=U0_ONQQ5ZNM
+    pub fn orthographic_projection_2(left: f32, right: f32, top: f32, bottom: f32, near: f32, far: f32) M44 {
+        var scale_matrix = M44.identity();
+        scale_matrix.data[0] = map_range_to_range(left, right, -1, 1);
+        scale_matrix.data[5] = map_range_to_range(bottom, top, -1, 1);
+        // NOTE I'm not sure whether this is actually correct... check test below
+        scale_matrix.data[10] = map_range_to_range(near, far, 0, 1);
+        // translate the world so that (0, 0, 0) is the center of near plane of the cube that captures the orthogonal projection
+        const translate_matrix = M44.translation(Vector3f { .x = - ((right+left)/2), .y = - ((top+bottom)/2), .z = - near });
+        return scale_matrix.multiply(translate_matrix);
     }
-    pub fn perspective_projection(fov_degrees: f32, aspect_ratio: f32, near: f32, far: f32) M44 {
-        var result = M44.identity();
+
+    test "scaling of z is not what I expect..." {
+        try std.testing.expect(map_range_to_range(0, 100, 0, 1) * 0 == 0);
+        try std.testing.expect(map_range_to_range(0, 100, 0, 1) * 100 == 1);
+        try std.testing.expect(map_range_to_range(0, 100, 0, 1) * 50 == 0.5);
+        // From what I see online, the consensus is to do `1/(f-n)` for scaling the z values on the orthographic projection matrix.
+        // However, for example, if `far = 1000` and `near = 0.1` then `1/(1000-0.1) * 0.1` should be 0, but it is not!
+        try std.testing.expect((map_range_to_range(0.1, 100, 0, 1) * 0.1 == 0) == false);
+        // It seems to have to do with normalization but I'm not sure how to apply that in the orthographic matrix situation
+        try std.testing.expect((map_range_to_range_normalized(0.1, 0.1, 100, 0, 1) == 0));
+    }
+
+    // https://www.youtube.com/watch?v=U0_ONQQ5ZNM
+    pub fn perspective_projection_2(fov_degrees: f32, aspect_ratio: f32, near: f32, far: f32) M44 {
         const fov_radians = (@as(f32,std.math.pi)/180) * fov_degrees;
-        const f = 1.0 / std.math.tan(fov_radians / 2.0);
-        result.data[0] = f * aspect_ratio;
-        result.data[5] = f;
-        // NOTE that using `(near - far)` instead of `(far - near)` will make it so that things near will have a z to 1 and things
-        // further will have a z closer to 0, but we want things further to have a z closer to 1 instead
-        // NOTE the `(far + near)` and `(2 * far * near)` means that values will be mapped to a [-1, 1] cube.
-        // Different implementations might look different when their projection are mapping values to [0, 1] for example.
-        result.data[10] = (far + near) / (far - near);     // Depth scaling and translation
-        result.data[14] = (2 * far * near) / (far - near); // Depth translation
-        result.data[11] = -1;
-        // NOTE we are working with homogeneous coordinates, hence this being 0
-        result.data[15] = 0;
-        return result;
-    }
+        const top = near * std.math.tan(fov_radians / 2.0);
+        const right = near * aspect_ratio * std.math.tan(fov_radians / 2.0); 
+        const left = -right;
+        const bottom = -top;
+        
+        var perspective = M44.identity();
+        perspective.data[0] = near;
+        perspective.data[5] = near;
+        perspective.data[10] = far+near;
+        perspective.data[14] = -(far*near);
+        perspective.data[11] = 1;
+        perspective.data[15] = 0;
 
-
-    /// This should probably go something like...
-    /// 
-    ///     float c = -1 / (camera.looking_at - camera.position).norm();
-    ///     projection(c);
-    /// 
-    pub fn projection(coefficient: f32) M44 {
-        var projection_matrix = M44.identity();
-        projection_matrix.data[11] = coefficient;
-        return projection_matrix;
+        const ortho_projection = orthographic_projection_2(left, right, top, bottom, near, far);
+        return ortho_projection.multiply(perspective);
     }
     
     /// Builds a "viewport" (as its called in opengl) matrix, a matrix that
@@ -1682,7 +1572,7 @@ const imgui_win32_impl = struct {
         const dimensions = Vector2f { .x = draw_data.*.DisplaySize.x, .y = draw_data.*.DisplaySize.y };
         // In DearImgui 0, 0 is the top left corner but on this renderer is bottom left, so I make the projection matrix with "top" and "bottom"
         // inverted so that they every point trasformed by it has its y coordinate inverted
-        const projection_matrix = M44.orthographic_projection(pos.x, pos.x + dimensions.x, pos.y, pos.y + dimensions.y, 0.1, 1000);
+        const projection_matrix = M44.orthographic_projection_2(pos.x, pos.x + dimensions.x, pos.y, pos.y + dimensions.y, 0, 10);
         const viewport_matrix = M44.viewport(pos.x, pos.y, dimensions.x, dimensions.y, 255);
         if (draw_data.*.CmdLists.Data == null) return;
         const command_lists = imgui.im_vector_from(draw_data.*.CmdLists);
@@ -1990,12 +1880,9 @@ pub fn main() !void {
             state.vertex_buffer = OBJ.from_file(allocator, "res/african_head.obj")
                 catch |err| { std.debug.print("error reading `res/african_head.obj` {?}", .{err}); return; };
 
-            // Set the camera
-            // Since I have decided that the camera will look towards -z (this happens in the lookat matrix generation)
-            // meaning that the camera starts at 0, 0, 1, Looking backwards (direction is 0, 0, -1), and up is up
-            state.camera.position = Vector3f { .x = 0, .y = 0, .z = 1 };
+            state.camera.position = Vector3f { .x = 0, .y = 0, .z = 0 };
             state.camera.up = Vector3f { .x = 0, .y = 1, .z = 0 };
-            state.camera.direction = Vector3f { .x = 0, .y = 0, .z = -1 };
+            state.camera.direction = Vector3f { .x = 0, .y = 0, .z = 1 };
 
             state.time = 0;
         }
@@ -2094,7 +1981,7 @@ pub fn main() !void {
                 const mouse_sensitivity = 0.60;
                 const up = Vector3f {.x = 0, .y = 1, .z = 0 };
                 const real_right = state.camera.direction.cross_product(up).normalized();
-                const real_up = state.camera.direction.cross_product(real_right).normalized().scale(-1);
+                const real_up = state.camera.direction.cross_product(real_right).scale(-1).normalized();
                 if (mouse_dx != 0 or mouse_dy != 0) {
                     state.camera.direction = state.camera.direction.add(real_right.scale(mouse_dx*mouse_sensitivity));
                     if (state.camera.direction.y < 0.95 and state.camera.direction.y > -0.95) {
@@ -2115,7 +2002,7 @@ pub fn main() !void {
                 state.camera.looking_at = state.camera.position.add(state.camera.direction);                
                 state.view_matrix = M44.lookat_right_handed(state.camera.position, state.camera.looking_at, state.camera.up);
                 const aspect_ratio = @as(f32, @floatFromInt(client_width)) / @as(f32, @floatFromInt(client_height));
-                state.projection_matrix = M44.perspective_projection(100, aspect_ratio, 0.001, 10);
+                state.projection_matrix = M44.perspective_projection_2(100, aspect_ratio, 0.1, 10);
                 state.viewport_matrix = M44.viewport_i32(0, 0, client_width, client_height, 255);
 
                 // if (state.keys['V']) state.viewport_matrix = M44.identity();
@@ -2149,7 +2036,7 @@ pub fn main() !void {
                         .texture_height = state.texture.rgb.height(),
                         .texture_width = state.texture.rgb.width,
                         .view_model_matrix = state.view_matrix.multiply(
-                            M44.translation(Vector3f { .x = 0, .y = 0, .z = -2 }).multiply(M44.scale(0.8))
+                            M44.translation(Vector3f { .x = 0, .y = 0, .z = 2 }).multiply(M44.scale(0.8))
                         ),
                     };
                     var i: usize = 0;
@@ -2172,7 +2059,9 @@ pub fn main() !void {
                 // TODO there is part of the pixel buffer being rendered below the status bar from windows
                 if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 }, "ms {d: <9.2}", .{ms});
                 if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-22 }, "camera {d:.4}, {d:.4}, {d:.4}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z});
-
+                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*2) }, "{d:.3}, {d:.3}, {d:.3}", .{real_right.x, real_right.y, real_right.z});
+                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*3) }, "d mouse {d:.4}, {d:.4}", .{mouse_dx, mouse_dy});
+                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*4) }, "direction {d:.4}, {d:.4}, {d:.4}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z});
                 if (true) {
                     const texture = @import("font_embedded.zig");
                     // const c_red = RGBA { .r = 255, .g = 0, .b = 0, .a = 255 };
@@ -2201,7 +2090,7 @@ pub fn main() !void {
                             .projection_matrix =
                                 state.projection_matrix.multiply(
                                     state.view_matrix.multiply(
-                                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 0 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
+                                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
                                     )
                                 ),
                         };
@@ -2217,12 +2106,10 @@ pub fn main() !void {
                             .viewport_matrix = state.viewport_matrix,
                             .index_buffer = &index_buffer,
                             .projection_matrix = state.projection_matrix,
-                            // .projection_matrix = state.projection_matrix.multiply(state.view_matrix),
-                            // .projection_matrix = quad_context.projection_matrix,
                         };
-                        quad_renderer(RGBA).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/6, requirements);
+                        quad_renderer(RGBA).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
                     }
-                    if (false) {
+                    if (true) {
                         // const texture_data = state.texture.rgba.data;
                         const w: f32 = @floatFromInt(state.texture.rgb.width);
                         const h: f32 = @floatFromInt(state.texture.rgb.height());
@@ -2233,7 +2120,7 @@ pub fn main() !void {
                             .projection_matrix =
                                 state.projection_matrix.multiply(
                                     state.view_matrix.multiply(
-                                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = -1 }).multiply(M44.scale(1/w))
+                                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1.5 }).multiply(M44.scale(1/w))
                                     )
                                 ),
                         };
@@ -2249,8 +2136,6 @@ pub fn main() !void {
                             .viewport_matrix = state.viewport_matrix,
                             .index_buffer = &index_buffer,
                             .projection_matrix = state.projection_matrix,
-                            // .projection_matrix = state.projection_matrix.multiply(state.view_matrix),
-                            // .projection_matrix = quad_context.projection_matrix,
                         };
                         quad_renderer(RGB).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
                     }
@@ -2362,7 +2247,7 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(win32.RGBA),
         .texture = texture,
         .texture_width = texture.width,
         .texture_height = texture.height(),
-        .projection_matrix = M44.orthographic_projection(0, @floatFromInt(state.w), @floatFromInt(state.h), 0, 0.1, 1000)
+        .projection_matrix = M44.orthographic_projection_2(0, @floatFromInt(state.w), @floatFromInt(state.h), 0, 0, 10)
     };
     var text_buffer: [1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&text_buffer);
@@ -2661,11 +2546,10 @@ fn GraphicsPipeline(
                     
                     const ndc = clip_space_positions[i].perspective_division();
                     ndcs[i] = ndc;
-                    if (ndc.x > 1 or ndc.x < -1 or ndc.y > 1 or ndc.y < -1 or ndc.z > 1 or ndc.z < -1) {
+                    if (ndc.x > 1 or ndc.x < -1 or ndc.y > 1 or ndc.y < -1 or ndc.z > 1 or ndc.z < 0) {
                         if (pipeline_configuration.do_triangle_clipping) {
                             clipped[clipped_count] = @enumFromInt(i);
                             clipped_count += 1;
-                            std.log.debug("clipped {}", .{i});
                             if (clipped_count == 3) continue :label_outer;
                         }
                         else continue :label_outer;
@@ -2818,7 +2702,8 @@ fn GraphicsPipeline(
                                 else interpolate(invariant_type, invariants[0..3].*, bar_c.x, bar_c.y, bar_c.z);
 
                             gg.triangle(.{ t.data[0], t.data[1], t.data[2] });
-                            rasterizers.rasterize_1(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c });
+                            if (pipeline_configuration.use_triangle_2) rasterizers.rasterize_2(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c })
+                            else rasterizers.rasterize_1(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c });
 
                             line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
                             line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, Vector2i { .x = @intFromFloat(screen_space_3.x), .y = @intFromFloat(screen_space_3.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
@@ -3468,7 +3353,7 @@ const gouraud_renderer = struct {
 
 };
 
-const use_triangle_2 = false;
+const use_triangle_2 = true;
 
 // helper for rendering in geogebra (sometimes I use it to debug and stuff)
 // https://www.geogebra.org/3d?lang=en
@@ -3493,3 +3378,24 @@ const gg = struct {
         std.debug.print("vector(({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4}))\n", .{a.x, a.y, a.z, b.x, b.y, b.z});
     }
 };
+
+fn map_range_to_range(from: f32, to: f32, map_from: f32, map_to: f32) f32 {
+    // std.debug.assert(from < to);
+    // std.debug.assert(map_from < map_to);
+    return (map_to - map_from) / (to - from);
+}
+
+fn map_range_to_range_normalized(n: f32, from: f32, to: f32, map_from: f32, map_to: f32) f32 {
+    // std.debug.assert(from < to);
+    // std.debug.assert(map_from < map_to);
+    const factor = ((map_to - map_from) / (to - from));
+    // put n in normalized space, then multiply by the factor, then map back to original space
+    // this is aking to how, when rotating things with a matrix, you first move it to the origin, rotate it, and then move it back
+    return ((n - from) * factor) + map_from;
+}
+
+test {
+    // To run nested container tests, either, call `refAllDecls` which will
+    // reference all declarations located in the given argument, or reference the container itself.
+    _ = M44;
+}
