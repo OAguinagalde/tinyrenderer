@@ -391,6 +391,14 @@ const M44 = struct {
         return result;
     }
 
+    pub fn scaling_matrix(s: Vector3f) M44 {
+        var result = M44.identity();
+        result.data[0] = s.x;
+        result.data[5] = s.y;
+        result.data[10] = s.z;
+        return result;
+    }
+
     pub fn scale(factor: f32) M44 {
         var result = M44.identity();
         result.data[0] = factor;
@@ -513,6 +521,21 @@ const M44 = struct {
         return viewport(xf, yf, wf, hf, depthf);
     }
     
+    pub fn viewport_i32_2(x: i32, y: i32, w: i32, h: i32, depth: i32) M44 {
+        const xf: f32 = @floatFromInt(x);
+        const yf: f32 = @floatFromInt(y);
+        const wf: f32 = @floatFromInt(w);
+        const hf: f32 = @floatFromInt(h);
+        const depthf: f32 = @floatFromInt(depth);
+        return viewport_2(xf, yf, wf, hf, depthf);
+    }
+    pub fn viewport_2(x: f32, y: f32, w: f32, h: f32, depth: f32) M44 {
+        const t = M44.translation(.{.x = x+1, .y = y+1, .z = 0});
+        const s = M44.scaling_matrix(.{.x = map_range_to_range(0, 2, 0, w), .y = map_range_to_range(0, 2, 0, h), .z = map_range_to_range(0, 1, 0, depth)});
+        return s.multiply(t);
+    }
+
+    // returns a matrix which maps the cube [-1,1]*[-1,1]*[0,1] onto the screen cube [x,x+w]*[y,y+h]*[0,d]
     pub fn viewport(x: f32, y: f32, w: f32, h: f32, depth: f32) M44 {
         var matrix = M44.identity();
         
@@ -1573,7 +1596,7 @@ const imgui_win32_impl = struct {
         // In DearImgui 0, 0 is the top left corner but on this renderer is bottom left, so I make the projection matrix with "top" and "bottom"
         // inverted so that they every point trasformed by it has its y coordinate inverted
         const projection_matrix = M44.orthographic_projection_2(pos.x, pos.x + dimensions.x, pos.y, pos.y + dimensions.y, 0, 10);
-        const viewport_matrix = M44.viewport(pos.x, pos.y, dimensions.x, dimensions.y, 255);
+        const viewport_matrix = M44.viewport_2(pos.x, pos.y, dimensions.x, dimensions.y, 255);
         if (draw_data.*.CmdLists.Data == null) return;
         const command_lists = imgui.im_vector_from(draw_data.*.CmdLists);
         const command_lists_count: usize = @intCast(draw_data.*.CmdListsCount);
@@ -2003,7 +2026,7 @@ pub fn main() !void {
                 state.view_matrix = M44.lookat_right_handed(state.camera.position, state.camera.looking_at, state.camera.up);
                 const aspect_ratio = @as(f32, @floatFromInt(client_width)) / @as(f32, @floatFromInt(client_height));
                 state.projection_matrix = M44.perspective_projection_2(100, aspect_ratio, 0.1, 10);
-                state.viewport_matrix = M44.viewport_i32(0, 0, client_width, client_height, 255);
+                state.viewport_matrix = M44.viewport_i32_2(0, 0, client_width, client_height, 255);
 
                 // if (state.keys['V']) state.viewport_matrix = M44.identity();
                 if (state.keys['P']) bilinear = !bilinear;
@@ -2312,7 +2335,7 @@ const Plane = struct {
 
     pub fn from(point: Vector3f, normal: Vector3f) Plane {
         const d = - ((normal.x*point.x)+(normal.y*point.y)+(normal.z*point.z));
-        return Plane { .a = normal.a, .b = normal.b, .c = normal.c, .d = d };
+        return Plane { .a = normal.x, .b = normal.y, .c = normal.z, .d = d };
     }
 
     /// https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
@@ -2511,7 +2534,7 @@ fn GraphicsPipeline(
         const Self = @This();
         fn render(pixel_buffer: Buffer2D(final_color_type), context: context_type, vertex_buffer: []const vertex_type, face_count: usize, requirements: pipeline_configuration.Requirements()) void {
             
-            var frustum: Frustum = if (pipeline_configuration.do_triangle_clipping) Plane.extract_frustum_from_projection(requirements.projection_matrix) else undefined;
+            // var frustum: Frustum = if (pipeline_configuration.do_triangle_clipping) Plane.extract_frustum_from_projection(requirements.projection_matrix) else undefined;
             var face_index: usize = 0;
             label_outer: while (face_index < face_count) : (face_index += 1) {
                 
@@ -2525,9 +2548,6 @@ fn GraphicsPipeline(
                 var tri: [vertex_count]Vector3f = undefined;
                 var w_used_for_perspective_correction: [vertex_count]f32 = undefined;
                 var depth: [vertex_count]f32 = undefined;
-
-                const possible_index = enum (usize) { first = 0, second = 1, third = 2, none = 3 };
-                var clipped = [3]possible_index { .none, .none, .none };
                 var clipped_count: usize = 0;
 
                 // pass all 3 vertices of this face through the vertex shader
@@ -2544,11 +2564,20 @@ fn GraphicsPipeline(
                     // clip space, which is a homogeneous coordinate system. The `w` will be used for perspective correction.
                     clip_space_positions[i] = vertex_shader(context, vertex_data, &invariants[i]);
                     
+                    // NOTE This is quivalent to checking whether a point is inside the NDC cube after perspective division
+                    // 
+                    //     if (ndc.x > 1 or ndc.x < -1 or ndc.y > 1 or ndc.y < -1 or ndc.z > 1 or ndc.z < 0) {
+                    // 
+                    // if (clip_space_positions.x > clip_space_positions.w or clip_space_positions.x < -clip_space_positions.w or
+                    //     clip_space_positions.y > clip_space_positions.w or clip_space_positions.y < -clip_space_positions.w or
+                    //     clip_space_positions.z > clip_space_positions.w or clip_space_positions.z < 0) {
+                    // 
+                    // }
+
                     const ndc = clip_space_positions[i].perspective_division();
                     ndcs[i] = ndc;
                     if (ndc.x > 1 or ndc.x < -1 or ndc.y > 1 or ndc.y < -1 or ndc.z > 1 or ndc.z < 0) {
                         if (pipeline_configuration.do_triangle_clipping) {
-                            clipped[clipped_count] = @enumFromInt(i);
                             clipped_count += 1;
                             if (clipped_count == 3) continue :label_outer;
                         }
@@ -2566,12 +2595,11 @@ fn GraphicsPipeline(
                         if (pipeline_configuration.use_triangle_2) rasterizers.rasterize_2(pixel_buffer, context, requirements, tri[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*)
                         else rasterizers.rasterize_1(pixel_buffer, context, requirements, tri[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*);
                         
-                        line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[0].x), .y = @intFromFloat(tri[0].y) }, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
-                        line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
-                        line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, Vector2i { .x = @intFromFloat(tri[0].x), .y = @intFromFloat(tri[0].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
+                        // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[0].x), .y = @intFromFloat(tri[0].y) }, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
+                        // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
+                        // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, Vector2i { .x = @intFromFloat(tri[0].x), .y = @intFromFloat(tri[0].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
                     }
                     else {
-                        gg.triangle(ndcs[0..3].*);
                         const TriangleQueue = std.DoublyLinkedList([3]Vector3f);
                         var data: std.ArrayList(TriangleQueue.Node) = std.ArrayList(TriangleQueue.Node).initCapacity(std.heap.c_allocator, 30) catch unreachable;
                         defer data.clearAndFree();
@@ -2579,50 +2607,64 @@ fn GraphicsPipeline(
                         var queue = TriangleQueue {};
                         data.appendAssumeCapacity(.{.data=ndcs[0..3].*});
                         queue.append(&data.items[0]);
+                        const left_bottom_near = Vector3f {.x = -1, .y = -1, .z = 0};
+                        const right_top_far = Vector3f {.x = 1, .y = 1, .z = 1};
+                        const frustum = comptime Frustum {
+                            .left = Plane.from(left_bottom_near, Vector3f { .x = 1, .y = 0, .z = 0}),
+                            .right = Plane.from(right_top_far, Vector3f { .x = -1, .y = 0, .z = 0}),
+                            .bottom = Plane.from(left_bottom_near, Vector3f { .x = 0, .y = 1, .z = 0}),
+                            .top = Plane.from(right_top_far, Vector3f { .x = 0, .y = -1, .z = 0}),
+                            .near = Plane.from(left_bottom_near, Vector3f { .x = 0, .y = 0, .z = 1}),
+                            .far = Plane.from(right_top_far, Vector3f { .x = 0, .y = 0, .z = -1}),
+                        };
                         inline for (@typeInfo(Frustum).Struct.fields) |field| {
                             const p: Plane = @field(frustum, field.name);
+                            
                             while (final.popFirst()) |t| {
                                 queue.append(t);
                             }
+                            
                             while (queue.popFirst()) |t| {
-                                var new_tri_count: usize = 0;
-                                var new_tri: [2][3]Vector3f = undefined;
-                                {
-                                    var out: usize = 0;
-                                    var out_index: [3]usize = undefined;
-                                    inline for (0..3) |i| {
-                                        if (p.classify_point(t.data[i]) != .positive) {
-                                            out_index[out] = i;
-                                            out += 1;
-                                        }
-                                    }
-                                    if (out == 1) {
-                                        const i = out_index[0];
-                                        const intersection_a = p.intersection(t.data[i], t.data[(i+1)%3]);
-                                        const intersection_b = p.intersection(t.data[i], t.data[(i+2)%3]);
-                                        new_tri[new_tri_count] = [3]Vector3f{
-                                            intersection_a, intersection_b, t.data[(i+1)%3]
-                                        };
-                                        new_tri[new_tri_count+1] = [3]Vector3f{
-                                            t.data[(i+1)%3], t.data[(i+2)%3], intersection_b
-                                        };
-                                        new_tri_count += 2;
-                                    }
-                                    else if (out == 2) {
-                                        const index1 = out_index[0];
-                                        const index2 = out_index[1];
-                                        const index_ok = 3 - index1 - index2;
-                                        const intersection_a = p.intersection(t.data[index1], t.data[index_ok]);
-                                        const intersection_b = p.intersection(t.data[index2], t.data[index_ok]);
-                                        new_tri[new_tri_count] = [3]Vector3f{
-                                            intersection_a, intersection_b, t.data[index_ok]
-                                        };
-                                        new_tri_count += 1;
-                                    }
-                                    else {
-                                        final.append(t);
+
+                                var out: usize = 0;
+                                var out_index: [3]usize = undefined;
+                                inline for (0..3) |i| {
+                                    // if (p.classify_point(t.data[i]) != .positive) {
+                                    if (p.classify_point(t.data[i]) == .negative) {
+                                        out_index[out] = i;
+                                        out += 1;
                                     }
                                 }
+
+                                var new_tri_count: usize = 0;
+                                var new_tri: [2][3]Vector3f = undefined;
+                                if (out == 1) {
+                                    const i = out_index[0];
+                                    const intersection_a = p.intersection(t.data[i], t.data[(i+1)%3]);
+                                    const intersection_b = p.intersection(t.data[i], t.data[(i+2)%3]);
+                                    new_tri[new_tri_count] = [3]Vector3f{
+                                        intersection_a, intersection_b, t.data[(i+1)%3]
+                                    };
+                                    new_tri[new_tri_count+1] = [3]Vector3f{
+                                        t.data[(i+1)%3], t.data[(i+2)%3], intersection_b
+                                    };
+                                    new_tri_count += 2;
+                                }
+                                else if (out == 2) {
+                                    const index1 = out_index[0];
+                                    const index2 = out_index[1];
+                                    const index_ok = 3 - index1 - index2;
+                                    const intersection_a = p.intersection(t.data[index1], t.data[index_ok]);
+                                    const intersection_b = p.intersection(t.data[index2], t.data[index_ok]);
+                                    new_tri[new_tri_count] = [3]Vector3f{
+                                        intersection_a, intersection_b, t.data[index_ok]
+                                    };
+                                    new_tri_count += 1;
+                                }
+                                else {
+                                    final.append(t);
+                                }
+
                                 if (new_tri_count >= 1) {
                                     const ptr = data.addOneAssumeCapacity();
                                     ptr.* = .{.data = new_tri[0] };
@@ -2701,13 +2743,13 @@ fn GraphicsPipeline(
                             const invariants_c = if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants[0..3].*, w_used_for_perspective_correction[0..3].*, bar_c.x, bar_c.y, bar_c.z)
                                 else interpolate(invariant_type, invariants[0..3].*, bar_c.x, bar_c.y, bar_c.z);
 
-                            gg.triangle(.{ t.data[0], t.data[1], t.data[2] });
+                            // gg.triangle(.{ t.data[0], t.data[1], t.data[2] });
                             if (pipeline_configuration.use_triangle_2) rasterizers.rasterize_2(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c })
                             else rasterizers.rasterize_1(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c });
 
-                            line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
-                            line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, Vector2i { .x = @intFromFloat(screen_space_3.x), .y = @intFromFloat(screen_space_3.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
-                            line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_3.x), .y = @intFromFloat(screen_space_3.y) }, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
+                            // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
+                            // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, Vector2i { .x = @intFromFloat(screen_space_3.x), .y = @intFromFloat(screen_space_3.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
+                            // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_3.x), .y = @intFromFloat(screen_space_3.y) }, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
                         }
                     }
                 }
@@ -2914,6 +2956,9 @@ fn GraphicsPipeline(
                 }
             }
             fn rasterize_1(pixel_buffer: Buffer2D(final_color_type), context: context_type, requirements: pipeline_configuration.Requirements(), tri: [3]Vector3f, depth: [3]f32, w_used_for_perspective_correction: [3]f32, invariants: [3]invariant_type) void {
+                
+                gg.triangle(tri);
+
                 // top = y = window height, bottom = y = 0
                 const a = &tri[0];
                 const b = &tri[1];
@@ -2924,7 +2969,6 @@ fn GraphicsPipeline(
                 const ac = c.substract(a.*);
                 const ca = a.substract(c.*);
                 const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
-
 
                 // calculate the bounding of the triangle's projection on the screen
                 var left: usize = @intFromFloat(@min(a.x, @min(b.x, c.x)));
@@ -3353,7 +3397,7 @@ const gouraud_renderer = struct {
 
 };
 
-const use_triangle_2 = true;
+const use_triangle_2 = false;
 
 // helper for rendering in geogebra (sometimes I use it to debug and stuff)
 // https://www.geogebra.org/3d?lang=en
