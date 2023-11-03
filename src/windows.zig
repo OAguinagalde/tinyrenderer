@@ -414,6 +414,8 @@ const M44 = struct {
     /// The up direction is in the +Y direction.
     pub fn lookat_right_handed(camera_location: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
         
+        if (true) return lookat_right_handed_unrolled(camera_location, point_looked_at, up);
+
         // just in case, normalize the up direction
         const normalized_up = up.normalized();
         
@@ -453,6 +455,32 @@ const M44 = struct {
         // 
         return change_of_basis_matrix.multiply(M44.translation(camera_location.scale(-1)));
     }
+
+    // same as `lookat_right_handed` but with the math unrolled
+    fn lookat_right_handed_unrolled(c: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
+        const normalized_up = up.normalized();
+        const z: Vector3f = point_looked_at.substract(c).normalized(); // z axis
+        const x: Vector3f = normalized_up.cross_product(z).scale(-1).normalized(); // x axis
+        const y: Vector3f = z.cross_product(x).scale(-1).normalized(); // y axis
+        var matrix: M44 = undefined;
+        matrix.data[0] = x.x;
+        matrix.data[4] = x.y;
+        matrix.data[8] = x.z;
+        matrix.data[1] = y.x;
+        matrix.data[5] = y.y;
+        matrix.data[9] = y.z;
+        matrix.data[2] = z.x;
+        matrix.data[6] = z.y;
+        matrix.data[10] = z.z;
+        matrix.data[3] = 0;
+        matrix.data[7] = 0;
+        matrix.data[11] = 0;
+        matrix.data[15] = 1;
+        matrix.data[12] = (x.x * -c.x) + (x.y * -c.y) + (x.z * -c.z);
+        matrix.data[13] = (y.x * -c.x) + (y.y * -c.y) + (y.z * -c.z);
+        matrix.data[14] = (z.x * -c.x) + (z.y * -c.y) + (z.z * -c.z);
+        return matrix;
+    }
     
     // constructs an orthographic projection matrix, which
     // maps the cube [left..right][bottom..top][near..far] to the cube [-1..1][-1..1][0..1] cube
@@ -468,7 +496,8 @@ const M44 = struct {
     //    (-1  , -1    , 0   )         !
     //               
     // https://www.youtube.com/watch?v=U0_ONQQ5ZNM
-    pub fn orthographic_projection_2(left: f32, right: f32, top: f32, bottom: f32, near: f32, far: f32) M44 {
+    pub fn orthographic_projection(left: f32, right: f32, top: f32, bottom: f32, near: f32, far: f32) M44 {
+        if (true) return orthographic_projection_unrolled(left, right, top, bottom, near, far);
         var scale_matrix = M44.identity();
         scale_matrix.data[0] = map_range_to_range(left, right, -1, 1);
         scale_matrix.data[5] = map_range_to_range(bottom, top, -1, 1);
@@ -477,6 +506,18 @@ const M44 = struct {
         // translate the world so that (0, 0, 0) is the center of near plane of the cube that captures the orthogonal projection
         const translate_matrix = M44.translation(Vector3f { .x = - ((right+left)/2), .y = - ((top+bottom)/2), .z = - near });
         return scale_matrix.multiply(translate_matrix);
+    }
+    
+    // same as `orthographic_projection` but with the math unrolled
+    pub fn orthographic_projection_unrolled(l: f32, r: f32, t: f32, b: f32, n: f32, f: f32) M44 {
+        var matrix = M44.identity();
+        matrix.data[0] = 2/(r-l);
+        matrix.data[5] = 2/(t-b);
+        matrix.data[10] = 1/(f-n);
+        matrix.data[12] = -(r+l)/(r-l);
+        matrix.data[13] = -(t+b)/(t-b);
+        matrix.data[14] = -n/(f-n);
+        return matrix;
     }
 
     test "scaling of z is not what I expect..." {
@@ -491,7 +532,8 @@ const M44 = struct {
     }
 
     // https://www.youtube.com/watch?v=U0_ONQQ5ZNM
-    pub fn perspective_projection_2(fov_degrees: f32, aspect_ratio: f32, near: f32, far: f32) M44 {
+    pub fn perspective_projection(fov_degrees: f32, aspect_ratio: f32, near: f32, far: f32) M44 {
+        if (true) return perspective_projection_unrolled(fov_degrees, aspect_ratio, near, far);
         const fov_radians = (@as(f32,std.math.pi)/180) * fov_degrees;
         const top = near * std.math.tan(fov_radians / 2.0);
         const right = near * aspect_ratio * std.math.tan(fov_radians / 2.0); 
@@ -506,8 +548,23 @@ const M44 = struct {
         perspective.data[11] = 1;
         perspective.data[15] = 0;
 
-        const ortho_projection = orthographic_projection_2(left, right, top, bottom, near, far);
+        const ortho_projection = orthographic_projection(left, right, top, bottom, near, far);
         return ortho_projection.multiply(perspective);
+    }
+
+    // same as `perspective_projection_2` but with the math unrolled
+    pub fn perspective_projection_unrolled(fov_degrees: f32, aspect_ratio: f32, n: f32, f: f32) M44 {
+        const fov_radians = (@as(f32,std.math.pi)/180) * fov_degrees;
+        const t = n * std.math.tan(fov_radians / 2.0);
+        const r = n * aspect_ratio * std.math.tan(fov_radians / 2.0); 
+        var matrix = M44.identity();
+        matrix.data[0] = n/r;
+        matrix.data[5] = n/t;
+        matrix.data[10] = f/(f-n);
+        matrix.data[11] = 1;
+        matrix.data[14] = -(f*n)/(f-n);
+        matrix.data[15] = 0;
+        return matrix;
     }
     
     /// Builds a "viewport" (as its called in opengl) matrix, a matrix that
@@ -751,12 +808,14 @@ fn Buffer2D(comptime T: type) type {
 
 fn texture_point_sample(comptime texture_pixel_type: type, comptime uv_is_01: bool, texture_data: []texture_pixel_type, texture_width: usize, texture_height: usize, uv: Vector2f) texture_pixel_type {
     // if (uv.x < 0.02 or uv.x > 0.98 or uv.y < 0.02 or uv.y > 0.98) return texture_pixel_type { .r = 0, .g = 0, .b = 0, .a = 255 };
+    if (uv.x < 0 or uv.y < 0) std.log.debug("uv.x {d:.9}, uv.y {d:.9}", .{uv.x, uv.y});
     const tx = if (uv_is_01) uv.x * @as(f32, @floatFromInt(texture_width)) else uv.x;
     const ty = if (uv_is_01) uv.y * @as(f32, @floatFromInt(texture_height)) else uv.y;
     // if (tx - @floor(tx) < 0.03 or tx - @floor(tx) > 0.97 or ty - @floor(ty) < 0.03 or ty - @floor(ty) > 0.97) return texture_pixel_type { .r = 90, .g = 90, .b = 90, .a = 255 };
     // if (tx - @floor(tx) > 0.45 and tx - @floor(tx) < 0.55 and ty - @floor(ty) > 0.45 and ty - @floor(ty) < 0.55) return texture_pixel_type { .r = 0, .g = 0, .b = 0, .a = 255 };
-    const texel_x = @as(usize, @intFromFloat(@floor(tx)));
-    const texel_y = @as(usize, @intFromFloat(@floor(ty)));
+    if (tx < 0 or ty < 0) std.log.debug("tx {d:.9}, ty {d:.9}", .{tx, ty});
+    const texel_x = @as(usize, @intFromFloat(tx));
+    const texel_y = @as(usize, @intFromFloat(ty));
     const x = std.math.clamp(texel_x, 0, texture_width-1);
     const y = std.math.clamp(texel_y, 0, texture_height-1);
     return texture_data[x + texture_width*y];
@@ -1597,7 +1656,7 @@ const imgui_win32_impl = struct {
         const dimensions = Vector2f { .x = draw_data.*.DisplaySize.x, .y = draw_data.*.DisplaySize.y };
         // In DearImgui 0, 0 is the top left corner but on this renderer is bottom left, so I make the projection matrix with "top" and "bottom"
         // inverted so that they every point trasformed by it has its y coordinate inverted
-        const projection_matrix = M44.orthographic_projection_2(pos.x, pos.x + dimensions.x, pos.y, pos.y + dimensions.y, 0, 10);
+        const projection_matrix = M44.orthographic_projection(pos.x, pos.x + dimensions.x, pos.y, pos.y + dimensions.y, 0, 10);
         const viewport_matrix = M44.viewport_2(pos.x, pos.y, dimensions.x, dimensions.y, 255);
         if (draw_data.*.CmdLists.Data == null) return;
         const command_lists = imgui.im_vector_from(draw_data.*.CmdLists);
@@ -1625,7 +1684,7 @@ const imgui_win32_impl = struct {
                     .index_buffer = index_buffer.used_slice()[command.IdxOffset..],
                     .scissor_rect = clip,
                 };
-                if (false) imgui_renderer.Pipeline.render(pixel_buffer, render_context, vertex_data, command.ElemCount / 3, render_requirements);
+                if (true) imgui_renderer.Pipeline.render(pixel_buffer, render_context, vertex_data, command.ElemCount / 3, render_requirements);
             }
         }
     }
@@ -2109,7 +2168,7 @@ pub fn main() !void {
                 
                 // Clear the screen and the zbuffer
                 for (state.pixel_buffer.data) |*pixel| { pixel.* = win32.rgb(100, 149, 237); }
-                for (state.depth_buffer.data) |*value| { value.* = -999999; }
+                for (state.depth_buffer.data) |*value| { value.* = 999999; }
 
                 if (state.keys['T']) state.time += ms;
 
@@ -2138,7 +2197,7 @@ pub fn main() !void {
                 state.camera.looking_at = state.camera.position.add(state.camera.direction);                
                 state.view_matrix = M44.lookat_right_handed(state.camera.position, state.camera.looking_at, state.camera.up);
                 const aspect_ratio = @as(f32, @floatFromInt(client_width)) / @as(f32, @floatFromInt(client_height));
-                state.projection_matrix = M44.perspective_projection_2(100, aspect_ratio, 0.1, 10);
+                state.projection_matrix = M44.perspective_projection(60, aspect_ratio, 0.1, 5);
                 state.viewport_matrix = M44.viewport_i32_2(0, 0, client_width, client_height, 255);
 
                 // if (state.keys['V']) state.viewport_matrix = M44.identity();
@@ -2172,7 +2231,7 @@ pub fn main() !void {
                         .texture_height = state.texture.rgb.height(),
                         .texture_width = state.texture.rgb.width,
                         .view_model_matrix = state.view_matrix.multiply(
-                            M44.translation(Vector3f { .x = 0, .y = 0, .z = 2 }).multiply(M44.scale(0.8))
+                            M44.translation(Vector3f { .x = 0, .y = 0, .z = 4 }).multiply(M44.scaling_matrix(Vector3f.from(0.5, 0.5, -0.5)))
                         ),
                     };
                     var i: usize = 0;
@@ -2187,17 +2246,17 @@ pub fn main() !void {
                         .depth_buffer = state.depth_buffer,
                         .viewport_matrix = state.viewport_matrix,
                     };
-                    if (false) gouraud_renderer.Pipeline.render(state.pixel_buffer, render_context, vertex_buffer.items, @divExact(vertex_buffer.items.len, 3), render_requirements);
+                    gouraud_renderer.Pipeline.render(state.pixel_buffer, render_context, vertex_buffer.items, @divExact(vertex_buffer.items.len, 3), render_requirements);
                 }
 
                 if (true) line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
                 if (true) line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
                 // TODO there is part of the pixel buffer being rendered below the status bar from windows
                 if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 }, "ms {d: <9.2}", .{ms});
-                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-22 }, "camera {d:.4}, {d:.4}, {d:.4}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z});
+                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-22 }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z});
                 if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*2) }, "{d:.3}, {d:.3}, {d:.3}", .{real_right.x, real_right.y, real_right.z});
-                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*3) }, "d mouse {d:.4}, {d:.4}", .{mouse_dx, mouse_dy});
-                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*4) }, "direction {d:.4}, {d:.4}, {d:.4}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z});
+                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*3) }, "d mouse {d:.8}, {d:.8}", .{mouse_dx, mouse_dy});
+                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*4) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z});
                 if (true) {
                     const texture = @import("font_embedded.zig");
                     // const c_red = RGBA { .r = 255, .g = 0, .b = 0, .a = 255 };
@@ -2215,36 +2274,6 @@ pub fn main() !void {
                     //     const width: usize = 4;
                     //     const height: usize = 4;
                     // };
-                    if (false) {
-                        const texture_data = texture.data;
-                        const w: f32 = @floatFromInt(texture.width);
-                        const h: f32 = @floatFromInt(texture.height);
-                        var quad_context = quad_renderer(RGBA).Context {
-                            .texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&texture_data)), texture.width),
-                            .texture_width = texture.width,
-                            .texture_height = texture.height,
-                            .projection_matrix =
-                                state.projection_matrix.multiply(
-                                    state.view_matrix.multiply(
-                                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
-                                    )
-                                ),
-                        };
-                        const vertex_buffer = [_]quad_renderer(RGBA).Vertex{
-                            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
-                            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
-                            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
-                            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
-                        };
-                        const index_buffer = [_]u16{0,1,2,0,2,3};
-                        const requirements = quad_renderer(RGBA).pipeline_configuration.Requirements() {
-                            .depth_buffer = state.depth_buffer,
-                            .viewport_matrix = state.viewport_matrix,
-                            .index_buffer = &index_buffer,
-                            .projection_matrix = state.projection_matrix,
-                        };
-                        quad_renderer(RGBA).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
-                    }
                     if (true) {
                         // const texture_data = state.texture.rgba.data;
                         const w: f32 = @floatFromInt(state.texture.rgb.width);
@@ -2271,10 +2300,42 @@ pub fn main() !void {
                             .depth_buffer = state.depth_buffer,
                             .viewport_matrix = state.viewport_matrix,
                             .index_buffer = &index_buffer,
-                            .projection_matrix = state.projection_matrix,
                         };
-                        quad_renderer(RGB).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/6, requirements);
+                        quad_renderer(RGB).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
                     }
+                    if (true) {
+                        const texture_data = texture.data;
+                        const w: f32 = @floatFromInt(texture.width);
+                        const h: f32 = @floatFromInt(texture.height);
+                        var quad_context = quad_renderer(RGBA).Context {
+                            .texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&texture_data)), texture.width),
+                            .texture_width = texture.width,
+                            .texture_height = texture.height,
+                            .projection_matrix =
+                                state.projection_matrix.multiply(
+                                    state.view_matrix.multiply(
+                                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
+                                    )
+                                ),
+                        };
+                        const vertex_buffer = [_]quad_renderer(RGBA).Vertex{
+                            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
+                            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
+                            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
+                            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
+                        };
+                        const index_buffer = [_]u16{0,1,2,0,2,3};
+                        const requirements = quad_renderer(RGBA).pipeline_configuration.Requirements() {
+                            .depth_buffer = state.depth_buffer,
+                            .viewport_matrix = state.viewport_matrix,
+                            .index_buffer = &index_buffer,
+                        };
+                        quad_renderer(RGBA).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
+                    }
+                    if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*5) }, "clipped triangle:", .{});
+                    if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*6) }, "{d:.8}, {d:.8}, {d:.8}", .{global_clipped_triangle[0].x, global_clipped_triangle[0].y, global_clipped_triangle[0].z});
+                    if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*7) }, "{d:.8}, {d:.8}, {d:.8}", .{global_clipped_triangle[1].x, global_clipped_triangle[1].y, global_clipped_triangle[1].z});
+                    if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*8) }, "{d:.8}, {d:.8}, {d:.8}", .{global_clipped_triangle[2].x, global_clipped_triangle[2].y, global_clipped_triangle[2].z});
                 }
 
                 // imgui.c.igShowDemoWindow(&open);
@@ -2383,7 +2444,7 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(win32.RGBA),
         .texture = texture,
         .texture_width = texture.width,
         .texture_height = texture.height(),
-        .projection_matrix = M44.orthographic_projection_2(0, @floatFromInt(state.w), @floatFromInt(state.h), 0, 0, 10)
+        .projection_matrix = M44.orthographic_projection(0, @floatFromInt(state.w), @floatFromInt(state.h), 0, 0, 10)
     };
     var text_buffer: [1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&text_buffer);
@@ -2610,15 +2671,15 @@ const GraphicsPipelineConfiguration = struct {
                 .alignment = @alignOf(Vector4f)
             }
         };
-        if (self.do_triangle_clipping) fields = fields ++ [_]std.builtin.Type.StructField {
-                std.builtin.Type.StructField {
-                .default_value = null,
-                .is_comptime = false,
-                .name = "projection_matrix",
-                .type = M44,
-                .alignment = @alignOf(M44)
-            }
-        };
+        // if (self.do_triangle_clipping) fields = fields ++ [_]std.builtin.Type.StructField {
+        //         std.builtin.Type.StructField {
+        //         .default_value = null,
+        //         .is_comptime = false,
+        //         .name = "projection_matrix",
+        //         .type = M44,
+        //         .alignment = @alignOf(M44)
+        //     }
+        // };
         // TODO what exactly should I do with declarations?
         // according to the compiler, when I put any declaration whatsoever I ger `error: reified structs must have no decls`
         // not sure what that means
@@ -2636,7 +2697,7 @@ const GraphicsPipelineConfiguration = struct {
         return @Type(requirements);
     }
 };
-
+var global_clipped_triangle: [3]Vector3f = undefined;
 fn GraphicsPipeline(
     comptime final_color_type: type,
     comptime context_type: type,
@@ -2678,7 +2739,6 @@ fn GraphicsPipeline(
                     // As far as I know, in your standard opengl vertex shader, the returned position is usually in
                     // clip space, which is a homogeneous coordinate system. The `w` will be used for perspective correction.
                     clip_space_positions[i] = vertex_shader(context, vertex_data, &invariants[i]);
-                    
                     // NOTE This is quivalent to checking whether a point is inside the NDC cube after perspective division
                     // 
                     //     if (ndc.x > 1 or ndc.x < -1 or ndc.y > 1 or ndc.y < -1 or ndc.z > 1 or ndc.z < 0) {
@@ -2716,155 +2776,119 @@ fn GraphicsPipeline(
                     else {
                         
                         trace("clipping", .{});
+                        trace("clip space", .{});
+                        trace_triangle_4(clip_space_positions[0..3].*);
+                        trace("ndc", .{});
                         trace_triangle(ndcs[0..3].*);
+                        trace_mat4(context.projection_matrix);
 
-                        const VertexList = std.DoublyLinkedList(Vector3f);
-                        var vertex_data = std.ArrayList(VertexList.Node).initCapacity(std.heap.c_allocator, 12) catch unreachable;
-                        defer vertex_data.clearAndFree();
-                        vertex_data.appendAssumeCapacity(.{.data=ndcs[0]});
-                        vertex_data.appendAssumeCapacity(.{.data=ndcs[1]});
-                        vertex_data.appendAssumeCapacity(.{.data=ndcs[2]});
+                        global_clipped_triangle = ndcs[0..3].*;
 
-                        var vertex_list = VertexList {};
-                        vertex_list.append(&vertex_data.items[0]);
-                        vertex_list.append(&vertex_data.items[1]);
-                        vertex_list.append(&vertex_data.items[2]);
-                        var temp_vertex_list = VertexList {};
-
-
-                        const left_bottom_near = Vector3f {.x = -1, .y = -1, .z = 0};
-                        const right_top_far = Vector3f {.x = 1, .y = 1, .z = 1};
+                        const left_bottom_near = comptime Vector3f.from(-1,-1,0);
+                        const right_top_far = comptime Vector3f.from(1,1,1);
                         const frustum = comptime Frustum {
-                            .left = Plane.from(left_bottom_near, Vector3f { .x = 1, .y = 0, .z = 0}),
-                            .right = Plane.from(right_top_far, Vector3f { .x = -1, .y = 0, .z = 0}),
-                            .bottom = Plane.from(left_bottom_near, Vector3f { .x = 0, .y = 1, .z = 0}),
-                            .top = Plane.from(right_top_far, Vector3f { .x = 0, .y = -1, .z = 0}),
-                            .near = Plane.from(left_bottom_near, Vector3f { .x = 0, .y = 0, .z = 1}),
-                            .far = Plane.from(right_top_far, Vector3f { .x = 0, .y = 0, .z = -1}),
+                            .left = Plane.from(left_bottom_near, Vector3f.from(1,0,0)),
+                            .right = Plane.from(right_top_far, Vector3f.from(-1,0,0)),
+                            .bottom = Plane.from(left_bottom_near, Vector3f.from(0,1,0)),
+                            .top = Plane.from(right_top_far, Vector3f.from(0,-1,0)),
+                            .near = Plane.from(left_bottom_near, Vector3f.from(0,0,1)),
+                            .far = Plane.from(right_top_far, Vector3f.from(0,0,-1) ),
                         };
+
+                        const VertexList = struct {
+                            const VertexLinkedList = std.DoublyLinkedList(Vector3f);
+                            data: std.ArrayList(VertexLinkedList.Node),
+                            list: VertexLinkedList,
+                            fn init(allocator: std.mem.Allocator) @This() {
+                                return .{
+                                    .data = std.ArrayList(VertexLinkedList.Node).initCapacity(allocator, 15) catch unreachable,
+                                    .list = VertexLinkedList {}
+                                };
+                            }
+                            fn add(self: *@This(), vertex: Vector3f) void {
+                                const ptr = self.data.addOneAssumeCapacity();
+                                ptr.* = .{ .data = vertex };
+                                self.list.append(ptr);
+                            }
+                            fn clear(self: *@This()) void {
+                                self.list = VertexLinkedList {};
+                                self.data.clearRetainingCapacity();
+                            }
+                            fn free(self: *@This()) void {
+                                self.data.clearAndFree();
+                            }
+                            fn first(self: @This()) ?*VertexLinkedList.Node {
+                                return self.list.first;
+                            }
+                            fn last(self: @This()) ?*VertexLinkedList.Node {
+                                return self.list.last;
+                            }
+                            fn pop_first(self: *@This()) Vector3f {
+                                return self.list.popFirst().?.data;
+                            }
+                            fn next(self: *@This()) ?Vector3f {
+                                return if (self.list.popFirst()) |n| n.data else null;
+                            }
+                            fn move_to_other(self: *@This(), other: *@This()) void {
+                                while (self.list.popFirst()) |item| {
+                                    other.add(item.data);
+                                }
+                                self.clear();
+                            }
+                        };
+
+                        var vertex_list = VertexList.init(std.heap.c_allocator);
+                        vertex_list.add(ndcs[0]);
+                        vertex_list.add(ndcs[1]);
+                        vertex_list.add(ndcs[2]);
+                        defer vertex_list.free();
+                        var temp_vertex_list = VertexList.init(std.heap.c_allocator);
+                        defer temp_vertex_list.free();
 
                         // for each plane `p`
                         inline for (@typeInfo(Frustum).Struct.fields) |field| {
                             const p: Plane = @field(frustum, field.name);
-                            
+
                             // for each pair of vertices v1, v2
-                            var v1 = vertex_list.last.?;
-                            var v2 = vertex_list.first.?;
+                            var v1 = vertex_list.last().?;
+                            var v2 = vertex_list.first().?;
+                            
+                            // this is basically a `do {} while {}`
                             while (true) {
-                                const v1_inside = (p.classify_point(v1.*.data) != .negative);
-                                const v2_inside = (p.classify_point(v2.*.data) != .negative);
+                                const v1_inside: bool = (p.classify_point(v1.data) != .negative);
+                                const v2_inside: bool = (p.classify_point(v2.data) != .negative);
                                 if (v2_inside != v1_inside) {
-                                    const intersection = p.intersection(v1.data, v2.data);
-                                    const ptr = vertex_data.addOneAssumeCapacity();
-                                    ptr.* = .{.data = intersection };
-                                    temp_vertex_list.append(ptr);
+                                    temp_vertex_list.add(p.intersection(v1.data, v2.data));
                                 }
                                 if (v2_inside) {
-                                    temp_vertex_list.append(v2);
+                                    temp_vertex_list.add(v2.data);
                                 }
 
-                                // break condition
-                                if (v2.next == null) break
-                                // else continue
-                                else {
+                                if (v2 == vertex_list.last().?) break // break condition
+                                else { // continue
                                     v1 = v2;
                                     v2 = v2.next.?;
                                 }
                             }
 
-                            // empty vertex list
-                            while (vertex_list.popFirst()) {}
-                            // update vertex list with new list
-                            while (temp_vertex_list.popFirst()) |t| {
-                                vertex_list.append(t);
-                            }
+                            vertex_list.clear();
+                            temp_vertex_list.move_to_other(&vertex_list);
                         }
 
-                        // all vertices already clipped are inside vertex_list
-
-                        const TriangleQueue = std.DoublyLinkedList([3]Vector3f);
-                        var data: std.ArrayList(TriangleQueue.Node) = std.ArrayList(TriangleQueue.Node).initCapacity(std.heap.c_allocator, 30) catch unreachable;
-                        defer data.clearAndFree();
-                        var final = TriangleQueue {};
-                        var queue = TriangleQueue {};
-                        data.appendAssumeCapacity(.{.data=ndcs[0..3].*});
-                        queue.append(&data.items[0]);
-                        const left_bottom_near = Vector3f {.x = -1, .y = -1, .z = 0};
-                        const right_top_far = Vector3f {.x = 1, .y = 1, .z = 1};
-                        const frustum = comptime Frustum {
-                            .left = Plane.from(left_bottom_near, Vector3f { .x = 1, .y = 0, .z = 0}),
-                            .right = Plane.from(right_top_far, Vector3f { .x = -1, .y = 0, .z = 0}),
-                            .bottom = Plane.from(left_bottom_near, Vector3f { .x = 0, .y = 1, .z = 0}),
-                            .top = Plane.from(right_top_far, Vector3f { .x = 0, .y = -1, .z = 0}),
-                            .near = Plane.from(left_bottom_near, Vector3f { .x = 0, .y = 0, .z = 1}),
-                            .far = Plane.from(right_top_far, Vector3f { .x = 0, .y = 0, .z = -1}),
-                        };
-                        inline for (@typeInfo(Frustum).Struct.fields) |field| {
-                            const p: Plane = @field(frustum, field.name);
-                            
-                            while (final.popFirst()) |t| {
-                                queue.append(t);
+                        if (pipeline_configuration.trace) {
+                            var count: usize = 0;
+                            var n = vertex_list.first();
+                            while (n) |node| {
+                                count += 1 ;
+                                n = node.next;
                             }
-                            
-                            while (queue.popFirst()) |t| {
-
-                                var out: usize = 0;
-                                var out_index: [3]usize = undefined;
-                                inline for (0..3) |i| {
-                                    // if (p.classify_point(t.data[i]) != .positive) {
-                                    if (p.classify_point(t.data[i]) == .negative) {
-                                        out_index[out] = i;
-                                        out += 1;
-                                    }
-                                }
-
-                                var new_tri_count: usize = 0;
-                                var new_tri: [2][3]Vector3f = undefined;
-                                if (out == 1) {
-                                    const i = out_index[0];
-                                    const intersection_a = p.intersection(t.data[i], t.data[(i+1)%3]);
-                                    const intersection_b = p.intersection(t.data[i], t.data[(i+2)%3]);
-                                    new_tri[new_tri_count] = [3]Vector3f{
-                                        intersection_a, intersection_b, t.data[(i+1)%3]
-                                    };
-                                    new_tri[new_tri_count+1] = [3]Vector3f{
-                                        t.data[(i+1)%3], t.data[(i+2)%3], intersection_b
-                                    };
-                                    new_tri_count += 2;
-                                }
-                                else if (out == 2) {
-                                    const index1 = out_index[0];
-                                    const index2 = out_index[1];
-                                    const index_ok = 3 - index1 - index2;
-                                    const intersection_a = p.intersection(t.data[index1], t.data[index_ok]);
-                                    const intersection_b = p.intersection(t.data[index2], t.data[index_ok]);
-                                    new_tri[new_tri_count] = [3]Vector3f{
-                                        intersection_a, intersection_b, t.data[index_ok]
-                                    };
-                                    new_tri_count += 1;
-                                }
-                                else {
-                                    final.append(t);
-                                }
-
-                                if (new_tri_count >= 1) {
-                                    const ptr = data.addOneAssumeCapacity();
-                                    ptr.* = .{.data = new_tri[0] };
-                                    final.append(ptr);
-                                }
-                                if  (new_tri_count >= 2) {
-                                    const ptr = data.addOneAssumeCapacity();
-                                    ptr.* = .{.data = new_tri[1] };
-                                    final.append(ptr);
-                                }
-                            }
+                            trace("clipped to {} vertices ({} triangles)", .{count, count-2});
                         }
 
                         const to_interpolate = struct {
                             depth: f32,
                             w_used_for_perspective_correction: f32,
                         };
-
                         const orig_triangle_data = [3]to_interpolate {
                             .{
                                 .depth = depth[0],
@@ -2880,23 +2904,18 @@ fn GraphicsPipeline(
                             },
                         };
 
-                        if (pipeline_configuration.trace) {
-                            trace("clipped to...", .{});
-                            var count: usize = 0;
-                            var n = final.first;
-                            while (n) |node| {
-                                trace_triangle(node.data);
-                                count += 1 ;
-                                n = node.next;
-                            }
-                            trace("{} sub triangles", .{count});
-                        } 
+                        const vertex_1: Vector3f = vertex_list.pop_first();
+                        const screen_space_1 = requirements.viewport_matrix.apply_to_vec3(vertex_1).perspective_division();
                         
-                        while (final.popFirst()) |t| {
+                        var vertex_2: Vector3f = vertex_list.pop_first();
+                        var vertex_3: Vector3f = vertex_list.pop_first();
+
+                        while (true) { // This is basically a `do {} while {}`
                             
-                            const screen_space_1 = requirements.viewport_matrix.apply_to_vec3(t.data[0]).perspective_division();
-                            const screen_space_2 = requirements.viewport_matrix.apply_to_vec3(t.data[1]).perspective_division();
-                            const screen_space_3 = requirements.viewport_matrix.apply_to_vec3(t.data[2]).perspective_division();
+                            trace_triangle([3]Vector3f{vertex_1, vertex_2, vertex_3});
+                            
+                            const screen_space_2 = requirements.viewport_matrix.apply_to_vec3(vertex_2).perspective_division();
+                            const screen_space_3 = requirements.viewport_matrix.apply_to_vec3(vertex_3).perspective_division();
 
                             var a = screen_space_1;
                             a.z = 0;
@@ -2907,18 +2926,6 @@ fn GraphicsPipeline(
                             const bar_a = barycentric(tri[0..3].*, a);
                             const bar_b = barycentric(tri[0..3].*, b);
                             const bar_c = barycentric(tri[0..3].*, c);
-
-                            // if (bar_a.x < 0 or bar_a.x >= 1) continue;
-                            // if (bar_a.y < 0 or bar_a.y >= 1) continue;
-                            // if (bar_a.z < 0 or bar_a.z >= 1) continue;
-
-                            // if (bar_b.x < 0 or bar_b.x >= 1) continue;
-                            // if (bar_b.y < 0 or bar_b.y >= 1) continue;
-                            // if (bar_b.z < 0 or bar_b.z >= 1) continue;
-                            
-                            // if (bar_c.x < 0 or bar_c.x >= 1) continue;
-                            // if (bar_c.y < 0 or bar_c.y >= 1) continue;
-                            // if (bar_c.z < 0 or bar_c.z >= 1) continue;
 
                             const interpolated_a: to_interpolate = 
                                 if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(to_interpolate, orig_triangle_data, w_used_for_perspective_correction[0..3].*, bar_a.x, bar_a.y, bar_a.z)
@@ -2937,13 +2944,24 @@ fn GraphicsPipeline(
                             const invariants_c = if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(invariant_type, invariants[0..3].*, w_used_for_perspective_correction[0..3].*, bar_c.x, bar_c.y, bar_c.z)
                                 else interpolate(invariant_type, invariants[0..3].*, bar_c.x, bar_c.y, bar_c.z);
 
-                            // gg.triangle(.{ t.data[0], t.data[1], t.data[2] });
+                            // TODO I got two bugs!
+                            // 1. Sometimes I get negative uvs not sure why, it only happens when I do perspective correction tho! (Actually I might be wrong about that and I might be getting it without the correction as well)
+                            // 2. sometimes the NDC coordinates suddenly go from, say, 23, to -134. Usually when I am close to the clipped triangle and rotate the camera until I'm getting more paralel
+                            // meaning that the resulting clipped triangle looks completely out of place. I'm not sure how to go about that
+
                             if (pipeline_configuration.use_triangle_2) rasterizers.rasterize_2(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c })
                             else rasterizers.rasterize_1(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c });
 
                             // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
                             // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, Vector2i { .x = @intFromFloat(screen_space_3.x), .y = @intFromFloat(screen_space_3.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
                             // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_3.x), .y = @intFromFloat(screen_space_3.y) }, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
+
+                            // raster the next triangle? or break if we have already drawn them all
+                            if (vertex_list.next()) |next_vertex| {
+                                vertex_2 = vertex_3;
+                                vertex_3 = next_vertex;
+                            }
+                            else break;
                         }
                     }
                 }
@@ -3047,7 +3065,7 @@ fn GraphicsPipeline(
 
                             if (pipeline_configuration.do_depth_testing) {
                                 const z = depth[0] * w + depth[1] * u + depth[2] * v;
-                                if (requirements.depth_buffer.get(x, y) >= z) continue;
+                                if (requirements.depth_buffer.get(x, y) < z) continue;
                                 requirements.depth_buffer.set(x, y, z);
                             }
 
@@ -3121,7 +3139,7 @@ fn GraphicsPipeline(
 
                             if (pipeline_configuration.do_depth_testing) {
                                 const z = depth[0] * w + depth[1] * u + depth[2] * v;
-                                if (requirements.depth_buffer.get(x, y) >= z) continue;
+                                if (requirements.depth_buffer.get(x, y) < z) continue;
                                 requirements.depth_buffer.set(x, y, z);
                             }
 
@@ -3214,7 +3232,7 @@ fn GraphicsPipeline(
                             // if (pipeline_configuration.do_perspective_correct_interpolation) {}
                             // else {}
                             const z = depth[0] * w + depth[1] * u + depth[2] * v;
-                            if (requirements.depth_buffer.get(x, y) >= z) continue;
+                            if (requirements.depth_buffer.get(x, y) < z) continue;
                             requirements.depth_buffer.set(x, y, z);
                         }
 
@@ -3375,10 +3393,24 @@ fn GraphicsPipeline(
         fn trace_bb(left: usize, right: usize, top: usize, bottom: usize) void {
             trace("T.BB: left {}, right {}, top {}, bottom {}", .{left, right, top, bottom});
         }
+
+        fn trace_triangle_4(t: [3]Vector4f) void {
+            trace("T.A: {d:.8}, {d:.8}, {d:.8}, {d:.8}", .{t[0].x,t[0].y,t[0].z,t[0].w});
+            trace("T.B: {d:.8}, {d:.8}, {d:.8}, {d:.8}", .{t[1].x,t[1].y,t[1].z,t[1].w});
+            trace("T.C: {d:.8}, {d:.8}, {d:.8}, {d:.8}", .{t[2].x,t[2].y,t[2].z,t[2].w});
+        }
+
         fn trace_triangle(t: [3]Vector3f) void {
-            trace("T.A: {d:.4}, {d:.4}, {d:.4}", .{t[0].x,t[0].y,t[0].z});
-            trace("T.B: {d:.4}, {d:.4}, {d:.4}", .{t[1].x,t[1].y,t[1].z});
-            trace("T.C: {d:.4}, {d:.4}, {d:.4}", .{t[2].x,t[2].y,t[2].z});
+            trace("T.A: {d:.8}, {d:.8}, {d:.8}", .{t[0].x,t[0].y,t[0].z});
+            trace("T.B: {d:.8}, {d:.8}, {d:.8}", .{t[1].x,t[1].y,t[1].z});
+            trace("T.C: {d:.8}, {d:.8}, {d:.8}", .{t[2].x,t[2].y,t[2].z});
+        }
+
+        fn trace_mat4(m: M44) void {
+            trace("M {d:.8}, {d:.8}, {d:.8}, {d:.8}", .{m.data[0], m.data[4], m.data[8], m.data[12]});
+            trace("M {d:.8}, {d:.8}, {d:.8}, {d:.8}", .{m.data[1], m.data[5], m.data[9], m.data[13]});
+            trace("M {d:.8}, {d:.8}, {d:.8}, {d:.8}", .{m.data[2], m.data[6], m.data[10], m.data[14]});
+            trace("M {d:.8}, {d:.8}, {d:.8}, {d:.8}", .{m.data[3], m.data[7], m.data[11], m.data[15]});
         }
 
         fn trace(comptime fmt: []const u8, args: anytype) void {
@@ -3416,7 +3448,7 @@ const imgui_renderer = struct {
         .do_depth_testing = false,
         .do_perspective_correct_interpolation = false,
         .do_scissoring = true,
-        .use_triangle_2 = use_triangle_2,
+        .use_triangle_2 = false,
     };
 
     const Pipeline = GraphicsPipeline(
@@ -3472,8 +3504,8 @@ fn quad_renderer(comptime texture_type: type) type {
             .do_depth_testing = true,
             .do_perspective_correct_interpolation = true,
             .do_scissoring = false,
-            .use_triangle_2 = use_triangle_2,
-            .trace = true,
+            .use_triangle_2 = false,
+            .trace = false,
         };
 
         const Pipeline = GraphicsPipeline(
@@ -3495,7 +3527,6 @@ fn quad_renderer(comptime texture_type: type) type {
                         else texture_point_sample(texture_type, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
                     if (texture_type == RGBA) return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a)
                     else return win32.rgba(rgba.r, rgba.g, rgba.b, 255);
-
                 }
             }.fragment_shader,
         );
@@ -3578,7 +3609,7 @@ const gouraud_renderer = struct {
     const pipeline_configuration = GraphicsPipelineConfiguration {
         .blend_with_background = false,
         .use_index_buffer = false,
-        .do_triangle_clipping = false,
+        .do_triangle_clipping = true,
         .do_depth_testing = true,
         .do_perspective_correct_interpolation = true,
         .do_scissoring = false,
@@ -3609,29 +3640,29 @@ const gouraud_renderer = struct {
 
 };
 
-const use_triangle_2 = false;
+// const use_triangle_2 = false;
 
 // helper for rendering in geogebra (sometimes I use it to debug and stuff)
 // https://www.geogebra.org/3d?lang=en
 const gg = struct {
     fn plane(p: Plane) void {
-        std.debug.print("{d:.4}*x + {d:.4}*y + {d:.4}*z + {d:.4} = 0\n", .{p.a, p.b, p.c, p.d});
+        std.debug.print("{d:.8}*x + {d:.8}*y + {d:.8}*z + {d:.8} = 0\n", .{p.a, p.b, p.c, p.d});
     }
     fn triangle(t: [3]Vector3f) void {
-        // std.debug.print("polygon({{point({{{d:.4}, {d:.4}, {d:.4}}}), point({{{d:.4}, {d:.4}, {d:.4}}}), point({{{d:.4}, {d:.4}, {d:.4}}})}})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
-        std.debug.print("({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
+        // std.debug.print("polygon({{point({{{d:.8}, {d:.8}, {d:.8}}}), point({{{d:.8}, {d:.8}, {d:.8}}}), point({{{d:.8}, {d:.8}, {d:.8}}})}})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
+        std.debug.print("({d:.8}, {d:.8}, {d:.8}), ({d:.8}, {d:.8}, {d:.8}), ({d:.8}, {d:.8}, {d:.8})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
     }
     fn triangle4(t: [3]Vector4f) void {
-        // std.debug.print("polygon({{point({{{d:.4}, {d:.4}, {d:.4}}}), point({{{d:.4}, {d:.4}, {d:.4}}}), point({{{d:.4}, {d:.4}, {d:.4}}})}})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
-        std.debug.print("({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
+        // std.debug.print("polygon({{point({{{d:.8}, {d:.8}, {d:.8}}}), point({{{d:.8}, {d:.8}, {d:.8}}}), point({{{d:.8}, {d:.8}, {d:.8}}})}})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
+        std.debug.print("({d:.8}, {d:.8}, {d:.8}), ({d:.8}, {d:.8}, {d:.8}), ({d:.8}, {d:.8}, {d:.8})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
     }
     fn point(p: Vector3f) void {
-        // std.debug.print("point({{{d:.4}, {d:.4}, {d:.4}}})\n", .{p.x, p.y, p.z});
-        std.debug.print("({d:.4}, {d:.4}, {d:.4})\n", .{p.x, p.y, p.z});
+        // std.debug.print("point({{{d:.8}, {d:.8}, {d:.8}}})\n", .{p.x, p.y, p.z});
+        std.debug.print("({d:.8}, {d:.8}, {d:.8})\n", .{p.x, p.y, p.z});
     }
     fn vector(a: Vector3f, b: Vector3f) void {
-        // std.debug.print("point({{{d:.4}, {d:.4}, {d:.4}}})\n", .{p.x, p.y, p.z});
-        std.debug.print("vector(({d:.4}, {d:.4}, {d:.4}), ({d:.4}, {d:.4}, {d:.4}))\n", .{a.x, a.y, a.z, b.x, b.y, b.z});
+        // std.debug.print("point({{{d:.8}, {d:.8}, {d:.8}}})\n", .{p.x, p.y, p.z});
+        std.debug.print("vector(({d:.8}, {d:.8}, {d:.8}), ({d:.8}, {d:.8}, {d:.8}))\n", .{a.x, a.y, a.z, b.x, b.y, b.z});
     }
 };
 
