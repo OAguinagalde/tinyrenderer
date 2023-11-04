@@ -1,646 +1,18 @@
 const std = @import("std");
-const imgui = struct {
-    
-    const c = @cImport({
-        @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", {});
-        @cInclude("cimgui.h");
-    });
-    
-    pub fn ImVector(comptime T: type) type {
-        // Original ImVectors look like this
-        // 
-        //     pub const struct_ImVector_ImDrawIdx = extern struct {
-        //         Size: c_int,
-        //         Capacity: c_int,
-        //         Data: [*c]ImDrawIdx,
-        //     };
-        // 
-        return struct {
-            const Self = @This();
-            
-            used: usize,
-            data: []T,
-            
-            pub fn used_slice(self: Self) []T {
-                return self.data[0..self.used];
-            }
 
-            pub fn from(im_vector: anytype) Self {
-                const size: usize = @intCast(@field(im_vector, "Size"));
-                const capacity: usize = @intCast(@field(im_vector, "Capacity"));
-                const data = @field(im_vector, "Data");
-                const slice: []T = @ptrCast(data[0..capacity]);
-                return Self {
-                    .used = size,
-                    .data = slice
-                };
-            }
-        };
-    }
-
-    fn im_vector_guess_type(comptime im_vector_type: type) type {
-        const info: std.builtin.Type = @typeInfo(im_vector_type);
-        for (info.Struct.fields) |field| {
-            if (std.mem.eql(u8, field.name, "Data")) {
-                const data_type: std.builtin.Type = @typeInfo(field.type);
-                return data_type.Pointer.child;
-            }
-        }
-        @panic("Provided type isn't an ImVector");
-    }
-
-    pub fn im_vector_from(im_vector: anytype) ImVector(im_vector_guess_type(@TypeOf(im_vector))) {
-        return ImVector(im_vector_guess_type(@TypeOf(im_vector))).from(im_vector);
-    }
-};
-
-inline fn float(comptime t: type, v: anytype) t { return @as(t, @floatFromInt(v)); }
-inline fn int(comptime t: type, v: anytype) t { return @as(t, @intFromFloat(v)); }
-
-const win32 = struct {
-    usingnamespace @import("win32").everything;
-    const falsei32: i32 = 0;
-    const call_convention = std.os.windows.WINAPI;
-    
-    comptime { std.debug.assert(@sizeOf(win32.RGBA) == @sizeOf(u32)); }
-
-    /// In windows pixels are stored as BGRA
-    const RGBA = extern struct {
-        b: u8,
-        g: u8,
-        r: u8,
-        /// 255 for solid and 0 for transparent
-        a: u8,
-        fn scale(self: win32.RGBA, factor: f32) win32.RGBA {
-            return win32.RGBA {
-                .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
-                .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
-                .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
-                .a = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.a)) * factor))),
-            };
-        }
-
-        fn blend(c1: win32.RGBA, c2: win32.RGBA) win32.RGBA {
-        const a1: f32 = @as(f32, @floatFromInt(c1.a)) / 255;
-        const result = win32.RGBA {
-            .r = @intFromFloat((@as(f32, @floatFromInt(c1.r))/255*a1 + @as(f32, @floatFromInt(c2.r))/255*(1-a1))*255),
-            .g = @intFromFloat((@as(f32, @floatFromInt(c1.g))/255*a1 + @as(f32, @floatFromInt(c2.g))/255*(1-a1))*255),
-            .b = @intFromFloat((@as(f32, @floatFromInt(c1.b))/255*a1 + @as(f32, @floatFromInt(c2.b))/255*(1-a1))*255),
-            .a = @intFromFloat((@as(f32, @floatFromInt(c1.a))/255*a1 + @as(f32, @floatFromInt(c2.a))/255*(1-a1))*255),
-        };
-        return result;
-    }
-    };
-
-    fn rgb(r: u8, g: u8, b: u8) win32.RGBA {
-        return rgba(r,g,b,255);
-    }
-
-    fn rgba(r: u8, g: u8, b: u8, a: u8) win32.RGBA {
-        return win32.RGBA {
-            .a = a, .r = r, .g = g, .b = b
-        };
-    }
-
-};
-
-const Vector2i = struct {
-    x: i32,
-    y: i32,
-
-    pub fn add(self: Vector2i, other: Vector2i) Vector2i {
-        return Vector2i { .x = self.x + other.x, .y = self.y + other.y };
-    }
-
-    pub fn substract(self: Vector2i, other: Vector2i) Vector2i {
-        return Vector2i { .x = self.x - other.x, .y = self.y - other.y };
-    }
-
-    pub fn scale(self: Vector2i, factor: i32) Vector2i {
-        return Vector2i { .x = self.x * factor, .y = self.y * factor };
-    }
-
-    pub fn dot(self: Vector2i, other: Vector2i) i32 {
-        return self.x * other.x + self.y * other.y;
-    }
-
-    pub fn cross_product(self: Vector2i, other: Vector2i) Vector3f {
-        return Vector3f {
-            .x = 0.0,
-            .y = 0.0,
-            .z = self.x * other.y - self.y * other.x,
-        };
-    }
-
-    pub fn to_vec2f(self: Vector2i) Vector2f {
-        return Vector2f { .x = @intCast(self.x), .y = @intCast(self.y) };
-    }
-};
-
-const Vector2f = struct {
-    x: f32,
-    y: f32,
-
-    pub fn add(self: Vector2f, other: Vector2f) Vector2f {
-        return Vector2f { .x = self.x + other.x, .y = self.y + other.y };
-    }
-
-    pub fn substract(self: Vector2f, other: Vector2f) Vector2f {
-        return Vector2f { .x = self.x - other.x, .y = self.y - other.y };
-    }
-
-    pub fn scale(self: Vector2f, factor: f32) Vector2f {
-        return Vector2f { .x = self.x * factor, .y = self.y * factor };
-    }
-
-    /// dot product (represented by a dot ·) of 2 vectors A and B is a scalar N, sometimes called scalar product
-    pub fn dot(self: Vector2f, other: Vector2f) f32 {
-        return self.x * other.x + self.y * other.y;
-    }
-
-    /// also known as length, magnitude or norm, represented like ||v||
-    pub fn magnitude(self: Vector2f) f32 {
-        return std.math.sqrt(self.x * self.x + self.y * self.y);
-    }
-    
-    pub fn normalized(self: Vector2f) Vector2f {
-        const mag = self.magnitude();
-        return Vector2f { .x = self.x / mag, .y = self.y / mag };
-    }
-
-    pub fn cross_product(self: Vector2f, other: Vector2f) Vector3f {
-        return Vector3f {
-            .x = 0.0,
-            .y = 0.0,
-            .z = self.x * other.y - self.y * other.x,
-        };
-    }
-
-    /// The cross product or vector product (represented by an x) of 2 vectors A and B is another vector C.
-    /// C is exactly perpendicular (90 degrees) to the plane AB, meaning that there has to be a 3rd dimension for the cross product for this to make sense.
-    /// The length of C will be the same as the area of the parallelogram formed by AB.
-    /// This implementation assumes z = 0, meaning that the result will always be of type Vec3 (0, 0, x*v.y-y*v.x).
-    /// For that same reason, the magnitude of the resulting Vec3 will be just the value of the component z
-    pub fn cross_product_magnitude(self: Vector2f, other: Vector2f) f32 {
-        return self.cross_product(other).z;
-    }
-};
-
-const Vector3f = struct {
-    x: f32,
-    y: f32,
-    z: f32,
-
-    pub fn from(x: f32, y: f32, z: f32) Vector3f { return Vector3f {.x = x, .y = y, .z = z };}
-
-    pub fn add(self: Vector3f, other: Vector3f) Vector3f {
-        return Vector3f { .x = self.x + other.x, .y = self.y + other.y, .z = self.z + other.z };
-    }
-
-    pub fn substract(self: Vector3f, other: Vector3f) Vector3f {
-        return Vector3f { .x = self.x - other.x, .y = self.y - other.y, .z = self.z - other.z };
-    }
-
-    pub fn dot(self: Vector3f, other: Vector3f) f32 {
-        return self.x * other.x + self.y * other.y + self.z * other.z;
-    }
-
-    pub fn magnitude(self: Vector3f) f32 {
-        return std.math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z);
-    }
-
-    pub fn normalized(self: Vector3f) Vector3f {
-        const mag = self.magnitude();
-        return Vector3f { .x = self.x / mag, .y = self.y / mag, .z = self.z / mag };
-    }
-
-    pub fn normalize(self: *Vector3f) void {
-        const mag = self.magnitude();
-        self.x = self.x / mag;
-        self.y = self.y / mag;
-        self.z = self.z / mag;
-    }
-
-    pub fn cross_product(self: Vector3f, other: Vector3f) Vector3f {
-        return Vector3f {
-            .x = self.y * other.z - self.z * other.y,
-            .y = self.z * other.x - self.x * other.z,
-            .z = self.x * other.y - self.y * other.x,
-        };
-    }
-
-    pub fn scale(self: Vector3f, factor: f32) Vector3f {
-        return Vector3f { .x = self.x * factor, .y = self.y * factor, .z = self.z * factor };
-    }
-};
-
-const Vector4f = struct {
-    x: f32,
-    y: f32,
-    z: f32,
-    w: f32,
-
-    pub fn add(self: Vector4f, other: Vector4f) Vector4f {
-        return Vector4f { .x = self.x + other.x, .y = self.y + other.y, .z = self.z + other.z, .w = self.w + other.w };
-    }
-
-    pub fn scale(self: Vector4f, factor: f32) Vector4f {
-        return Vector4f { .x = self.x * factor, .y = self.y * factor, .z = self.z * factor, .w = self.w * factor };
-    }
-
-    pub fn discard_w(self: Vector4f) Vector3f {
-        return Vector3f {
-            .x = self.x,
-            .y = self.y,
-            .z = self.z,
-        };
-    }
-
-    pub fn perspective_division(self: Vector4f) Vector3f {
-        return Vector3f {
-            .x = self.x / self.w,
-            .y = self.y / self.w,
-            .z = self.z / self.w,
-        };
-    }
-};
-
-/// column major 4x4 matrix
-/// meaning its stored like in a contiguous array like this:
-///
-///     [16]f32 { m11, m21, m31, m41, m12, m22, m32, m42, m13, m23, m33, m43, m14, m24, m34, m44 }
-///
-/// So to access the matrix
-/// 
-///     m11, m12, m13, m14
-///     m21, m22, m23, m24
-///     m31, m32, m33, m34
-///     m41, m42, m43, m44
-/// 
-/// The index used would be
-///
-///     0    4    8    12
-///     1    5    9    13
-///     2    6    10   14
-///     3    7    11   15
-/// 
-const M44 = struct {
-    data: [16]f32,
-
-    pub fn multiply(self: M44, other: M44) M44 {
-        var result: M44 = undefined;
-        for (0..4) |row| {
-            for (0..4) |col| {
-                result.data[(row*4)+col] = 0;
-                for (0..4) |element| {
-                    result.data[(row*4)+col] += self.data[(element*4)+col] * other.data[(row*4)+element];
-                }
-            }
-        }
-        return result;
-    }
-
-    pub fn apply_to_vec3(self: M44, point: Vector3f) Vector4f {
-        const point4d = Vector4f { .x = point.x, .y = point.y, .z = point.z, .w = 1 };
-        var point_transformed: Vector4f = undefined;
-        point_transformed.x = self.data[0] * point4d.x + self.data[4] * point4d.y + self.data[8] * point4d.z + self.data[12] * point4d.w;
-        point_transformed.y = self.data[1] * point4d.x + self.data[5] * point4d.y + self.data[9] * point4d.z + self.data[13] * point4d.w;
-        point_transformed.z = self.data[2] * point4d.x + self.data[6] * point4d.y + self.data[10] * point4d.z + self.data[14] * point4d.w;
-        point_transformed.w = self.data[3] * point4d.x + self.data[7] * point4d.y + self.data[11] * point4d.z + self.data[15] * point4d.w;
-        return point_transformed;
-    }
-
-    pub fn apply_to_vec4(self: M44, point4d: Vector4f) Vector4f {
-        var point_transformed: Vector4f = undefined;
-        point_transformed.x = self.data[0] * point4d.x + self.data[4] * point4d.y + self.data[8] * point4d.z + self.data[12] * point4d.w;
-        point_transformed.y = self.data[1] * point4d.x + self.data[5] * point4d.y + self.data[9] * point4d.z + self.data[13] * point4d.w;
-        point_transformed.z = self.data[2] * point4d.x + self.data[6] * point4d.y + self.data[10] * point4d.z + self.data[14] * point4d.w;
-        point_transformed.w = self.data[3] * point4d.x + self.data[7] * point4d.y + self.data[11] * point4d.z + self.data[15] * point4d.w;
-        return point_transformed;
-    }
-    
-    pub fn apply_to_point(self: M44, point: Vector3f) Vector3f {
-        // Embed the `point` into "4D" by augmenting it with 1, so that we can work with it.
-        // 
-        //     | x |    | x |
-        //     | y | => | y |
-        //     | z |    | z |
-        //              | 1 |
-        //     
-        // Essentially creating a Matrix41 where its "new" 4th element is 1.0f
-        const point4d = Vector4f { .x = point.x, .y = point.y, .z = point.z, .w = 1 };
-
-        // Then do a standard Matrix multiplication M44 * M41 => M41 (AKA Vector4f)
-        // 
-        //     point_transformed = self * point4d
-        // 
-        var point_transformed: Vector4f = undefined;
-        point_transformed.x = self.data[0] * point4d.x + self.data[4] * point4d.y + self.data[8] * point4d.z + self.data[12] * point4d.w;
-        point_transformed.y = self.data[1] * point4d.x + self.data[5] * point4d.y + self.data[9] * point4d.z + self.data[13] * point4d.w;
-        point_transformed.z = self.data[2] * point4d.x + self.data[6] * point4d.y + self.data[10] * point4d.z + self.data[14] * point4d.w;
-        point_transformed.w = self.data[3] * point4d.x + self.data[7] * point4d.y + self.data[11] * point4d.z + self.data[15] * point4d.w;
-
-        // Finally we project (retro-project*) the resulting point back in a 3D space
-        //     
-        //     | x |    | x/w |
-        //     | y | => | y/w |
-        //     | z |    | z/w |
-        //     | w |         
-        //
-        return Vector3f {
-            .x = point_transformed.x / point_transformed.w,
-            .y = point_transformed.y / point_transformed.w,
-            .z = point_transformed.z / point_transformed.w,
-        };
-    }
-
-    pub fn transposed(self: M44) M44 {
-        var result: M44 = undefined;
-        for (0..4) |row| {
-            for (0..4) |col| {
-                result.data[(row*4)+col] = self.data[(col*4)+row];
-            }
-        }
-        return result;
-    }
-
-    pub fn identity() M44 {
-        var result: M44 = undefined;
-        result.data[0] = 1;
-        result.data[1] = 0;
-        result.data[2] = 0;
-        result.data[3] = 0;
-        result.data[4] = 0;
-        result.data[5] = 1;
-        result.data[6] = 0;
-        result.data[7] = 0;
-        result.data[8] = 0;
-        result.data[9] = 0;
-        result.data[10] = 1;
-        result.data[11] = 0;
-        result.data[12] = 0;
-        result.data[13] = 0;
-        result.data[14] = 0;
-        result.data[15] = 1;
-        return result;
-    }
-
-    pub fn translation(t: Vector3f) M44 {
-        var result = M44.identity();
-        result.data[12] = t.x;
-        result.data[13] = t.y;
-        result.data[14] = t.z;
-        return result;
-    }
-
-    pub fn scaling_matrix(s: Vector3f) M44 {
-        var result = M44.identity();
-        result.data[0] = s.x;
-        result.data[5] = s.y;
-        result.data[10] = s.z;
-        return result;
-    }
-
-    pub fn scale(factor: f32) M44 {
-        var result = M44.identity();
-        result.data[0] = factor;
-        result.data[5] = factor;
-        result.data[10] = factor;
-        return result;
-    }
-
-    /// The camera is looking towards +Z.
-    /// The right direction is in the +X direction.
-    /// The up direction is in the +Y direction.
-    pub fn lookat_right_handed(camera_location: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
-        
-        if (true) return lookat_right_handed_unrolled(camera_location, point_looked_at, up);
-
-        // just in case, normalize the up direction
-        const normalized_up = up.normalized();
-        
-        // the camera looks towards the positive z axes
-        // the z axes got the direction `point looked at <------ camera location`
-        // 
-        //     The camera is looking towards +Z.
-        //     The right direction is in the +X direction.
-        //     The up direction is in the +Y direction.
-        // 
-        const new_forward: Vector3f = point_looked_at.substract(camera_location).normalized(); // z axis
-        const new_right: Vector3f = normalized_up.cross_product(new_forward).scale(-1).normalized(); // x axis
-        const new_up: Vector3f = new_forward.cross_product(new_right).scale(-1).normalized(); // y axis
-
-        // Create a change of basis matrix, in which, the camera position,
-        // the points its looking at and the up vector form the three axes.
-        // > In essence, a change of basis matrix is a transformation that allows us to express the same
-        // > vector or set of coordinates in a different coordinate system or basis, providing a new
-        // > perspective or representation while preserving the underlying geometric relationships.
-        var change_of_basis_matrix = M44.identity();
-        change_of_basis_matrix.data[0] = new_right.x;
-        change_of_basis_matrix.data[4] = new_right.y;
-        change_of_basis_matrix.data[8] = new_right.z;
-
-        change_of_basis_matrix.data[1] = new_up.x;
-        change_of_basis_matrix.data[5] = new_up.y;
-        change_of_basis_matrix.data[9] = new_up.z;
-
-        change_of_basis_matrix.data[2] = new_forward.x;
-        change_of_basis_matrix.data[6] = new_forward.y;
-        change_of_basis_matrix.data[10] = new_forward.z;
-
-        // translate the world to the location of the camera and then rotate it
-        // The order of this multiplication is relevant!
-        // 
-        //     rotation_matrix * translation_matrix(-camera_location)
-        // 
-        return change_of_basis_matrix.multiply(M44.translation(camera_location.scale(-1)));
-    }
-
-    // same as `lookat_right_handed` but with the math unrolled
-    fn lookat_right_handed_unrolled(c: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
-        const normalized_up = up.normalized();
-        const z: Vector3f = point_looked_at.substract(c).normalized(); // z axis
-        const x: Vector3f = normalized_up.cross_product(z).scale(-1).normalized(); // x axis
-        const y: Vector3f = z.cross_product(x).scale(-1).normalized(); // y axis
-        var matrix: M44 = undefined;
-        matrix.data[0] = x.x;
-        matrix.data[4] = x.y;
-        matrix.data[8] = x.z;
-        matrix.data[1] = y.x;
-        matrix.data[5] = y.y;
-        matrix.data[9] = y.z;
-        matrix.data[2] = z.x;
-        matrix.data[6] = z.y;
-        matrix.data[10] = z.z;
-        matrix.data[3] = 0;
-        matrix.data[7] = 0;
-        matrix.data[11] = 0;
-        matrix.data[15] = 1;
-        matrix.data[12] = (x.x * -c.x) + (x.y * -c.y) + (x.z * -c.z);
-        matrix.data[13] = (y.x * -c.x) + (y.y * -c.y) + (y.z * -c.z);
-        matrix.data[14] = (z.x * -c.x) + (z.y * -c.y) + (z.z * -c.z);
-        return matrix;
-    }
-    
-    // constructs an orthographic projection matrix, which
-    // maps the cube [left..right][bottom..top][near..far] to the cube [-1..1][-1..1][0..1] cube
-    // and center it so that:
-    //        
-    //                                 !           (1    , 1  , 1  )
-    //                   O = origin  __!______.  < (right, top, far)
-    //                              /  !     /|
-    //                             /___!____/ |
-    //                             |   !    | |
-    //                         - - - - O - - -/- - - 
-    //    (left, bottom, near)  >  |___!____|/
-    //    (-1  , -1    , 0   )         !
-    //               
-    // https://www.youtube.com/watch?v=U0_ONQQ5ZNM
-    pub fn orthographic_projection(left: f32, right: f32, top: f32, bottom: f32, near: f32, far: f32) M44 {
-        if (true) return orthographic_projection_unrolled(left, right, top, bottom, near, far);
-        var scale_matrix = M44.identity();
-        scale_matrix.data[0] = map_range_to_range(left, right, -1, 1);
-        scale_matrix.data[5] = map_range_to_range(bottom, top, -1, 1);
-        // NOTE I'm not sure whether this is actually correct... check test below
-        scale_matrix.data[10] = map_range_to_range(near, far, 0, 1);
-        // translate the world so that (0, 0, 0) is the center of near plane of the cube that captures the orthogonal projection
-        const translate_matrix = M44.translation(Vector3f { .x = - ((right+left)/2), .y = - ((top+bottom)/2), .z = - near });
-        return scale_matrix.multiply(translate_matrix);
-    }
-    
-    // same as `orthographic_projection` but with the math unrolled
-    pub fn orthographic_projection_unrolled(l: f32, r: f32, t: f32, b: f32, n: f32, f: f32) M44 {
-        var matrix = M44.identity();
-        matrix.data[0] = 2/(r-l);
-        matrix.data[5] = 2/(t-b);
-        matrix.data[10] = 1/(f-n);
-        matrix.data[12] = -(r+l)/(r-l);
-        matrix.data[13] = -(t+b)/(t-b);
-        matrix.data[14] = -n/(f-n);
-        return matrix;
-    }
-
-    test "scaling of z is not what I expect..." {
-        try std.testing.expect(map_range_to_range(0, 100, 0, 1) * 0 == 0);
-        try std.testing.expect(map_range_to_range(0, 100, 0, 1) * 100 == 1);
-        try std.testing.expect(map_range_to_range(0, 100, 0, 1) * 50 == 0.5);
-        // From what I see online, the consensus is to do `1/(f-n)` for scaling the z values on the orthographic projection matrix.
-        // However, for example, if `far = 1000` and `near = 0.1` then `1/(1000-0.1) * 0.1` should be 0, but it is not!
-        try std.testing.expect((map_range_to_range(0.1, 100, 0, 1) * 0.1 == 0) == false);
-        // It seems to have to do with normalization but I'm not sure how to apply that in the orthographic matrix situation
-        try std.testing.expect((map_range_to_range_normalized(0.1, 0.1, 100, 0, 1) == 0));
-    }
-
-    // https://www.youtube.com/watch?v=U0_ONQQ5ZNM
-    pub fn perspective_projection(fov_degrees: f32, aspect_ratio: f32, near: f32, far: f32) M44 {
-        if (true) return perspective_projection_unrolled(fov_degrees, aspect_ratio, near, far);
-        const fov_radians = (@as(f32,std.math.pi)/180) * fov_degrees;
-        const top = near * std.math.tan(fov_radians / 2.0);
-        const right = near * aspect_ratio * std.math.tan(fov_radians / 2.0); 
-        const left = -right;
-        const bottom = -top;
-        
-        var perspective = M44.identity();
-        perspective.data[0] = near;
-        perspective.data[5] = near;
-        perspective.data[10] = far+near;
-        perspective.data[14] = -(far*near);
-        perspective.data[11] = 1;
-        perspective.data[15] = 0;
-
-        const ortho_projection = orthographic_projection(left, right, top, bottom, near, far);
-        return ortho_projection.multiply(perspective);
-    }
-
-    // same as `perspective_projection_2` but with the math unrolled
-    pub fn perspective_projection_unrolled(fov_degrees: f32, aspect_ratio: f32, n: f32, f: f32) M44 {
-        const fov_radians = (@as(f32,std.math.pi)/180) * fov_degrees;
-        const t = n * std.math.tan(fov_radians / 2.0);
-        const r = n * aspect_ratio * std.math.tan(fov_radians / 2.0); 
-        var matrix = M44.identity();
-        matrix.data[0] = n/r;
-        matrix.data[5] = n/t;
-        matrix.data[10] = f/(f-n);
-        matrix.data[11] = 1;
-        matrix.data[14] = -(f*n)/(f-n);
-        matrix.data[15] = 0;
-        return matrix;
-    }
-    
-    /// Builds a "viewport" (as its called in opengl) matrix, a matrix that
-    /// will map a point in the 3-dimensional cube [-1, 1]*[-1, 1]*[-1, 1]
-    /// onto the screen cube [x, x+w]*[y, y+h]*[0, d],
-    /// where d is the depth/resolution of the z-buffer
-    pub fn viewport_i32(x: i32, y: i32, w: i32, h: i32, depth: i32) M44 {
-        const xf: f32 = @floatFromInt(x);
-        const yf: f32 = @floatFromInt(y);
-        const wf: f32 = @floatFromInt(w);
-        const hf: f32 = @floatFromInt(h);
-        const depthf: f32 = @floatFromInt(depth);
-        return viewport(xf, yf, wf, hf, depthf);
-    }
-    
-    pub fn viewport_i32_2(x: i32, y: i32, w: i32, h: i32, depth: i32) M44 {
-        const xf: f32 = @floatFromInt(x);
-        const yf: f32 = @floatFromInt(y);
-        const wf: f32 = @floatFromInt(w);
-        const hf: f32 = @floatFromInt(h);
-        const depthf: f32 = @floatFromInt(depth);
-        return viewport_2(xf, yf, wf, hf, depthf);
-    }
-    pub fn viewport_2(x: f32, y: f32, w: f32, h: f32, depth: f32) M44 {
-        const t = M44.translation(.{.x = x+1, .y = y+1, .z = 0});
-        const s = M44.scaling_matrix(.{.x = map_range_to_range(0, 2, 0, w), .y = map_range_to_range(0, 2, 0, h), .z = map_range_to_range(0, 1, 0, depth)});
-        return s.multiply(t);
-    }
-
-    // returns a matrix which maps the cube [-1,1]*[-1,1]*[0,1] onto the screen cube [x,x+w]*[y,y+h]*[0,d]
-    pub fn viewport(x: f32, y: f32, w: f32, h: f32, depth: f32) M44 {
-        var matrix = M44.identity();
-        
-        // 1 0 0 translation_x
-        // 0 1 0 translation_y
-        // 0 0 1 translation_z
-        // 0 0 0 1
-
-        const translation_x: f32 = x + (w / 2);
-        const translation_y: f32 = y + (h / 2);
-        const translation_z: f32 = depth / 2;
-
-        matrix.data[12] = translation_x;
-        matrix.data[13] = translation_y;
-        matrix.data[14] = translation_z;
-
-        // scale_x 0       0       0
-        // 0       scale_y 0       0
-        // 0       0       scale_z 0
-        // 0       0       0       1
-        
-        const scale_x: f32 = w / 2;
-        // This coulb be negated so that the top left corner is 0,0
-        // If so, when mapping from normalized device coordinates (NDC) to screen space, thing will be inverted so that top left is 0,0
-        // 
-        //     const scale_y: f32 = -hf / 2;
-        const scale_y: f32 = h / 2;
-        const scale_z: f32 = depth / 2;
-
-        matrix.data[0] = scale_x;
-        matrix.data[5] = scale_y;
-        matrix.data[10] = scale_z;
-
-        // resulting in matrix...
-        // w/2     0       0       x+(w/2)
-        // 0       h/2     0       y+(h/w)
-        // 0       0       d/2     d/2
-        // 0       0       0       1
-
-        // https://github.com/ssloy/tinyrenderer/wiki/Lesson-5:-Moving-the-camera#viewport
-        // > In this function, we are basically mapping a cube [-1,1]*[-1,1]*[-1,1] onto the screen cube [x,x+w]*[y,y+h]*[0,d]
-        // > Its a cube (and not a rectangle) since there is a `d`epth variable to it, which acts as the resolution of the z-buffer.
-
-        return matrix;
-    }
-};
+const math = @import("math.zig");
+const Vector2i = math.Vector2i;
+const Vector2f = math.Vector2f;
+const Vector3f = math.Vector3f;
+const Vector4f = math.Vector4f;
+const M44 = math.M44;
+const Plane = math.Plane;
+const Frustum = math.Frustum;
+const win32 = @import("win32.zig");
+const OBJ = @import("obj.zig");
+const TGA = @import("tga.zig");
+const imgui = @import("imgui.zig");
+const Buffer2D = @import("buffer.zig").Buffer2D;
 
 const Camera = struct {
     position: Vector3f,
@@ -649,12 +21,13 @@ const Camera = struct {
     up: Vector3f,
 };
 
-const RGBA = extern struct {
+pub const RGBA = extern struct {
     r: u8 align(1),
     g: u8 align(1),
     b: u8 align(1),
     a: u8 align(1),
-    fn scale(self: RGBA, factor: f32) RGBA {
+    comptime { std.debug.assert(@sizeOf(@This()) == 4); }
+    pub fn scale(self: RGBA, factor: f32) RGBA {
         return RGBA {
             .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
             .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
@@ -662,7 +35,7 @@ const RGBA = extern struct {
             .a = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.a)) * factor))),
         };
     }
-    fn add(c1: RGBA, c2: RGBA) RGBA {
+    pub fn add(c1: RGBA, c2: RGBA) RGBA {
         const result = RGBA {
             .r = @intFromFloat(@max(0, @min(255, (@as(f32, @floatFromInt(c1.r))/255 + @as(f32, @floatFromInt(c2.r))/255)*255))),
             .g = @intFromFloat(@max(0, @min(255, (@as(f32, @floatFromInt(c1.g))/255 + @as(f32, @floatFromInt(c2.g))/255)*255))),
@@ -671,7 +44,7 @@ const RGBA = extern struct {
         };
         return result;
     }
-    fn scale_raw(self: RGBA, factor: f32) RGBA {
+    pub fn scale_raw(self: RGBA, factor: f32) RGBA {
         return RGBA {
             .r = @intFromFloat(@as(f32, @floatFromInt(self.r)) * factor),
             .g = @intFromFloat(@as(f32, @floatFromInt(self.g)) * factor),
@@ -680,7 +53,7 @@ const RGBA = extern struct {
         };
     }
     /// This assumes that the sum of any channel is inside the range of u8, there is no checks!
-    fn add_raw(c1: RGBA, c2: RGBA) RGBA {
+    pub fn add_raw(c1: RGBA, c2: RGBA) RGBA {
         const result = RGBA {
             .r = c1.r + c2.r,
             .g = c1.g + c2.g,
@@ -691,7 +64,7 @@ const RGBA = extern struct {
     }
     /// where `c2` is the background color
     /// https://learnopengl.com/Advanced-OpenGL/Blending
-    fn blend(c1: RGBA, c2: RGBA) RGBA {
+    pub fn blend(c1: RGBA, c2: RGBA) RGBA {
         const a1: f32 = @as(f32, @floatFromInt(c1.a)) / 255;
         const result = RGBA {
             .r = @intFromFloat((@as(f32, @floatFromInt(c1.r))/255*a1 + @as(f32, @floatFromInt(c2.r))/255*(1-a1))*255),
@@ -701,7 +74,7 @@ const RGBA = extern struct {
         };
         return result;
     }
-    fn multiply(c1: RGBA, c2: RGBA) RGBA {
+    pub fn multiply(c1: RGBA, c2: RGBA) RGBA {
         const result = RGBA {
             .r = @intFromFloat( @as(f32, @floatFromInt(c1.r)) * (@as(f32, @floatFromInt(c2.r)) / 255)),
             .g = @intFromFloat( @as(f32, @floatFromInt(c1.g)) * (@as(f32, @floatFromInt(c2.g)) / 255)),
@@ -718,21 +91,21 @@ const RGBA = extern struct {
             .a = @as(u8, @intCast((@as(u16, @intCast(c1.a)) + @as(u16, @intCast(c2.a)) + @as(u16, @intCast(c3.a)) + @as(u16, @intCast(c4.a))) / 4)),
         };
     }
-    comptime { std.debug.assert(@sizeOf(RGBA) == 4); }
 };
 
-const RGB = extern struct {
+pub const RGB = extern struct {
     r: u8 align(1),
     g: u8 align(1),
     b: u8 align(1),
-    fn scale(self: RGB, factor: f32) RGB {
+    comptime { std.debug.assert(@sizeOf(@This()) == 3); }
+    pub fn scale(self: RGB, factor: f32) RGB {
         return RGB {
             .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
             .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
             .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
         };
     }
-    fn scale_raw(self: RGB, factor: f32) RGB {
+    pub fn scale_raw(self: RGB, factor: f32) RGB {
         return RGB {
             .r = @intFromFloat(@as(f32, @floatFromInt(self.r)) * factor),
             .g = @intFromFloat(@as(f32, @floatFromInt(self.g)) * factor),
@@ -740,7 +113,7 @@ const RGB = extern struct {
         };
     }
     /// This assumes that the sum of any channel is inside the range of u8, there is no checks!
-    fn add_raw(c1: RGB, c2: RGB) RGB {
+    pub fn add_raw(c1: RGB, c2: RGB) RGB {
         const result = RGB {
             .r = c1.r + c2.r,
             .g = c1.g + c2.g,
@@ -748,888 +121,24 @@ const RGB = extern struct {
         };
         return result;
     }
-    comptime { std.debug.assert(@sizeOf(RGB) == 3); }
-};
-
-const ElementType = enum {
-    rgb,
-    rgba,
-    win32_rgba,
-    f32,
-};
-
-const AnyElement = union(ElementType) {
-    rgb: RGB,
-    rgba: RGBA,
-    win32_rgba: win32.RGBA,
-    f32: f32,
-};
-
-const AnyBuffer2D = union(ElementType) {
-    rgb: Buffer2D(RGB),
-    rgba: Buffer2D(RGBA),
-    win32_rgba: Buffer2D(win32.RGBA),
-    f32: Buffer2D(f32),
-};
-
-fn Buffer2D(comptime T: type) type {
-    return struct {
-        
-        const Self = @This();
-        
-        data: []T,
-        width: usize,
-        
-        fn init(data: []T, width: usize) Self {
-            return .{
-                .data = data,
-                .width = width
-            };
-        }
-
-        fn height(self: Self) usize {
-            return @divExact(self.data.len, self.width);
-        }
-
-        fn set(self: Self, x: usize, y: usize, item: T) void {
-            self.data[x + self.width * y] = item;
-        }
-        
-        fn get(self: Self, x: usize, y: usize) T {
-            return self.data[x + self.width*y];
-        }
-        
-        fn at(self: Self, x: usize, y: usize) *T {
-            return &self.data[x + self.width*y];
-        }
-
-    };
-}
-
-fn texture_point_sample(comptime texture_pixel_type: type, comptime uv_is_01: bool, texture_data: []texture_pixel_type, texture_width: usize, texture_height: usize, uv: Vector2f) texture_pixel_type {
-    // if (uv.x < 0.02 or uv.x > 0.98 or uv.y < 0.02 or uv.y > 0.98) return texture_pixel_type { .r = 0, .g = 0, .b = 0, .a = 255 };
-    if (uv.x < 0 or uv.y < 0) std.log.debug("uv.x {d:.9}, uv.y {d:.9}", .{uv.x, uv.y});
-    const tx = if (uv_is_01) uv.x * @as(f32, @floatFromInt(texture_width)) else uv.x;
-    const ty = if (uv_is_01) uv.y * @as(f32, @floatFromInt(texture_height)) else uv.y;
-    // if (tx - @floor(tx) < 0.03 or tx - @floor(tx) > 0.97 or ty - @floor(ty) < 0.03 or ty - @floor(ty) > 0.97) return texture_pixel_type { .r = 90, .g = 90, .b = 90, .a = 255 };
-    // if (tx - @floor(tx) > 0.45 and tx - @floor(tx) < 0.55 and ty - @floor(ty) > 0.45 and ty - @floor(ty) < 0.55) return texture_pixel_type { .r = 0, .g = 0, .b = 0, .a = 255 };
-    if (tx < 0 or ty < 0) std.log.debug("tx {d:.9}, ty {d:.9}", .{tx, ty});
-    const texel_x = @as(usize, @intFromFloat(tx));
-    const texel_y = @as(usize, @intFromFloat(ty));
-    const x = std.math.clamp(texel_x, 0, texture_width-1);
-    const y = std.math.clamp(texel_y, 0, texture_height-1);
-    return texture_data[x + texture_width*y];
-}
-
-fn texture_bilinear_sample(comptime texture_pixel_type: type, comptime uv_is_01: bool, texture_data: []texture_pixel_type, texture_width: usize, texture_height: usize, uv: Vector2f) texture_pixel_type {
-    // if (uv.x < 0.02 or uv.x > 0.98 or uv.y < 0.02 or uv.y > 0.98) return texture_pixel_type { .r = 0, .g = 0, .b = 0, .a = 255 };
-    const tx = if (uv_is_01) uv.x * @as(f32, @floatFromInt(texture_width)) else uv.x;
-    const ty = if (uv_is_01) uv.y * @as(f32, @floatFromInt(texture_height)) else uv.y;
-    // if (tx - @floor(tx) < 0.03 or tx - @floor(tx) > 0.97 or ty - @floor(ty) < 0.03 or ty - @floor(ty) > 0.97) return texture_pixel_type { .r = 90, .g = 90, .b = 90, .a = 255 };
-    // if (tx - @floor(tx) > 0.45 and tx - @floor(tx) < 0.55 and ty - @floor(ty) > 0.45 and ty - @floor(ty) < 0.55) return texture_pixel_type { .r = 0, .g = 0, .b = 0, .a = 255 };
-    
-    const x_min = int(usize, @max(@floor(tx-0.5), 0));
-    const x_max = @min(int(usize, @floor(tx+0.5)), texture_width-1);
-    const y_min = int(usize, @max(@floor(ty-0.5), 0));
-    const y_max = @min(int(usize, @floor(ty+0.5)), texture_height-1);
-
-    if (x_min == x_max) {
-        if (y_min == y_max) {
-            // a corner of the texture
-            const sampled_color = texture_data[y_min*texture_width+x_min];
-            return sampled_color;
-        }
-        else {
-            // left or right border of texture
-            const color_bottom = texture_data[y_min*texture_width+x_min];
-            const color_top = texture_data[y_max*texture_width+x_min];
-            
-            const weight_y: f32 = ty - (@floor(ty-0.5) + 0.5);
-            
-            const interpolated_color = color_bottom.scale_raw(1 - weight_y).add_raw(color_top.scale_raw(weight_y));
-            return interpolated_color;
-        }
-    }
-    else if (y_min == y_max) {
-        // top or bottom border of texture
-        const color_left = texture_data[y_min*texture_width+x_min];
-        const color_right = texture_data[y_min*texture_width+x_max];
-        
-        const weight_x: f32 = tx - (@floor(tx-0.5) + 0.5);
-        
-        const interpolated_color = color_left.scale_raw(1 - weight_x).add_raw(color_right.scale_raw(weight_x));
-        return interpolated_color;
-    }
-    else {
-        const color_bottom_left = texture_data[y_min*texture_width+x_min];
-        const color_bottom_right = texture_data[y_min*texture_width+x_max];
-        const color_top_left = texture_data[y_max*texture_width+x_min];
-        const color_top_right = texture_data[y_max*texture_width+x_max];
-        
-        const weight_x: f32 = tx - (@floor(tx-0.5) + 0.5);
-        const weight_y: f32 = ty - (@floor(ty-0.5) + 0.5);
-        
-        const interpolated_color_1 = color_bottom_left.scale_raw(1 - weight_x).add_raw(color_bottom_right.scale_raw(weight_x));
-        const interpolated_color_2 = color_top_left.scale_raw(1 - weight_x).add_raw(color_top_right.scale_raw(weight_x));
-        const interpolated_color_3 = interpolated_color_1.scale_raw(1 - weight_y).add_raw(interpolated_color_2.scale_raw(weight_y));
-
-        return interpolated_color_3;
-    }
-}
-
-const OBJ = struct {
-    
-    /// This OBJ reader is very barebones and will crash if the OBJ doesn't meet a number of things I expect it to
-    /// lines must have shape of `v f32 f32 f32`, `vt f32 f32`, `vn f32 f32 f32` or `f u32/u32/u32 u32/u32/u32 u32/u32/u32`.
-    /// even tho technically OBJ allows for some variance there.
-    /// Returns a []f32 buffer that must be freed by the caller.
-    /// The layout of the buffer returned is as follows:
-    /// [ location_x, location_y, location_z, texture_u, texture_v, normal_x, normal_y, normal_z ] x 3 x number of triangles
-    /// `const number_of_triangles = @divExacty(buffer.len, 8*3)`
-    fn from_file(allocator: std.mem.Allocator, file_path: [] const u8) ![]f32 {
-        
-        const Face = struct {
-            vertex_indices: [3]u32 = undefined,
-            uv_indices: [3]u32 = undefined,
-            normal_indices: [3]u32 = undefined,
-        };
-
-        var vertices = std.ArrayList(Vector3f).init(allocator);
-        defer vertices.deinit();
-        var normals = std.ArrayList(Vector3f).init(allocator);
-        defer normals.deinit();
-        var uvs = std.ArrayList(Vector2f).init(allocator);
-        defer uvs.deinit();
-        var faces = std.ArrayList(Face).init(allocator);
-        defer faces.deinit();
-
-        var file = std.fs.cwd().openFile(file_path, .{}) catch return error.CantOpenFile;
-        defer file.close();
-        var buf_reader = std.io.bufferedReader(file.reader());
-        
-        // line by line read the obj file and parse its content
-        var current_line_buffer: [1024]u8 = undefined;
-        while (try buf_reader.reader().readUntilDelimiterOrEof(&current_line_buffer, '\n')) |the_line| {
-            // If the file has windows style line endings ignore the \r at the end of each line
-            const line_content = if (the_line[the_line.len-1] == '\r') the_line[0..the_line.len-1] else the_line;
-            // skip empty lines
-            if (line_content.len == 0) continue;
-            // skip comments
-            if (line_content[0] == '#') continue;
-            
-            if (std.mem.eql(u8, line_content[0..2], "v ")) {
-                // vertex
-                // List of geometric vertices, with (x, y, z, [w]) coordinates, w is optional and defaults to 1.0.
-                // example: v 0.123 0.234 0.345 1.0
-                var values: [3]f32 = undefined;
-                var i: usize = 2;
-                var start = i;
-                for (0..3) |j| {
-                    while (start<line_content.len and line_content[start] == ' ') : ({start += 1; i += 1;}) {} // skip spaces
-                    while (i<line_content.len and line_content[i] != ' ') : (i += 1) {}
-                    const f32_string = line_content[start..i];
-                    const f32_value = try std.fmt.parseFloat(f32, f32_string);
-                    values[j] = f32_value;
-                    start = i+1;
-                    i = start;
-                }
-                const vertex = Vector3f { .x = values[0], .y = values[1], .z = values[2] };
-                // std.debug.print("{s}\n", .{line_content});
-                // std.debug.print("{?}\n", .{vertex});
-                std.debug.assert(vertex.x>=-1 and vertex.x<=1);
-                std.debug.assert(vertex.y>=-1 and vertex.y<=1);
-                std.debug.assert(vertex.z>=-1 and vertex.z<=1);
-                try vertices.append(vertex);
-            }
-            else if (std.mem.eql(u8, line_content[0..3], "vt ")) {
-                // UVs
-                // List of texture coordinates, in (u, [v, w]) coordinates, these will vary between 0 and 1. v, w are optional and default to 0.
-                // example: vt 0.500 1 [0]
-                var values: [2]f32 = undefined;
-                var i: usize = 3;
-                var start = i;
-                for (0..2) |j| {
-                    while (start<line_content.len and line_content[start] == ' ') : ({start += 1; i += 1;}) {} // skip spaces
-                    while (i<line_content.len and line_content[i] != ' ') : (i += 1) {}
-                    const f32_string = line_content[start..i];
-                    const f32_value = try std.fmt.parseFloat(f32, f32_string);
-                    values[j] = f32_value;
-                    start = i+1;
-                    i = start;
-                }
-                const uv = Vector2f { .x = values[0], .y = values[1] };
-                std.debug.assert(uv.x>=0 and uv.x<=1);
-                std.debug.assert(uv.y>=0 and uv.y<=1);
-                try uvs.append(uv);
-            }
-            else if (std.mem.eql(u8, line_content[0..3], "vn ")) {
-                // normals
-                // List of vertex normals in (x,y,z) form; normals might not be unit vectors.
-                // example: vn 0.707 0.000 0.707
-                var values: [3]f32 = undefined;
-                var i: usize = 3;
-                var start = i;
-                for (0..3) |j| {
-                    while (start<line_content.len and line_content[start] == ' ') : ({start += 1; i += 1;}) {} // skip spaces
-                    while (i<line_content.len and line_content[i] != ' ') : (i += 1) {}
-                    const f32_string = line_content[start..i];
-                    const f32_value = try std.fmt.parseFloat(f32, f32_string);
-                    values[j] = f32_value;
-                    start = i+1;
-                    i = start;
-                }
-                const normal = Vector3f { .x = values[0], .y = values[1], .z = values[2] };
-                std.debug.assert(normal.x>=-1 and normal.x<=1);
-                std.debug.assert(normal.y>=-1 and normal.y<=1);
-                std.debug.assert(normal.z>=-1 and normal.z<=1);
-                try normals.append(normal);
-            }
-            else if (std.mem.eql(u8, line_content[0..2], "f ")) {
-                // face
-                // Polygonal face element (see below)
-                // example: f 6/4/1 3/5/3 7/6/5
-                // f loc_idx/text_idx/normal_idx loc_idx/text_idx/normal_idx loc_idx/text_idx/normal_idx
-                
-                var vertex_indices: [3]u32 = undefined;
-                var uv_indices: [3]u32 = undefined;
-                var normal_indices: [3]u32 = undefined;
-                
-                var i: usize = 2;
-                var start = i;
-                for (0..3) |j| {
-                    while (start<line_content.len and line_content[start] == ' ') : ({start += 1; i += 1;}) {} // skip spaces
-                    while (i<line_content.len and line_content[i] != ' ') : (i += 1) {}
-                    const index_trio_string = line_content[start..i];
-                    var i_2: usize = 0;
-                    var start_2 = i_2;
-                    inline for (0..3) |k| {
-                        while (i_2<index_trio_string.len and index_trio_string[i_2] != '/') : (i_2 += 1) {}
-                        const index_of_slash = i_2;
-                        const u32_string = index_trio_string[start_2..index_of_slash];
-                        const u32_value = try std.fmt.parseUnsigned(u32, u32_string, 10);
-                        switch (k) {
-                            // in wavefront obj all indices start at 1, not zero, so substract 1 from every index
-                            0 => vertex_indices[j] = u32_value - 1,
-                            1 => uv_indices[j] = u32_value - 1,
-                            2 => normal_indices[j] = u32_value - 1,
-                            else => @panic("what the hell? k 0..3 is not 0..3")
-                        }
-                        start_2 = i_2 + 1;
-                        i_2 = start_2;
-                    }
-
-                    start = i+1;
-                    i = start;
-                }
-
-                const face = Face { .vertex_indices = vertex_indices, .uv_indices = uv_indices, .normal_indices = normal_indices };
-                try faces.append(face);
-            }
-            
-        }
-
-        // std.debug.print("A {?}\n", .{ faces.items[2].uv_indices[0] });
-        // std.debug.print("A {?}\n", .{ faces.items[2].uv_indices[1] });
-        // std.debug.print("A {?}\n", .{ faces.items[2].uv_indices[2] });
-        
-        // std.debug.print("B {?}\n", .{ uvs.items[faces.items[2].uv_indices[0]] });
-        // std.debug.print("B {?}\n", .{ uvs.items[faces.items[2].uv_indices[1]] });
-        // std.debug.print("B {?}\n", .{ uvs.items[faces.items[2].uv_indices[2]] });
-
-        // const VertexLayout = struct {
-        //     location_x: f32,
-        //     location_y: f32,
-        //     location_z: f32,
-        //     texture_u: f32,
-        //     texture_v: f32,
-        //     normal_x: f32,
-        //     normal_y: f32,
-        //     normal_z: f32,
-        // };
-
-        var vertex_buffer = try allocator.alloc(f32, faces.items.len * 3 * 8);
-        for (faces.items, 0..) |face, face_index| {
-
-            vertex_buffer[face_index*3*8 + 8*0 + 0] = vertices.items[face.vertex_indices[0]].x;
-            vertex_buffer[face_index*3*8 + 8*0 + 1] = vertices.items[face.vertex_indices[0]].y;
-            vertex_buffer[face_index*3*8 + 8*0 + 2] = vertices.items[face.vertex_indices[0]].z;
-            vertex_buffer[face_index*3*8 + 8*0 + 3] = uvs.items[face.uv_indices[0]].x;
-            vertex_buffer[face_index*3*8 + 8*0 + 4] = uvs.items[face.uv_indices[0]].y;
-            vertex_buffer[face_index*3*8 + 8*0 + 5] = normals.items[face.normal_indices[0]].x;
-            vertex_buffer[face_index*3*8 + 8*0 + 6] = normals.items[face.normal_indices[0]].y;
-            vertex_buffer[face_index*3*8 + 8*0 + 7] = normals.items[face.normal_indices[0]].z;
-                
-            vertex_buffer[face_index*3*8 + 8*1 + 0] = vertices.items[face.vertex_indices[1]].x;
-            vertex_buffer[face_index*3*8 + 8*1 + 1] = vertices.items[face.vertex_indices[1]].y;
-            vertex_buffer[face_index*3*8 + 8*1 + 2] = vertices.items[face.vertex_indices[1]].z;
-            vertex_buffer[face_index*3*8 + 8*1 + 3] = uvs.items[face.uv_indices[1]].x;
-            vertex_buffer[face_index*3*8 + 8*1 + 4] = uvs.items[face.uv_indices[1]].y;
-            vertex_buffer[face_index*3*8 + 8*1 + 5] = normals.items[face.normal_indices[1]].x;
-            vertex_buffer[face_index*3*8 + 8*1 + 6] = normals.items[face.normal_indices[1]].y;
-            vertex_buffer[face_index*3*8 + 8*1 + 7] = normals.items[face.normal_indices[1]].z;
-
-            vertex_buffer[face_index*3*8 + 8*2 + 0] = vertices.items[face.vertex_indices[2]].x;
-            vertex_buffer[face_index*3*8 + 8*2 + 1] = vertices.items[face.vertex_indices[2]].y;
-            vertex_buffer[face_index*3*8 + 8*2 + 2] = vertices.items[face.vertex_indices[2]].z;
-            vertex_buffer[face_index*3*8 + 8*2 + 3] = uvs.items[face.uv_indices[2]].x;
-            vertex_buffer[face_index*3*8 + 8*2 + 4] = uvs.items[face.uv_indices[2]].y;
-            vertex_buffer[face_index*3*8 + 8*2 + 5] = normals.items[face.normal_indices[2]].x;
-            vertex_buffer[face_index*3*8 + 8*2 + 6] = normals.items[face.normal_indices[2]].y;
-            vertex_buffer[face_index*3*8 + 8*2 + 7] = normals.items[face.normal_indices[2]].z;
-
-        }
-        return vertex_buffer;
-    }
-};
-
-const TGA = struct {
-
-    const BitsPerPixel = enum(u8) {
-        RGB = 24,
-        RGBA = 32
-    };
-
-    const DataTypeCode = enum(u8) {
-        UncompressedRgb = 2,
-        RunLengthEncodedRgb = 10,
-    };
-    
-    const ColorMapSpecification = extern struct {
-        /// index of first color map entry
-        origin: i16 align(1),
-        /// count of color map entries
-        length: i16 align(1),
-        /// Number of bits in color map entry - same as `bits_per_pixel`
-        entry_size: u8 align(1),
-    };
-
-    const ImageDescriptorByte = extern struct {
-        
-        the_byte: u8 align(1),
-        
-        const Self = @This();
-
-        /// number of attribute bits associated with each
-        /// pixel.  For the Targa 16, this would be 0 or
-        /// 1.  For the Targa 24, it should be 0.  For
-        /// Targa 32, it should be 8.
-        pub fn get_attribute_bits_per_pixel(self: Self) u4 {
-            return @intCast(self.the_byte >> 4);
-        }
-
-        /// must be 0
-        pub fn get_reserved(self: Self) u1 {
-            return @intCast((self.the_byte | 0b00001000) >> 3);
-        }
-
-        /// 0 = Origin in lower left-hand corner
-        /// 1 = Origin in upper left-hand corner
-        pub fn get_screen_origin_bit(self: Self) u1 {
-            return @intCast((self.the_byte | 0b00000100) >> 2);
-        }
-
-        /// 00 = non-interleaved.                        
-        /// 01 = two-way (even/odd) interleaving.        
-        /// 10 = four way interleaving.                  
-        /// 11 = reserved.                               
-        pub fn get_interleaving(self: Self) u2 {
-            return @intCast(self.the_byte << 6);
-        }
-
-    };
-
-    const ImageSpecification = extern struct {
-        /// X coordinate of the lower left corner
-        x_origin: i16 align(1),
-        /// Y coordinate of the lower left corner
-        y_origin: i16 align(1),
-        /// width of the image in pixels
-        width: i16 align(1),
-        /// height of the image in pixels
-        height: i16 align(1),
-        /// number of bits in a pixel
-        bits_per_pixel: BitsPerPixel align(1),
-        image_descriptor: ImageDescriptorByte align(1),
-    };
-
-    const Header = extern struct {
-        id_length: u8 align(1),
-        color_map_type: u8 align(1),
-        data_type: DataTypeCode align(1),
-        color_map_spec: ColorMapSpecification align(1),
-        image_spec: ImageSpecification align(1),
-    };
-
-    comptime { std.debug.assert(@sizeOf(BitsPerPixel) == 1); }
-    comptime { std.debug.assert(@sizeOf(DataTypeCode) == 1); }
-    comptime { std.debug.assert(@sizeOf(ColorMapSpecification) == 5); }
-    comptime { std.debug.assert(@sizeOf(ImageSpecification) == 10); }
-    comptime { std.debug.assert(@sizeOf(Header) == 18); }
-
-    /// This can only read TGA files of data type 2 (unmapped, uncompressed, rgb(a) images)
-    fn from_file(allocator: std.mem.Allocator, file_path: [] const u8) !AnyBuffer2D {
-
-        { // NOTE specification
-
-            // Version 1.0 of TGA Spec
-            // http://www.paulbourke.net/dataformats/tga/
-            // https://www.gamers.org/dEngine/quake3/TGA.txt
-            { // DATA TYPE 2: Unmapped RGB
-                //     ________________________________________________________________________________
-                //     | Offset | Length |                     Description                            |
-                //     |--------|--------|------------------------------------------------------------|
-                //     |    0   |     1  |  Number of Characters in Identification Field.             |
-                //     |        |        |                                                            |
-                //     |        |        |  This field is a one-byte unsigned integer, specifying     |
-                //     |        |        |  the length of the Image Identification Field.  Its value  |
-                //     |        |        |  is 0 to 255.  A value of 0 means that no Image            |
-                //     |        |        |  Identification Field is included.                         |
-                //     |--------|--------|------------------------------------------------------------|
-                //     |    1   |     1  |  Color Map Type.                                           |
-                //     |        |        |                                                            |
-                //     |        |        |  This field contains either 0 or 1.  0 means no color map  |
-                //     |        |        |  is included.  1 means a color map is included, but since  |
-                //     |        |        |  this is an unmapped image it is usually ignored.  TIPS    |
-                //     |        |        |  ( a Targa paint system ) will set the border color        |
-                //     |        |        |  the first map color if it is present.                     |
-                //     |--------|--------|------------------------------------------------------------|
-                //     |    2   |     1  |  Image Type Code.                                          |
-                //     |        |        |                                                            |
-                //     |        |        |  This field will always contain a binary 2.                |
-                //     |        |        |  ( That's what makes it Data Type 2 ).                     |
-                //     |--------|--------|------------------------------------------------------------|
-                //     |    3   |     5  |  Color Map Specification.                                  |
-                //     |        |        |                                                            |
-                //     |        |        |  Ignored if Color Map Type is 0; otherwise, interpreted    |
-                //     |        |        |  as follows:                                               |
-                //     |    3   |     2  |  Color Map Origin.                                         |
-                //     |        |        |  Integer ( lo-hi ) index of first color map entry.         |
-                //     |    5   |     2  |  Color Map Length.                                         |
-                //     |        |        |  Integer ( lo-hi ) count of color map entries.             |
-                //     |    7   |     1  |  Color Map Entry Size.                                     |
-                //     |        |        |  Number of bits in color map entry.  16 for the Targa 16,  |
-                //     |        |        |  24 for the Targa 24, 32 for the Targa 32.                 |
-                //     |--------|--------|------------------------------------------------------------|
-                //     |    8   |    10  |  Image Specification.                                      |
-                //     |        |        |                                                            |
-                //     |    8   |     2  |  X Origin of Image.                                        |
-                //     |        |        |  Integer ( lo-hi ) X coordinate of the lower left corner   |
-                //     |        |        |  of the image.                                             |
-                //     |   10   |     2  |  Y Origin of Image.                                        |
-                //     |        |        |  Integer ( lo-hi ) Y coordinate of the lower left corner   |
-                //     |        |        |  of the image.                                             |
-                //     |   12   |     2  |  Width of Image.                                           |
-                //     |        |        |  Integer ( lo-hi ) width of the image in pixels.           |
-                //     |   14   |     2  |  Height of Image.                                          |
-                //     |        |        |  Integer ( lo-hi ) height of the image in pixels.          |
-                //     |   16   |     1  |  Image Pixel Size.                                         |
-                //     |        |        |  Number of bits in a pixel.  This is 16 for Targa 16,      |
-                //     |        |        |  24 for Targa 24, and .... well, you get the idea.         |
-                //     |   17   |     1  |  Image Descriptor Byte.                                    |
-                //     |        |        |  Bits 3-0 - number of attribute bits associated with each  |
-                //     |        |        |             pixel.  For the Targa 16, this would be 0 or   |
-                //     |        |        |             1.  For the Targa 24, it should be 0.  For     |
-                //     |        |        |             Targa 32, it should be 8.                      |
-                //     |        |        |  Bit 4    - reserved.  Must be set to 0.                   |
-                //     |        |        |  Bit 5    - screen origin bit.                             |
-                //     |        |        |             0 = Origin in lower left-hand corner.          |
-                //     |        |        |             1 = Origin in upper left-hand corner.          |
-                //     |        |        |             Must be 0 for Truevision images.               |
-                //     |        |        |  Bits 7-6 - Data storage interleaving flag.                |
-                //     |        |        |             00 = non-interleaved.                          |
-                //     |        |        |             01 = two-way (even/odd) interleaving.          |
-                //     |        |        |             10 = four way interleaving.                    |
-                //     |        |        |             11 = reserved.                                 |
-                //     |--------|--------|------------------------------------------------------------|
-                //     |   18   | varies |  Image Identification Field.                               |
-                //     |        |        |                                                            |
-                //     |        |        |  Contains a free-form identification field of the length   |
-                //     |        |        |  specified in byte 1 of the image record.  It's usually    |
-                //     |        |        |  omitted ( length in byte 1 = 0 ), but can be up to 255    |
-                //     |        |        |  characters.  If more identification information is        |
-                //     |        |        |  required, it can be stored after the image data.          |
-                //     |--------|--------|------------------------------------------------------------|
-                //     | varies | varies |  Color map data.                                           |
-                //     |        |        |                                                            |
-                //     |        |        |  If the Color Map Type is 0, this field doesn't exist.     |
-                //     |        |        |  Otherwise, just read past it to get to the image.         |
-                //     |        |        |  The Color Map Specification describes the size of each    |
-                //     |        |        |  entry, and the number of entries you'll have to skip.     |
-                //     |        |        |  Each color map entry is 2, 3, or 4 bytes.                 |
-                //     |--------|--------|------------------------------------------------------------|
-                //     | varies | varies |  Image Data Field.                                         |
-                //     |        |        |                                                            |
-                //     |        |        |  This field specifies (width) x (height) pixels.  Each     |
-                //     |        |        |  pixel specifies an RGB color value, which is stored as    |
-                //     |        |        |  an integral number of bytes.                              |
-                //     |        |        |  The 2 byte entry is broken down as follows:               |
-                //     |        |        |  ARRRRRGG GGGBBBBB, where each letter represents a bit.    |
-                //     |        |        |  But, because of the lo-hi storage order, the first byte   |
-                //     |        |        |  coming from the file will actually be GGGBBBBB, and the   |
-                //     |        |        |  second will be ARRRRRGG. "A" represents an attribute bit. |
-                //     |        |        |  The 3 byte entry contains 1 byte each of blue, green,     |
-                //     |        |        |  and red.                                                  |
-                //     |        |        |  The 4 byte entry contains 1 byte each of blue, green,     |
-                //     |        |        |  red, and attribute.  For faster speed (because of the     |
-                //     |        |        |  hardware of the Targa board itself), Targa 24 images are  |
-                //     |        |        |  sometimes stored as Targa 32 images.                      |
-                //     --------------------------------------------------------------------------------
-                // 
-            }
-            { // DATA TYPE 10: Run Length Encoded, RGB images
-                // 
-                // ________________________________________________________________________________
-                // | Offset | Length |                     Description                            |
-                // |--------|--------|------------------------------------------------------------|
-                // |    0   |     1  |  Number of Characters in Identification Field.             |
-                // |        |        |                                                            |
-                // |        |        |  This field is a one-byte unsigned integer, specifying     |
-                // |        |        |  the length of the Image Identification Field.  Its range  |
-                // |        |        |  is 0 to 255.  A value of 0 means that no Image            |
-                // |        |        |  Identification Field is included.                         |
-                // |--------|--------|------------------------------------------------------------|
-                // |    1   |     1  |  Color Map Type.                                           |
-                // |        |        |                                                            |
-                // |        |        |  This field contains either 0 or 1.  0 means no color map  |
-                // |        |        |  is included.  1 means a color map is included, but since  |
-                // |        |        |  this is an unmapped image it is usually ignored.  TIPS    |
-                // |        |        |  ( a Targa paint system ) will set the border color        |
-                // |        |        |  the first map color if it is present.  Wowie zowie.       |
-                // |--------|--------|------------------------------------------------------------|
-                // |    2   |     1  |  Image Type Code.                                          |
-                // |        |        |                                                            |
-                // |        |        |  Binary 10 for this type of image.                         |
-                // |--------|--------|------------------------------------------------------------|
-                // |    3   |     5  |  Color Map Specification.                                  |
-                // |        |        |                                                            |
-                // |        |        |  Ignored if Color Map Type is 0; otherwise, interpreted    |
-                // |        |        |  as follows:                                               |
-                // |    3   |     2  |  Color Map Origin.                                         |
-                // |        |        |  Integer ( lo-hi ) index of first color map entry.         |
-                // |    5   |     2  |  Color Map Length.                                         |
-                // |        |        |  Integer ( lo-hi ) count of color map entries.             |
-                // |    7   |     1  |  Color Map Entry Size.                                     |
-                // |        |        |  Number of bits in color map entry.  This value is 16 for  |
-                // |        |        |  the Targa 16, 24 for the Targa 24, 32 for the Targa 32.   |
-                // |--------|--------|------------------------------------------------------------|
-                // |    8   |    10  |  Image Specification.                                      |
-                // |        |        |                                                            |
-                // |    8   |     2  |  X Origin of Image.                                        |
-                // |        |        |  Integer ( lo-hi ) X coordinate of the lower left corner   |
-                // |        |        |  of the image.                                             |
-                // |   10   |     2  |  Y Origin of Image.                                        |
-                // |        |        |  Integer ( lo-hi ) Y coordinate of the lower left corner   |
-                // |        |        |  of the image.                                             |
-                // |   12   |     2  |  Width of Image.                                           |
-                // |        |        |  Integer ( lo-hi ) width of the image in pixels.           |
-                // |   14   |     2  |  Height of Image.                                          |
-                // |        |        |  Integer ( lo-hi ) height of the image in pixels.          |
-                // |   16   |     1  |  Image Pixel Size.                                         |
-                // |        |        |  Number of bits in a pixel.  This is 16 for Targa 16,      |
-                // |        |        |  24 for Targa 24, and .... well, you get the idea.         |
-                // |   17   |     1  |  Image Descriptor Byte.                                    |
-                // |        |        |  Bits 3-0 - number of attribute bits associated with each  |
-                // |        |        |             pixel.  For the Targa 16, this would be 0 or   |
-                // |        |        |             1.  For the Targa 24, it should be 0.  For the |
-                // |        |        |             Targa 32, it should be 8.                      |
-                // |        |        |  Bit 4    - reserved.  Must be set to 0.                   |
-                // |        |        |  Bit 5    - screen origin bit.                             |
-                // |        |        |             0 = Origin in lower left-hand corner.          |
-                // |        |        |             1 = Origin in upper left-hand corner.          |
-                // |        |        |             Must be 0 for Truevision images.               |
-                // |        |        |  Bits 7-6 - Data storage interleaving flag.                |
-                // |        |        |             00 = non-interleaved.                          |
-                // |        |        |             01 = two-way (even/odd) interleaving.          |
-                // |        |        |             10 = four way interleaving.                    |
-                // |        |        |             11 = reserved.                                 |
-                // |--------|--------|------------------------------------------------------------|
-                // |   18   | varies |  Image Identification Field.                               |
-                // |        |        |  Contains a free-form identification field of the length   |
-                // |        |        |  specified in byte 1 of the image record.  It's usually    |
-                // |        |        |  omitted ( length in byte 1 = 0 ), but can be up to 255    |
-                // |        |        |  characters.  If more identification information is        |
-                // |        |        |  required, it can be stored after the image data.          |
-                // |--------|--------|------------------------------------------------------------|
-                // | varies | varies |  Color map data.                                           |
-                // |        |        |                                                            |
-                // |        |        |  If the Color Map Type is 0, this field doesn't exist.     |
-                // |        |        |  Otherwise, just read past it to get to the image.         |
-                // |        |        |  The Color Map Specification, describes the size of each   |
-                // |        |        |  entry, and the number of entries you'll have to skip.     |
-                // |        |        |  Each color map entry is 2, 3, or 4 bytes.                 |
-                // |--------|--------|------------------------------------------------------------|
-                // | varies | varies |  Image Data Field.                                         |
-                // |        |        |                                                            |
-                // |        |        |  This field specifies (width) x (height) pixels.  The      |
-                // |        |        |  RGB color information for the pixels is stored in         |
-                // |        |        |  packets.  There are two types of packets:  Run-length     |
-                // |        |        |  encoded packets, and raw packets.  Both have a 1-byte     |
-                // |        |        |  header, identifying the type of packet and specifying a   |
-                // |        |        |  count, followed by a variable-length body.                |
-                // |        |        |  The high-order bit of the header is "1" for the           |
-                // |        |        |  run length packet, and "0" for the raw packet.            |
-                // |        |        |                                                            |
-                // |        |        |  For the run-length packet, the header consists of:        |
-                // |        |        |      __________________________________________________    |
-                // |        |        |      | 1 bit |   7 bit repetition count minus 1.      |    |
-                // |        |        |      |   ID  |   Since the maximum value of this      |    |
-                // |        |        |      |       |   field is 127, the largest possible   |    |
-                // |        |        |      |       |   run size would be 128.               |    |
-                // |        |        |      |-------|----------------------------------------|    |
-                // |        |        |      |   1   |  C     C     C     C     C     C    C  |    |
-                // |        |        |      --------------------------------------------------    |
-                // |        |        |                                                            |
-                // |        |        |  For the raw packet, the header consists of:               |
-                // |        |        |      __________________________________________________    |
-                // |        |        |      | 1 bit |   7 bit number of pixels minus 1.      |    |
-                // |        |        |      |   ID  |   Since the maximum value of this      |    |
-                // |        |        |      |       |   field is 127, there can never be     |    |
-                // |        |        |      |       |   more than 128 pixels per packet.     |    |
-                // |        |        |      |-------|----------------------------------------|    |
-                // |        |        |      |   0   |  N     N     N     N     N     N    N  |    |
-                // |        |        |      --------------------------------------------------    |
-                // |        |        |                                                            |
-                // |        |        |  For the run length packet, the header is followed by      |
-                // |        |        |  a single color value, which is assumed to be repeated     |
-                // |        |        |  the number of times specified in the header.  The         |
-                // |        |        |  packet may cross scan lines ( begin on one line and end   |
-                // |        |        |  on the next ).                                            |
-                // |        |        |  For the raw packet, the header is followed by             |
-                // |        |        |  the number of color values specified in the header.       |
-                // |        |        |  The color entries themselves are two bytes, three bytes,  |
-                // |        |        |  or four bytes ( for Targa 16, 24, and 32 ), and are       |
-                // |        |        |  broken down as follows:                                   |
-                // |        |        |  The 2 byte entry -                                        |
-                // |        |        |  ARRRRRGG GGGBBBBB, where each letter represents a bit.    |
-                // |        |        |  But, because of the lo-hi storage order, the first byte   |
-                // |        |        |  coming from the file will actually be GGGBBBBB, and the   |
-                // |        |        |  second will be ARRRRRGG. "A" represents an attribute bit. |
-                // |        |        |  The 3 byte entry contains 1 byte each of blue, green,     |
-                // |        |        |  and red.                                                  |
-                // |        |        |  The 4 byte entry contains 1 byte each of blue, green,     |
-                // |        |        |  red, and attribute.  For faster speed (because of the     |
-                // |        |        |  hardware of the Targa board itself), Targa 24 image are   |
-                // |        |        |  sometimes stored as Targa 32 images.                      |
-                // --------------------------------------------------------------------------------
-            }
-        }
-        
-        var buffer_header = allocator.alloc(u8, @sizeOf(Header)) catch return error.OutOfMemory;
-        defer allocator.free(buffer_header);
-        
-        var file = std.fs.cwd().openFile(file_path, .{}) catch return error.CantOpenFile;
-        defer file.close();
-
-        {
-            const read_size = file.read(buffer_header) catch return error.ReadHeader;
-            if (read_size != @sizeOf(Header)) return error.ReadHeader;
-        }
-        
-        // Parse the header only to figure out the size of the pixel data
-        const header: *Header = std.mem.bytesAsValue(Header, buffer_header[0..18]);
-
-        { // NOTE Example of a TGA header, the first 18 bytes and it after being parsed
-            // 
-            // 00000000   00 00 0A 00 00 00 00 00 00 00 00 00 00 04 00 04  ................
-            // 00000010   18 00 3F 37 45 58 3F 39 47 5A 3F 38 46 59 3F 37  ..?7EX?9GZ?8FY?7
-            // 00000020   45 58 3F 37 44 5A 00 36 44 57 3F 37 45 58 3F 38  EX?7DZ.6DW?7EX?8
-            // 00000030   46 59 00 36 42 5A 3F 35 41 59 00 36 42 5A 3F 37  FY.6BZ?5AY.6BZ?7
-            // 00000040   43 5B 3F 37 45 58 3F 36 44 57 07 35 41 59 36 43  C[?7EX?6DW.5AY6C
-            // 00000050   59 37 44 5A 38 45 5B 38 46 59 37 45 58 36 44 56  Y7DZ8E[8FY7EX6DV
-            // 00000060   35 43 55 3F 37 45 58 3F 34 42 55 00 33 41 54 3F  5CU?7EX?4BU.3AT?
-            // 00000070   32 40 53 00 33 41 54 3F 31 3F 52 3F 32 40 53 3F  2@S.3AT?1?R?2@S?
-            // 
-            // std.debug.print("{?}", .{header.*});
-            // 
-            //     Header {
-            //         .id_length = 0,
-            //         .color_map_type = 0,
-            //         .data_type = DataTypeCode.RunLengthEncodedRgb,
-            //         .color_map_spec = ColorMapSpecification {
-            //             .origin = 0,
-            //             .length = 0,
-            //             .entry_size = 0
-            //         },
-            //         .image_spec = ImageSpecification {
-            //             .x_origin = 0,
-            //             .y_origin = 0,
-            //             .width = 1024,
-            //             .height = 1024,
-            //             .bits_per_pixel = BitsPerPixel.RGB,
-            //             .image_descriptor = ImageDescriptorByte { .the_byte = 0 }
-            //         }
-            //     };
-            //
-        } 
-        
-        { // validate the file
-            // only care about RGB and RGBA images
-            switch (@intFromEnum(header.image_spec.bits_per_pixel)) {
-                24, 32 => {},
-                else => return error.FileNotSupported,
-            }
-            // only care about non color mapped, non compressed files
-            // 2023/06/29 and now also run length encoded rgb images!
-            switch (@intFromEnum(header.data_type)) {
-                2, 10 => {},
-                else => return error.FileNotSupported,
-            }
-            // if its not color mapped why does it have a color map?
-            if (header.color_map_type != 0) {
-                // const color_map_size = @intCast(usize, @intCast(i16, header.color_map_spec.entry_size) * header.color_map_spec.length);
-                return error.MalformedTgaFile;
-            }
-            // this shouldn't be a thing, probably...
-            if (header.image_spec.width <= 0 or header.image_spec.height <= 0) return error.MalformedTgaFile;
-        }
-        const width: usize = @intCast(header.image_spec.width);
-        const height: usize = @intCast(header.image_spec.height);
-
-        // If there is a comment/id or whatever, skip it
-        const id_length: usize = @intCast(header.id_length);
-        if (id_length > 0) {
-            file.seekTo(@sizeOf(Header) + id_length) catch return error.SeekTo;
-        }
-    
-        // NOTE If there was a color map that would have to be skipped but for now we just assume there is not, but beware of malformed tga files I guess
-
-        switch (header.data_type) {
-            DataTypeCode.RunLengthEncodedRgb => {
-                { // NOTE some details on how to parse run length encoded
-                    // > This field specifies (width) x (height) pixels. The RGB color information for the pixels is stored in packets. There are two types of packets: Run-length
-                    // > encoded packets, and raw packets. Both have a 1-byte header, identifying the type of packet and specifying a count, followed by a variable-length body.
-                    // > The high-order bit of the header is "1" for the run length packet, and "0" for the raw packet.
-                    // > 
-                    // > For the run-length packet, the header consists of:
-                    // >     __________________________________________________
-                    // >     | 1 bit |   7 bit repetition count minus 1.      |
-                    // >     |   ID  |   Since the maximum value of this      |
-                    // >     |       |   field is 127, the largest possible   |
-                    // >     |       |   run size would be 128.               |
-                    // >     |-------|----------------------------------------|
-                    // >     |   1   |  C     C     C     C     C     C    C  |
-                    // >     --------------------------------------------------
-                    // >
-                    // > For the raw packet, the header consists of:
-                    // >     __________________________________________________
-                    // >     | 1 bit |   7 bit number of pixels minus 1.      |
-                    // >     |   ID  |   Since the maximum value of this      |
-                    // >     |       |   field is 127, there can never be     |
-                    // >     |       |   more than 128 pixels per packet.     |
-                    // >     |-------|----------------------------------------|
-                    // >     |   0   |  N     N     N     N     N     N    N  |
-                    // >     --------------------------------------------------
-                    // >
-                    // > For the run length packet, the header is followed by a single color value, which is assumed to be repeated the number of times specified in the header.
-                    // > The packet may cross scan lines ( begin on one line and end on the next ).
-                    // > For the raw packet, the header is followed by the number of color values specified in the header.
-                    // > The color entries themselves are two bytes, three bytes, or four bytes ( for Targa 16, 24, and 32 ), and are broken down as follows:
-                    // > The 2 byte entry - ARRRRRGG GGGBBBBB, where each letter represents a bit. But, because of the lo-hi storage order, the first byte coming from the file will actually be GGGBBBBB, and the
-                    // > second will be ARRRRRGG. "A" represents an attribute bit. The 3 byte entry contains 1 byte each of blue, green, and red. The 4 byte entry contains 1 byte each of blue, green,
-                    // > red, and attribute. For faster speed (because of the hardware of the Targa board itself), Targa 24 image are sometimes stored as Targa 32 images.
-                }
-                
-                // Allocate anough memory to store the pixel data
-                const pixel_data_size = width * height * @as(usize, @intCast(@divExact(@intFromEnum(header.image_spec.bits_per_pixel), 8)));
-                var buffer_pixel_data: []u8 = allocator.alloc(u8, pixel_data_size) catch return error.OutOfMemory;
-
-                var pixel_packet_header: [1]u8 = undefined;
-                var pixel_index: usize = 0;
-                while (pixel_index < width * height) {
-                    const read_size = file.read(&pixel_packet_header) catch return error.ReadPixelDataHeader;
-                    if (read_size != 1) return error.ReadPixelDataHeaderReadSize;
-                    const is_run_length_packet = (pixel_packet_header[0] >> 7) == 1;
-                    const count: usize = @as(usize, @intCast(pixel_packet_header[0] & 0b01111111)) + 1;
-                    std.debug.assert(count <= 128);
-                    if (is_run_length_packet) {
-                        switch (header.image_spec.bits_per_pixel) {
-                            .RGB => {
-                                var color: [@sizeOf(RGB)]u8 = undefined;
-                                const read_bytes = file.read(&color) catch return error.ReadPixelData;
-                                std.debug.assert(read_bytes == @sizeOf(RGB));
-                                for (pixel_index .. pixel_index+count) |i| {
-                                    std.mem.copyForwards(u8, buffer_pixel_data[i*@sizeOf(RGB)..i*@sizeOf(RGB)+@sizeOf(RGB)], &color);
-                                }
-                            },
-                            .RGBA => {
-                                var color: [@sizeOf(RGBA)]u8 = undefined;
-                                const read_bytes = file.read(&color) catch return error.ReadPixelData;
-                                std.debug.assert(read_bytes == @sizeOf(RGBA));
-                                for (pixel_index .. pixel_index+count) |i| {
-                                    std.mem.copyForwards(u8, buffer_pixel_data[i*@sizeOf(RGBA)..i*@sizeOf(RGBA)+@sizeOf(RGBA)], &color);
-                                }
-                            },
-                        }
-                    }
-                    else {
-                        switch (header.image_spec.bits_per_pixel) {
-                            .RGB => {
-                                // there can never be more than [@sizeOf(RGBA)*128]u8 bytes worth of pixel data per packet, but there can be less.
-                                var color: [@sizeOf(RGB)*128]u8 = undefined;
-                                const read_bytes = file.read(color[0..count*@sizeOf(RGB)]) catch return error.ReadPixelData;
-                                std.debug.assert(read_bytes == count*@sizeOf(RGB));
-                                std.mem.copyForwards(
-                                    u8,
-                                    buffer_pixel_data[pixel_index*@sizeOf(RGB) .. pixel_index*@sizeOf(RGB) + count*@sizeOf(RGB)],
-                                    color[0 .. count*@sizeOf(RGB)]
-                                );
-                            },
-                            .RGBA => {
-                                // there can never be more than [@sizeOf(RGBA)*128]u8 bytes worth of pixel data per packet, but there can be less.
-                                var color: [@sizeOf(RGBA)*128]u8 = undefined;
-                                const read_bytes = file.read(color[0..count*@sizeOf(RGBA)]) catch return error.ReadPixelData;
-                                std.debug.assert(read_bytes == count*@sizeOf(RGBA));
-                                std.mem.copyForwards(
-                                    u8,
-                                    buffer_pixel_data[pixel_index*@sizeOf(RGBA) .. pixel_index*@sizeOf(RGBA) + count*@sizeOf(RGBA)],
-                                    color[0 .. count*@sizeOf(RGBA)]
-                                );
-                            },
-                        }
-                    }
-                    pixel_index += count;
-                }
-                std.debug.assert(pixel_index == width * height);
-                return switch (header.image_spec.bits_per_pixel) {
-                    .RGB => AnyBuffer2D { .rgb = Buffer2D(RGB).init(std.mem.bytesAsSlice(RGB, buffer_pixel_data), width) },
-                    .RGBA => AnyBuffer2D { .rgba = Buffer2D(RGBA).init(std.mem.bytesAsSlice(RGBA, buffer_pixel_data), width)  },
-                };
-            },
-            DataTypeCode.UncompressedRgb => {
-                // Only thing left is to read the pixel data
-                const pixel_data_size = width * height * @as(usize, @intCast(@divExact(@intFromEnum(header.image_spec.bits_per_pixel), 8)));
-                var buffer_pixel_data: []u8 = allocator.alloc(u8, pixel_data_size) catch return error.OutOfMemory;
-                // allocate and let the caller handle its lifetime
-                {
-                    const read_size = file.read(buffer_pixel_data) catch return error.ReadPixelData;
-                    if (read_size != pixel_data_size) return error.ReadPixelData;
-                }
-
-                return switch (header.image_spec.bits_per_pixel) {
-                    .RGB => AnyBuffer2D { .rgb = Buffer2D(RGB).init(std.mem.bytesAsSlice(RGB, buffer_pixel_data), width) },
-                    .RGBA => AnyBuffer2D { .rgba = Buffer2D(RGBA).init(std.mem.bytesAsSlice(RGBA, buffer_pixel_data), width)  },
-                };
-            }
-        }
-    }
 };
 
 const imgui_win32_impl = struct {
 
     const Context = struct {
-        hWnd: win32.HWND,
+        hWnd: win32.c.HWND,
         Time: i64,
         TicksPerSecond: i64,
     };
     
-    fn init(context: *Context, window_handle: win32.HWND, out_font_texture: *Buffer2D(RGBA)) void {
+    fn init(context: *Context, window_handle: win32.c.HWND, out_font_texture: *Buffer2D(RGBA)) void {
         const io = imgui.c.igGetIO();        
         io.*.BackendPlatformUserData = context;
         context.hWnd = window_handle;
-        var counter: win32.LARGE_INTEGER = undefined;
-        var performance_frequency: win32.LARGE_INTEGER = undefined;
-        _ = win32.QueryPerformanceCounter(&counter);
-        _ = win32.QueryPerformanceFrequency(&performance_frequency);
+        var counter: win32.c.LARGE_INTEGER = undefined;
+        var performance_frequency: win32.c.LARGE_INTEGER = undefined;
+        _ = win32.c.QueryPerformanceCounter(&counter);
+        _ = win32.c.QueryPerformanceFrequency(&performance_frequency);
         context.TicksPerSecond = performance_frequency.QuadPart;
         context.Time = counter.QuadPart;
 
@@ -1644,8 +153,7 @@ const imgui_win32_impl = struct {
         imgui.c.ImFontAtlas_GetTexDataAsRGBA32(io.*.Fonts, &out_pixels, &out_width, &out_height, &out_bytes_per_pixel);
 
         const total_size: usize = @intCast(out_width * out_height);
-        // out_font_texture.* = Buffer2D(RGBA).init(@ptrCast(out_pixels[0..total_size]), out_width);
-        out_font_texture.* = Buffer2D(RGBA).init(std.mem.bytesAsSlice(RGBA, @as([]u8, @ptrCast(out_pixels[0..total_size]))), @intCast(out_width));
+        out_font_texture.* = Buffer2D(RGBA).from(std.mem.bytesAsSlice(RGBA, @as([]u8, @ptrCast(out_pixels[0..total_size]))), @intCast(out_width));
         imgui.c.ImFontAtlas_SetTexID(io.*.Fonts, out_font_texture);
     }
 
@@ -1676,7 +184,7 @@ const imgui_win32_impl = struct {
                 const render_context = imgui_renderer.Context {
                     .texture = texture.*,
                     .texture_width = texture.width,
-                    .texture_height = texture.height(),
+                    .texture_height = texture.height,
                     .projection_matrix = projection_matrix,
                 };
                 const render_requirements = imgui_renderer.pipeline_configuration.Requirements() {
@@ -1684,7 +192,7 @@ const imgui_win32_impl = struct {
                     .index_buffer = index_buffer.used_slice()[command.IdxOffset..],
                     .scissor_rect = clip,
                 };
-                if (true) imgui_renderer.Pipeline.render(pixel_buffer, render_context, vertex_data, command.ElemCount / 3, render_requirements);
+                imgui_renderer.Pipeline.render(pixel_buffer, render_context, vertex_data, command.ElemCount / 3, render_requirements);
             }
         }
     }
@@ -1692,159 +200,42 @@ const imgui_win32_impl = struct {
     fn setup_new_frame(context: *Context) void {
         const io = imgui.c.igGetIO();
 
-        var mouse_current: win32.POINT = undefined;
-        _ = win32.GetCursorPos(&mouse_current);
+        var mouse_current: win32.c.POINT = undefined;
+        _ = win32.c.GetCursorPos(&mouse_current);
 
         imgui.c.ImGuiIO_AddMousePosEvent(io,
             @as(f32, @floatFromInt(mouse_current.x)),
             @as(f32, @floatFromInt(mouse_current.y))
         );
         
-        var rect: win32.RECT = undefined;
-        _ = win32.GetClientRect(context.hWnd, &rect);
+        var rect: win32.c.RECT = undefined;
+        _ = win32.c.GetClientRect(context.hWnd, &rect);
         const client_width = rect.right - rect.left;
         const client_height = rect.bottom - rect.top;
 
         io.*.DisplaySize = imgui.c.ImVec2 { .x = @floatFromInt(client_width), .y = @floatFromInt(client_height) };
 
-        var current_time: win32.LARGE_INTEGER = undefined;
-        _ = win32.QueryPerformanceCounter(&current_time);
+        var current_time: win32.c.LARGE_INTEGER = undefined;
+        _ = win32.c.QueryPerformanceCounter(&current_time);
         io.*.DeltaTime = @as(f32, @floatFromInt(current_time.QuadPart - context.Time)) / @as(f32, @floatFromInt(context.TicksPerSecond));
         context.Time = current_time.QuadPart;
     }
 
 };
-/// top = y = window height, bottom = y = 0
-fn line(comptime pixel_type: type, buffer: Buffer2D(pixel_type), a: Vector2i, b: Vector2i, color: pixel_type) void {
-    
-    if (a.x == b.x and a.y == b.y) {
-        // a point
-        buffer.set(@intCast(a.x), @intCast(a.y), color);
-        return;
-    }
-
-    const delta = a.substract(b);
-
-    if (delta.x == 0) {
-        // vertical line drawn bottom to top
-        var top = &a;
-        var bottom = &b;
-        if (delta.y < 0) {
-            top = &b;
-            bottom = &a;
-        }
-
-        const x = a.x;
-        var y = bottom.y;
-        while (y != top.y + 1) : (y += 1) {
-            buffer.set(@intCast(x), @intCast(y), color);
-        }
-        return;
-    }
-    else if (delta.y == 0) {
-        // horizontal line drawn left to right
-        var left = &a;
-        var right = &b;
-        if (delta.x > 0) {
-            left = &b;
-            right = &a;
-        }
-
-        const y = a.y;
-        var x = left.x;
-        while (x != right.x + 1) : (x += 1) {
-            buffer.set(@intCast(x), @intCast(y), color);
-        }
-        return;
-    }
-
-    const delta_x_abs = @abs(delta.x);
-    const delta_y_abs = @abs(delta.y);
-
-    if (delta_x_abs == delta_y_abs) {
-        if (a.y < b.y) { // draw a to b so that memory is modified in the "correct order"
-            const diff: i32 = if (a.x < b.x) 1 else -1;
-            var x = a.x;
-            var y = a.y;
-            while (x != b.x) {
-                buffer.set(@intCast(x), @intCast(y), color);
-                x += diff;
-                y += 1;
-            }
-        }
-        else { // draw b to a so that memory is modified in the "correct order"
-            const diff: i32 = if (a.x < b.x) -1 else 1;
-            var x = b.x;
-            var y = b.y;
-            while (x != a.x) {
-                buffer.set(@intCast(x), @intCast(y), color);
-                x += diff;
-                y += 1;
-            }
-        }
-        return;
-    }
-    
-    if (delta_x_abs > delta_y_abs) {
-        // draw horizontally
-        
-        var left = &a;
-        var right = &b;
-
-        if (delta.x > 0) {
-            left = &b;
-            right = &a;
-        }
-
-        const increment = 1 / @as(f32, @floatFromInt(delta_x_abs));
-        var percentage_of_line_done: f32 = 0;
-        
-        var x = left.x;
-        while (x <= right.x) : (x += 1) {
-            // linear interpolation to figure out `y`
-            const y = left.y + @as(i32, @intFromFloat(@as(f32, @floatFromInt(right.y - left.y)) * percentage_of_line_done));
-            buffer.set(@intCast(x), @intCast(y), color);
-            percentage_of_line_done += increment;
-        }
-    }
-    else if (delta_x_abs < delta_y_abs) {
-        // draw vertically
-
-        var top = &a;
-        var bottom = &b;
-
-        if (delta.y > 0) {
-            top = &b;
-            bottom = &a;
-        }
-
-        const increment = 1 / @as(f32, @floatFromInt(delta_y_abs));
-        var percentage_of_line_done: f32 = 0;
-
-        var y = top.y;
-        while (y <= bottom.y) : (y += 1) {
-            const x = top.x + @as(i32, @intFromFloat(@as(f32, @floatFromInt(bottom.x - top.x)) * percentage_of_line_done));
-            buffer.set(@intCast(x), @intCast(y), color);
-            percentage_of_line_done += increment;
-        }
-
-    }
-    else unreachable;
-}
 
 const State = struct {
     x: i32,
     y: i32,
     w: i32,
     h: i32,
-    render_target: win32.BITMAPINFO,
+    render_target: win32.c.BITMAPINFO,
     pixel_buffer: Buffer2D(win32.RGBA),
     running: bool,
     mouse: Vector2i,
     keys: [256]bool,
     
     depth_buffer: Buffer2D(f32),
-    texture: AnyBuffer2D,
+    texture: Buffer2D(RGB),
     vertex_buffer: []f32,
     camera: Camera,
     view_matrix: M44,
@@ -1884,120 +275,10 @@ var state = State {
 
 pub fn main() !void {
 
-    // debug: clipping
-    // debug: T.A: 1.4218, -1.5104, 0.8418
-    // debug: T.B: 0.2564, -1.5104, 0.8418
-    // debug: T.C: 0.2564, -0.1119, 0.8418
-    // debug: clipped to...
-    // debug: T.A: 1.0000, -1.5104, 0.8418
-    // debug: T.B: 1.0000, -1.0042, 0.8418
-    // debug: T.C: 0.2564, -1.5104, 0.8418
-    // debug: T.A: 0.2564, -1.0000, 0.8418
-    // debug: T.B: 0.9965, -1.0000, 0.8418
-    // debug: T.C: 0.2564, -0.1119, 0.8418
-    // debug: 2 sub triangles
-    // debug: rasterize_1
-    // debug: T.A: 600.0000, -127.5946, 214.6465
-    // debug: T.B: 600.0000, -1.0526, 214.6465
-    // debug: T.C: 376.9174, -127.5946, 214.6465
-    // thread 14864 panic: integer part of floating point value out of bounds
-    // C:\Users\oscara\git_projects\tinyrenderer\src\windows.zig:2993:37: 0x7ff7b1c5ab83 in rasterize_1 (windows.exe.obj)
-    //                 var bottom: usize = @intFromFloat(@min(a.y, @min(b.y, c.y)));
-
-    // const tri = [3]Vector3f {
-    //     Vector3f.from(1.4218, -1.5104, 0.8418),
-    //     Vector3f.from(0.2564, -1.5104, 0.8418),
-    //     Vector3f.from(0.2564, -0.1119, 0.8418),
-    // };
-
-    // const TriangleQueue = std.DoublyLinkedList([3]Vector3f);
-    // var data: std.ArrayList(TriangleQueue.Node) = std.ArrayList(TriangleQueue.Node).initCapacity(std.heap.c_allocator, 30) catch unreachable;
-    // defer data.clearAndFree();
-    // var final = TriangleQueue {};
-    // var queue = TriangleQueue {};
-    // data.appendAssumeCapacity(.{.data=tri});
-    // queue.append(&data.items[0]);
-    // const left_bottom_near = Vector3f {.x = -1, .y = -1, .z = 0};
-    // const right_top_far = Vector3f {.x = 1, .y = 1, .z = 1};
-    // const frustum = comptime Frustum {
-    //     .left = Plane.from(left_bottom_near, Vector3f { .x = 1, .y = 0, .z = 0}),
-    //     .right = Plane.from(right_top_far, Vector3f { .x = -1, .y = 0, .z = 0}),
-    //     .bottom = Plane.from(left_bottom_near, Vector3f { .x = 0, .y = 1, .z = 0}),
-    //     .top = Plane.from(right_top_far, Vector3f { .x = 0, .y = -1, .z = 0}),
-    //     .near = Plane.from(left_bottom_near, Vector3f { .x = 0, .y = 0, .z = 1}),
-    //     .far = Plane.from(right_top_far, Vector3f { .x = 0, .y = 0, .z = -1}),
-    // };
-    // inline for (@typeInfo(Frustum).Struct.fields) |field| {
-    //     const p: Plane = @field(frustum, field.name);
-        
-    //     while (final.popFirst()) |t| {
-    //         queue.append(t);
-    //     }
-        
-    //     while (queue.popFirst()) |t| {
-
-    //         var out: usize = 0;
-    //         var out_index: [3]usize = undefined;
-    //         inline for (0..3) |i| {
-    //             // if (p.classify_point(t.data[i]) != .positive) {
-    //             if (p.classify_point(t.data[i]) == .negative) {
-    //                 out_index[out] = i;
-    //                 out += 1;
-    //             }
-    //         }
-
-    //         var new_tri_count: usize = 0;
-    //         var new_tri: [2][3]Vector3f = undefined;
-    //         if (out == 1) {
-    //             const i = out_index[0];
-    //             const intersection_a = p.intersection(t.data[i], t.data[(i+1)%3]);
-    //             const intersection_b = p.intersection(t.data[i], t.data[(i+2)%3]);
-    //             new_tri[new_tri_count] = [3]Vector3f{
-    //                 intersection_a, intersection_b, t.data[(i+1)%3]
-    //             };
-    //             new_tri[new_tri_count+1] = [3]Vector3f{
-    //                 t.data[(i+1)%3], t.data[(i+2)%3], intersection_b
-    //             };
-    //             new_tri_count += 2;
-    //         }
-    //         else if (out == 2) {
-    //             const index1 = out_index[0];
-    //             const index2 = out_index[1];
-    //             const index_ok = 3 - index1 - index2;
-    //             const intersection_a = p.intersection(t.data[index1], t.data[index_ok]);
-    //             const intersection_b = p.intersection(t.data[index2], t.data[index_ok]);
-    //             new_tri[new_tri_count] = [3]Vector3f{
-    //                 intersection_a, intersection_b, t.data[index_ok]
-    //             };
-    //             new_tri_count += 1;
-    //         }
-    //         else {
-    //             final.append(t);
-    //         }
-
-    //         if (new_tri_count >= 1) {
-    //             const ptr = data.addOneAssumeCapacity();
-    //             ptr.* = .{.data = new_tri[0] };
-    //             final.append(ptr);
-    //         }
-    //         if  (new_tri_count >= 2) {
-    //             const ptr = data.addOneAssumeCapacity();
-    //             ptr.* = .{.data = new_tri[1] };
-    //             final.append(ptr);
-    //         }
-    //     }
-    // }
-
-    // var n = final.first;
-    // while (n) |node| {
-    //     // ...
-    //     n = node.next;
-    // }
-
     const allocator = std.heap.page_allocator;
-    const instance_handle = win32.GetModuleHandleW(null);
-    const window_class_name = win32.L("doesntmatter");
-    const window_class = win32.WNDCLASSW {
+    const instance_handle = win32.c.GetModuleHandleW(null);
+    const window_class_name = win32.c.L("doesntmatter");
+    const window_class = win32.c.WNDCLASSW {
         .style = @enumFromInt(0),
         .lpfnWndProc = window_callback,
         .cbClsExtra = 0,
@@ -2012,56 +293,53 @@ pub fn main() !void {
     
     state.render_target.bmiHeader.biSize = @sizeOf(@TypeOf(state.render_target.bmiHeader));
     state.render_target.bmiHeader.biWidth = state.w;
+    // NOTE from the ms docs
     // > StretchDIBits creates a top-down image if the sign of the biHeight member of the BITMAPINFOHEADER structure for the DIB is negative
     // > The origin of a bottom-up DIB is the lower-left corner; the origin of a top-down DIB is the upper-left corner.
     state.render_target.bmiHeader.biHeight = state.h;
-    //  _______________________________
-    // |                               |
-    // |   `biPlanes` must be one      |
-    // |                    -Microsoft |
-    // '_______________________________'
     state.render_target.bmiHeader.biPlanes = 1;
     state.render_target.bmiHeader.biBitCount = 32;
-    state.render_target.bmiHeader.biCompression = win32.BI_RGB;
+    state.render_target.bmiHeader.biCompression = win32.c.BI_RGB;
 
     state.pixel_buffer.data = try allocator.alloc(win32.RGBA, @intCast(state.w * state.h));
     state.pixel_buffer.width = @intCast(state.w);
     defer allocator.free(state.pixel_buffer.data);
 
-    _ = win32.RegisterClassW(&window_class);
-    defer _ = win32.UnregisterClassW(window_class_name, instance_handle);
+    _ = win32.c.RegisterClassW(&window_class);
+    defer _ = win32.c.UnregisterClassW(window_class_name, instance_handle);
     
-    const window_handle_maybe = win32.CreateWindowExW(
+    const window_handle_maybe = win32.c.CreateWindowExW(
         @enumFromInt(0),
         window_class_name,
-        win32.L("win32 zig window"),
-        @enumFromInt(@intFromEnum(win32.WS_POPUP) | @intFromEnum(win32.WS_OVERLAPPED) | @intFromEnum(win32.WS_THICKFRAME) | @intFromEnum(win32.WS_CAPTION) | @intFromEnum(win32.WS_SYSMENU) | @intFromEnum(win32.WS_MINIMIZEBOX) | @intFromEnum(win32.WS_MAXIMIZEBOX)),
+        win32.c.L("win32 zig window"),
+        @enumFromInt(@intFromEnum(win32.c.WS_POPUP) | @intFromEnum(win32.c.WS_OVERLAPPED) | @intFromEnum(win32.c.WS_THICKFRAME) | @intFromEnum(win32.c.WS_CAPTION) | @intFromEnum(win32.c.WS_SYSMENU) | @intFromEnum(win32.c.WS_MINIMIZEBOX) | @intFromEnum(win32.c.WS_MAXIMIZEBOX)),
         state.x, state.y, state.w, state.h,
         null, null, instance_handle, null
     );
     
     if (window_handle_maybe) |window_handle| {
-        _ = win32.ShowWindow(window_handle, .SHOW);
-        defer _ = win32.DestroyWindow(window_handle);
+        _ = win32.c.ShowWindow(window_handle, .SHOW);
+        defer _ = win32.c.DestroyWindow(window_handle);
 
         // Make sure that client area and state.width/height match
         {
-            var rect: win32.RECT = undefined;
-            _ = win32.GetClientRect(window_handle, &rect);
+            var rect: win32.c.RECT = undefined;
+            _ = win32.c.GetClientRect(window_handle, &rect);
             const client_width: i32 = rect.right - rect.left;
             const client_height: i32 = rect.bottom - rect.top;
 
             const dw: i32 = state.w - client_width;
             const dh: i32 = state.h - client_height;
 
-            var window_placement: win32.WINDOWPLACEMENT = undefined;
-            _ = win32.GetWindowPlacement(window_handle, &window_placement);
-            _ = win32.MoveWindow(window_handle, 1920/2/2, 1080/2/2, state.w+dw, state.h+dh, win32.falsei32);
+            var window_placement: win32.c.WINDOWPLACEMENT = undefined;
+            _ = win32.c.GetWindowPlacement(window_handle, &window_placement);
+            _ = win32.c.MoveWindow(window_handle, 1920/2/2, 1080/2/2, state.w+dw, state.h+dh, @intFromEnum(win32.c.False));
         }
 
-        { // Initialize the application state
+        // Initialize the application state
+        {
             // Create the z-buffer
-            state.depth_buffer = Buffer2D(f32) { .data = try allocator.alloc(f32, @intCast(state.w * state.h)), .width = @intCast(state.w) };
+            state.depth_buffer = Buffer2D(f32).from(try allocator.alloc(f32, @intCast(state.w * state.h)), @intCast(state.w));
             
             // Initialize the imgui stuff
             const imgui_context = imgui.c.igCreateContext(null);
@@ -2069,7 +347,7 @@ pub fn main() !void {
             imgui_win32_impl.init(&state.imgui_platform_context, window_handle, &state.imgui_font_texture);
 
             // Load the diffuse texture data
-            state.texture = TGA.from_file(allocator, "res/african_head_diffuse.tga")
+            state.texture = TGA.from_file(RGB, allocator, "res/african_head_diffuse.tga")
                 catch |err| { std.debug.print("error reading `res/african_head_diffuse.tga` {?}", .{err}); return; };
             
             state.vertex_buffer = OBJ.from_file(allocator, "res/african_head.obj")
@@ -2082,27 +360,28 @@ pub fn main() !void {
             state.time = 0;
         }
 
-        defer { // Deinitialize the application state
+        // Deinitialize the application state
+        defer {
             allocator.free(state.depth_buffer.data);
-            switch(state.texture) { inline else => |buffer| allocator.free(buffer.data) }
+            allocator.free(state.texture.data);
             allocator.free(state.vertex_buffer);
         }
         
         var cpu_counter: i64 = blk: {
-            var counter: win32.LARGE_INTEGER = undefined;
-            _ = win32.QueryPerformanceCounter(&counter);
+            var counter: win32.c.LARGE_INTEGER = undefined;
+            _ = win32.c.QueryPerformanceCounter(&counter);
             break :blk counter.QuadPart;
         };
         const cpu_counter_first: i64 = cpu_counter;
         const cpu_frequency_seconds: i64 = blk: {
-            var performance_frequency: win32.LARGE_INTEGER = undefined;
-            _ = win32.QueryPerformanceFrequency(&performance_frequency);
+            var performance_frequency: win32.c.LARGE_INTEGER = undefined;
+            _ = win32.c.QueryPerformanceFrequency(&performance_frequency);
             break :blk performance_frequency.QuadPart;
         };
 
         { // Set the initial mouse state to wherever the mouse is when the app is initialized
-            var mouse_current: win32.POINT = undefined;
-            _ = win32.GetCursorPos(&mouse_current);
+            var mouse_current: win32.c.POINT = undefined;
+            _ = win32.c.GetCursorPos(&mouse_current);
             state.mouse.x = mouse_current.x;
             state.mouse.y = mouse_current.y;
         }
@@ -2116,8 +395,8 @@ pub fn main() !void {
             var fps: i64 = undefined;
             var ms: f64 = undefined;
             { // calculate fps and ms
-                var new_counter: win32.LARGE_INTEGER = undefined;
-                _ = win32.QueryPerformanceCounter(&new_counter);
+                var new_counter: win32.c.LARGE_INTEGER = undefined;
+                _ = win32.c.QueryPerformanceCounter(&new_counter);
                 var counter_difference = new_counter.QuadPart - cpu_counter;
                 // TODO sometimes it comes out as 0????? not sure why but its not important right now
                 if (counter_difference == 0) counter_difference = 1;
@@ -2126,31 +405,32 @@ pub fn main() !void {
                 cpu_counter = new_counter.QuadPart;
             }
             const counted_since_start = cpu_counter - cpu_counter_first;
+            _ = counted_since_start;
 
             { // windows message loop
-                var message: win32.MSG = undefined;
-                while (win32.PeekMessageW(&message, null,  0, 0, .REMOVE) != win32.falsei32) {
-                    _ = win32.TranslateMessage(&message);
-                    _ = win32.DispatchMessageW(&message);
+                var message: win32.c.MSG = undefined;
+                while (win32.c.PeekMessageW(&message, null,  0, 0, .REMOVE) != @intFromEnum(win32.c.False)) {
+                    _ = win32.c.TranslateMessage(&message);
+                    _ = win32.c.DispatchMessageW(&message);
 
                     // TODO Any windows messages that the application needs to read should happen here
                     switch (message.message) {
-                        win32.WM_QUIT => state.running = false,
+                        win32.c.WM_QUIT => state.running = false,
                         else => {},
                     }
                 }
             }
 
-            var rect: win32.RECT = undefined;
-            _ = win32.GetClientRect(window_handle, &rect);
+            var rect: win32.c.RECT = undefined;
+            _ = win32.c.GetClientRect(window_handle, &rect);
             const client_width = rect.right - rect.left;
             const client_height = rect.bottom - rect.top;
             std.debug.assert(client_height == state.h);
             std.debug.assert(client_width == state.w);
 
             const mouse_previous = state.mouse;
-            var mouse_current: win32.POINT = undefined;
-            _ = win32.GetCursorPos(&mouse_current);
+            var mouse_current: win32.c.POINT = undefined;
+            _ = win32.c.GetCursorPos(&mouse_current);
             const factor: f32 = 0.02;
             const mouse_dx: f32 = @as(f32, @floatFromInt(mouse_current.x - mouse_previous.x)) * factor;
             const mouse_dy: f32 = @as(f32, @floatFromInt(mouse_current.y - mouse_previous.y)) * factor;
@@ -2160,19 +440,19 @@ pub fn main() !void {
             var app_close_requested = false;
             { // tick / update
                 
-                const white = win32.rgb(255, 255, 255);
+                // const white = win32.rgb(255, 255, 255);
                 const red = win32.rgb(255, 0, 0);
-                const green = win32.rgb(0, 255, 0);
+                // const green = win32.rgb(0, 255, 0);
                 const blue = win32.rgb(0, 0, 255);
-                const turquoise = win32.rgb(0, 255, 255);
+                // const turquoise = win32.rgb(0, 255, 255);
                 
                 // Clear the screen and the zbuffer
-                for (state.pixel_buffer.data) |*pixel| { pixel.* = win32.rgb(100, 149, 237); }
-                for (state.depth_buffer.data) |*value| { value.* = 999999; }
+                state.pixel_buffer.clear(win32.rgb(100, 149, 237));
+                state.depth_buffer.clear(999999);
 
                 if (state.keys['T']) state.time += ms;
 
-                // move camera direction based on mouse movement
+                // camera movement with mouse
                 const mouse_sensitivity = 0.60;
                 const up = Vector3f {.x = 0, .y = 1, .z = 0 };
                 const real_right = state.camera.direction.cross_product(up).normalized();
@@ -2185,7 +465,7 @@ pub fn main() !void {
                     state.camera.direction.normalize();
                 }
                 
-                // move the camera position based on WASD and QE
+                // camera position with AWSD and QE
                 if (state.keys['W']) state.camera.position = state.camera.position.add(state.camera.direction.scale(0.02));
                 if (state.keys['S']) state.camera.position = state.camera.position.add(state.camera.direction.scale(-0.02));
                 if (state.keys['A']) state.camera.position = state.camera.position.add(real_right.scale(-0.02));
@@ -2193,43 +473,22 @@ pub fn main() !void {
                 if (state.keys['Q']) state.camera.position.y += 0.02;
                 if (state.keys['E']) state.camera.position.y -= 0.02;
 
-                // calculate camera's look-at
-                state.camera.looking_at = state.camera.position.add(state.camera.direction);                
-                state.view_matrix = M44.lookat_right_handed(state.camera.position, state.camera.looking_at, state.camera.up);
+                // calculate view_matrix, projection_matrix and viewport_matrix
+                const looking_at: Vector3f = state.camera.position.add(state.camera.direction);                
+                state.view_matrix = M44.lookat_right_handed(state.camera.position, looking_at, Vector3f.from(0, 1, 0));
                 const aspect_ratio = @as(f32, @floatFromInt(client_width)) / @as(f32, @floatFromInt(client_height));
                 state.projection_matrix = M44.perspective_projection(60, aspect_ratio, 0.1, 5);
                 state.viewport_matrix = M44.viewport_i32_2(0, 0, client_width, client_height, 255);
 
-                // if (state.keys['V']) state.viewport_matrix = M44.identity();
-                if (state.keys['P']) bilinear = !bilinear;
-
-                _ = counted_since_start;
-
-                if (false) {
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 1 }, red);
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 50 }, green);
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 50, .y = 100 }, blue);
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 1, .y = 100 }, white);
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 0, .y = 0 }, Vector2i { .x = 100, .y = 100 }, turquoise);
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 1 }, red); 
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 50 }, green);
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 50, .y = 100 }, blue);
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 1, .y = 100 }, white);
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = state.w-1, .y = state.h-1 }, Vector2i { .x = 100, .y = 100 }, turquoise);
-                    line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 70, .y = 10 }, Vector2i { .x = 70, .y = 10 }, white);
-                }
-
-                // TODO I think windows is rendering upside down, (or me, lol) so invert it
-                // TODO the light intensity varies as the camera moves which shouldnt happen since its static, fix that
-                // TODO Im pretty sure the pixel data is being read in a weird way on the TGA reader, the color is a bit off
+                // Example rendering OBJ model with Gouraud Shading
                 if (true) {
                     const horizontally_spinning_position = Vector3f { .x = std.math.cos(@as(f32, @floatCast(state.time)) / 2000), .y = 0, .z = std.math.sin(@as(f32, @floatCast(state.time)) / 2000) };
                     const render_context = gouraud_renderer.Context {
                         .light_position_camera_space = state.view_matrix.apply_to_vec3(horizontally_spinning_position).discard_w(),
                         .projection_matrix = state.projection_matrix,
-                        .texture = state.texture.rgb,
-                        .texture_height = state.texture.rgb.height(),
-                        .texture_width = state.texture.rgb.width,
+                        .texture = state.texture,
+                        .texture_height = state.texture.height,
+                        .texture_width = state.texture.width,
                         .view_model_matrix = state.view_matrix.multiply(
                             M44.translation(Vector3f { .x = 0, .y = 0, .z = 4 }).multiply(M44.scaling_matrix(Vector3f.from(0.5, 0.5, -0.5)))
                         ),
@@ -2249,98 +508,81 @@ pub fn main() !void {
                     gouraud_renderer.Pipeline.render(state.pixel_buffer, render_context, vertex_buffer.items, @divExact(vertex_buffer.items.len, 3), render_requirements);
                 }
 
-                if (true) line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
-                if (true) line(win32.RGBA, state.pixel_buffer, Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
-                // TODO there is part of the pixel buffer being rendered below the status bar from windows
-                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 }, "ms {d: <9.2}", .{ms});
-                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-22 }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z});
-                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*2) }, "{d:.3}, {d:.3}, {d:.3}", .{real_right.x, real_right.y, real_right.z});
-                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*3) }, "d mouse {d:.8}, {d:.8}", .{mouse_dx, mouse_dy});
-                if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*4) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z});
+                // render the model texture as a quad
+                if (true) {
+                    // const texture_data = state.texture.rgba.data;
+                    const w: f32 = @floatFromInt(state.texture.width);
+                    const h: f32 = @floatFromInt(state.texture.height);
+                    var quad_context = quad_renderer(RGB, false).Context {
+                        .texture = state.texture,
+                        .texture_width = state.texture.width,
+                        .texture_height = state.texture.height,
+                        .projection_matrix =
+                            state.projection_matrix.multiply(
+                                state.view_matrix.multiply(
+                                    M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1.5 }).multiply(M44.scale(1/w))
+                                )
+                            ),
+                    };
+                    const vertex_buffer = [_]quad_renderer(RGB, false).Vertex{
+                        .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
+                        .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
+                        .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
+                        .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
+                    };
+                    const index_buffer = [_]u16{0,1,2,0,2,3};
+                    const requirements = quad_renderer(RGB, false).pipeline_configuration.Requirements() {
+                        .depth_buffer = state.depth_buffer,
+                        .viewport_matrix = state.viewport_matrix,
+                        .index_buffer = &index_buffer,
+                    };
+                    quad_renderer(RGB, false).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
+                }
+                
+                // render the font texture as a quad
                 if (true) {
                     const texture = @import("font_embedded.zig");
-                    // const c_red = RGBA { .r = 255, .g = 0, .b = 0, .a = 255 };
-                    // const c_green = RGBA { .r = 0, .g = 255, .b = 0, .a = 255 };
-                    // const c_blue = RGBA { .r = 0, .g = 0, .b = 255, .a = 255 };
-                    // const c_white = RGBA { .r = 255, .g = 255, .b = 255, .a = 255 };
-                    // const c_transparent = RGBA { .r = 255, .g = 255, .b = 255, .a = 0 };
-                    // const texture = struct {
-                    //     const data = [_]RGBA {
-                    //         c_transparent, c_transparent, c_transparent, c_transparent,
-                    //         c_transparent, c_red, c_green, c_transparent,
-                    //         c_transparent, c_blue, c_white, c_transparent,
-                    //         c_transparent, c_transparent, c_transparent, c_transparent,
-                    //     };
-                    //     const width: usize = 4;
-                    //     const height: usize = 4;
-                    // };
-                    if (true) {
-                        // const texture_data = state.texture.rgba.data;
-                        const w: f32 = @floatFromInt(state.texture.rgb.width);
-                        const h: f32 = @floatFromInt(state.texture.rgb.height());
-                        var quad_context = quad_renderer(RGB).Context {
-                            .texture = state.texture.rgb,
-                            .texture_width = state.texture.rgb.width,
-                            .texture_height = state.texture.rgb.height(),
-                            .projection_matrix =
-                                state.projection_matrix.multiply(
-                                    state.view_matrix.multiply(
-                                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1.5 }).multiply(M44.scale(1/w))
-                                    )
-                                ),
-                        };
-                        const vertex_buffer = [_]quad_renderer(RGB).Vertex{
-                            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
-                            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
-                            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
-                            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
-                        };
-                        const index_buffer = [_]u16{0,1,2,0,2,3};
-                        const requirements = quad_renderer(RGB).pipeline_configuration.Requirements() {
-                            .depth_buffer = state.depth_buffer,
-                            .viewport_matrix = state.viewport_matrix,
-                            .index_buffer = &index_buffer,
-                        };
-                        quad_renderer(RGB).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
-                    }
-                    if (true) {
-                        const texture_data = texture.data;
-                        const w: f32 = @floatFromInt(texture.width);
-                        const h: f32 = @floatFromInt(texture.height);
-                        var quad_context = quad_renderer(RGBA).Context {
-                            .texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&texture_data)), texture.width),
-                            .texture_width = texture.width,
-                            .texture_height = texture.height,
-                            .projection_matrix =
-                                state.projection_matrix.multiply(
-                                    state.view_matrix.multiply(
-                                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
-                                    )
-                                ),
-                        };
-                        const vertex_buffer = [_]quad_renderer(RGBA).Vertex{
-                            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
-                            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
-                            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
-                            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
-                        };
-                        const index_buffer = [_]u16{0,1,2,0,2,3};
-                        const requirements = quad_renderer(RGBA).pipeline_configuration.Requirements() {
-                            .depth_buffer = state.depth_buffer,
-                            .viewport_matrix = state.viewport_matrix,
-                            .index_buffer = &index_buffer,
-                        };
-                        quad_renderer(RGBA).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
-                    }
-                    if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*5) }, "clipped triangle:", .{});
-                    if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*6) }, "{d:.8}, {d:.8}, {d:.8}", .{global_clipped_triangle[0].x, global_clipped_triangle[0].y, global_clipped_triangle[0].z});
-                    if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*7) }, "{d:.8}, {d:.8}, {d:.8}", .{global_clipped_triangle[1].x, global_clipped_triangle[1].y, global_clipped_triangle[1].z});
-                    if (true) render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*8) }, "{d:.8}, {d:.8}, {d:.8}", .{global_clipped_triangle[2].x, global_clipped_triangle[2].y, global_clipped_triangle[2].z});
+                    const texture_data = texture.data;
+                    const w: f32 = @floatFromInt(texture.width);
+                    const h: f32 = @floatFromInt(texture.height);
+                    var quad_context = quad_renderer(RGBA, false).Context {
+                        .texture = Buffer2D(RGBA).from(@constCast(@ptrCast(&texture_data)), texture.width),
+                        .texture_width = texture.width,
+                        .texture_height = texture.height,
+                        .projection_matrix =
+                            state.projection_matrix.multiply(
+                                state.view_matrix.multiply(
+                                    M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
+                                )
+                            ),
+                    };
+                    const vertex_buffer = [_]quad_renderer(RGBA, false).Vertex{
+                        .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
+                        .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
+                        .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
+                        .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
+                    };
+                    const index_buffer = [_]u16{0,1,2,0,2,3};
+                    const requirements = quad_renderer(RGBA, false).pipeline_configuration.Requirements() {
+                        .depth_buffer = state.depth_buffer,
+                        .viewport_matrix = state.viewport_matrix,
+                        .index_buffer = &index_buffer,
+                    };
+                    quad_renderer(RGBA, false).Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
                 }
 
-                // imgui.c.igShowDemoWindow(&open);
-                _ = open;
-                imgui.c.igText("Hello, world");  
+                // some debug information and stuff
+                state.pixel_buffer.line(Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
+                state.pixel_buffer.line(Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
+                render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 }, "ms {d: <9.2}", .{ms});
+                render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-22 }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z});
+                render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*2) }, "{d:.3}, {d:.3}, {d:.3}", .{real_right.x, real_right.y, real_right.z});
+                render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*3) }, "d mouse {d:.8}, {d:.8}", .{mouse_dx, mouse_dy});
+                render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*4) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z});
+                
+                imgui.c.igShowDemoWindow(&open);
+                // _ = open;
+                // imgui.c.igText("Hello, world");  
                 imgui.c.igEndFrame();
                 imgui.c.igRender();
                 imgui_win32_impl.render_draw_data(state.pixel_buffer);
@@ -2350,8 +592,8 @@ pub fn main() !void {
             if (state.running == false) continue;
 
             { // render
-                const device_context_handle = win32.GetDC(window_handle).?;
-                _ = win32.StretchDIBits(
+                const device_context_handle = win32.c.GetDC(window_handle).?;
+                _ = win32.c.StretchDIBits(
                     device_context_handle,
                     // The destination x, y (upper left) and width height (in logical units)
                     0, 0, client_width, client_height,
@@ -2360,30 +602,30 @@ pub fn main() !void {
                     // A pointer to the data and a structure with information about the DIB
                     state.pixel_buffer.data.ptr, &state.render_target,
                     // This is used to tell windows whether the colors are just RGB or whether we are using a color palette (in which case, it would be defined in the DIB structure)
-                    win32.DIB_USAGE.RGB_COLORS,
+                    win32.c.DIB_USAGE.RGB_COLORS,
                     // Finally, what operation to use when rastering. We just want to copy it.
-                    win32.SRCCOPY
+                    win32.c.SRCCOPY
                 );
-                _ = win32.ReleaseDC(window_handle, device_context_handle);
+                _ = win32.c.ReleaseDC(window_handle, device_context_handle);
             }
         }
     }
 
 }
 
-fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32.WPARAM, l_param: win32.LPARAM) callconv(win32.call_convention) win32.LRESULT {
+fn window_callback(window_handle: win32.c.HWND , message_type: u32, w_param: win32.c.WPARAM, l_param: win32.c.LPARAM) callconv(win32.call_convention) win32.c.LRESULT {
     
     switch (message_type) {
 
-        win32.WM_DESTROY,
-        win32.WM_CLOSE => {
-            win32.PostQuitMessage(0);
+        win32.c.WM_DESTROY,
+        win32.c.WM_CLOSE => {
+            win32.c.PostQuitMessage(0);
             return 0;
         },
 
-        win32.WM_SYSKEYDOWN,
-        win32.WM_KEYDOWN => {
-            if (w_param == @intFromEnum(win32.VK_ESCAPE)) win32.PostQuitMessage(0)
+        win32.c.WM_SYSKEYDOWN,
+        win32.c.WM_KEYDOWN => {
+            if (w_param == @intFromEnum(win32.c.VK_ESCAPE)) win32.c.PostQuitMessage(0)
             else if (w_param < 256 and w_param >= 0) {
                 const key: u8 = @intCast(w_param);
                 state.keys[key] = true;
@@ -2391,59 +633,52 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
             }
         },
 
-        win32.WM_KEYUP => {
+        win32.c.WM_KEYUP => {
             if (w_param < 256 and w_param >= 0) {
                 const key: u8 = @intCast(w_param);
                 state.keys[key] = false;
-                // std.debug.print("up   {c}\n", .{key});
             }
         },
 
-        win32.WM_SIZE => {
-            var rect: win32.RECT = undefined;
-            _ = win32.GetClientRect(window_handle, &rect);
-            _ = win32.InvalidateRect(window_handle, &rect, @intFromEnum(win32.True));
+        win32.c.WM_SIZE => {
+            var rect: win32.c.RECT = undefined;
+            _ = win32.c.GetClientRect(window_handle, &rect);
+            _ = win32.c.InvalidateRect(window_handle, &rect, @intFromEnum(win32.c.True));
         },
 
-        win32.WM_PAINT => {
-            var paint_struct: win32.PAINTSTRUCT = undefined;
-            const handle_device_context = win32.BeginPaint(window_handle, &paint_struct);
+        win32.c.WM_PAINT => {
+            var paint_struct: win32.c.PAINTSTRUCT = undefined;
+            const handle_device_context = win32.c.BeginPaint(window_handle, &paint_struct);
 
-            _ = win32.StretchDIBits(
+            _ = win32.c.StretchDIBits(
                 handle_device_context,
                 0, 0, state.w, state.h,
                 0, 0, state.w, state.h,
                 state.pixel_buffer.data.ptr,
                 &state.render_target,
-                win32.DIB_RGB_COLORS,
-                win32.SRCCOPY
+                win32.c.DIB_RGB_COLORS,
+                win32.c.SRCCOPY
             );
 
-            _ = win32.EndPaint(window_handle, &paint_struct);
+            _ = win32.c.EndPaint(window_handle, &paint_struct);
             return 0;
         },
 
         else => {},
     }
 
-    return win32.DefWindowProcW(window_handle, message_type, w_param, l_param);
-}
-
-var bilinear: bool = false;
-
-fn render_line(pixel_buffer: Buffer2D(win32.RGBA), a: Vector2i, b: Vector2i, color: win32.RGBA) void {
-    line(win32.RGBA, pixel_buffer, a, b, color);
+    return win32.c.DefWindowProcW(window_handle, message_type, w_param, l_param);
 }
 
 fn render_text(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(win32.RGBA), pos: Vector2i, comptime format: []const u8, args: anytype) void {
     // bitmap font embedded in the executable
     const font = @import("font_embedded.zig");
 
-    const texture = Buffer2D(RGBA).init(@constCast(@ptrCast(&font.data)), font.width);
+    const texture = Buffer2D(RGBA).from(@constCast(@ptrCast(&font.data)), font.width);
     const context = text_renderer.Context {
         .texture = texture,
         .texture_width = texture.width,
-        .texture_height = texture.height(),
+        .texture_height = texture.height,
         .projection_matrix = M44.orthographic_projection(0, @floatFromInt(state.w), @floatFromInt(state.h), 0, 0, 10)
     };
     var text_buffer: [1024]u8 = undefined;
@@ -2488,134 +723,6 @@ fn render_text(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(win32.RGBA),
     
     if (true) text_renderer.Pipeline.render(pixel_buffer, context, vertex_buffer[0..text.len*4], text.len * 2, .{ .viewport_matrix = state.viewport_matrix, });
 }
-
-const Frustum = struct {
-    left: Plane,
-    right: Plane,
-    top: Plane,
-    bottom: Plane,
-    near: Plane,
-    far: Plane,
-};
-
-/// Check Appendix A for more info:
-/// https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
-const Plane = struct {
-    
-    a: f32,
-    b: f32,
-    c: f32,
-    d: f32,
-
-    pub fn from(point: Vector3f, normal: Vector3f) Plane {
-        const d = - ((normal.x*point.x)+(normal.y*point.y)+(normal.z*point.z));
-        return Plane { .a = normal.x, .b = normal.y, .c = normal.z, .d = d };
-    }
-
-    /// https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
-    pub fn extract_frustum_from_projection(projection_matrix: M44) Frustum {
-        var frustum: Frustum = undefined;
-        // Left clipping plane
-        frustum.left.a = projection_matrix.data[3] + projection_matrix.data[0];
-        frustum.left.b = projection_matrix.data[7] + projection_matrix.data[4];
-        frustum.left.c = projection_matrix.data[11] + projection_matrix.data[8];
-        frustum.left.d = projection_matrix.data[15] + projection_matrix.data[12];
-        // Right clipping plane
-        frustum.right.a = projection_matrix.data[3] - projection_matrix.data[0];
-        frustum.right.b = projection_matrix.data[7] - projection_matrix.data[4];
-        frustum.right.c = projection_matrix.data[11] - projection_matrix.data[8];
-        frustum.right.d = projection_matrix.data[15] - projection_matrix.data[12];
-        // Top clipping plane
-        frustum.top.a = projection_matrix.data[3] - projection_matrix.data[1];
-        frustum.top.b = projection_matrix.data[7] - projection_matrix.data[5];
-        frustum.top.c = projection_matrix.data[11] - projection_matrix.data[9];
-        frustum.top.d = projection_matrix.data[15] - projection_matrix.data[13];
-        // Bottom clipping plane
-        frustum.bottom.a = projection_matrix.data[3] + projection_matrix.data[1];
-        frustum.bottom.b = projection_matrix.data[7] + projection_matrix.data[5];
-        frustum.bottom.c = projection_matrix.data[11] + projection_matrix.data[9];
-        frustum.bottom.d = projection_matrix.data[15] + projection_matrix.data[13];
-        // Near clipping plane
-        frustum.near.a = projection_matrix.data[3] + projection_matrix.data[2];
-        frustum.near.b = projection_matrix.data[7] + projection_matrix.data[6];
-        frustum.near.c = projection_matrix.data[11] + projection_matrix.data[10];
-        frustum.near.d = projection_matrix.data[15] + projection_matrix.data[14];
-        // Far clipping plane
-        frustum.far.a = projection_matrix.data[3] - projection_matrix.data[2];
-        frustum.far.b = projection_matrix.data[7] - projection_matrix.data[6];
-        frustum.far.c = projection_matrix.data[11] - projection_matrix.data[10];
-        frustum.far.d = projection_matrix.data[15] - projection_matrix.data[14];
-
-        frustum.left.normalize();
-        frustum.right.normalize();
-        frustum.top.normalize();
-        frustum.bottom.normalize();
-        frustum.near.normalize();
-        frustum.far.normalize();
-        std.debug.print("\n",.{});
-        gg.plane(frustum.left);
-        gg.plane(frustum.right);
-        gg.plane(frustum.top);
-        gg.plane(frustum.bottom);
-        gg.plane(frustum.near);
-        gg.plane(frustum.far);
-        std.debug.print("\n",.{});
-
-        return frustum;
-    }
-
-    /// > A plane cuts three-dimensional space into two separate parts. These parts are called `halfspaces`. The halfspace the
-    /// > plane's normals vector points into is called the positive halfspace, and the other halfspace is called the negative halfspace.
-    pub const Halfspace = enum(i32) {
-        negative = -1,
-        on_plane = 0,
-        positive = 1,
-    };
-
-    /// > This distance is not necessarily a 'true' distance.
-    /// > Instead it is the signed distance in units of the magnitude of the plane’s normal vector.
-    /// > To obtain a 'true' distance, you need to normalize the plane equation first.
-    /// >
-    /// > If the plane equation is not normalized, then we can still get some valuable information from the 'non-true' distance:
-    /// > 1. If dist < 0 , then the point p lies in the negative halfspace.
-    /// > 2. If dist = 0 , then the point p lies in the plane.
-    /// > 3. If dist > 0 , then the point p lies in the positive halfspace
-    pub fn signed_distance_to_point(plane: Plane, point: Vector3f) f32 {
-        return plane.a * point.x +
-            plane.b * point.y +
-            plane.c * point.z +
-            plane.d;
-    }
-
-    pub fn classify_point(plane: Plane, point: Vector3f) Halfspace {
-        const distance: f32 = signed_distance_to_point(plane, point);
-        return if (distance < 0) Halfspace.negative else if (distance > 0) Halfspace.positive else Halfspace.on_plane;
-    }
-
-    pub fn intersection(plane: Plane, p1: Vector3f, p2: Vector3f) Vector3f {
-        const t: f32 =
-            -(plane.a * p1.x + plane.b * p1.y + plane.c * p1.z + plane.d) /
-            (plane.a * (p2.x - p1.x) + plane.b * (p2.y - p1.y) + plane.c * (p2.z - p1.z));
-
-        const intersection_point = Vector3f {
-            .x = p1.x + t * (p2.x - p1.x),
-            .y = p1.y + t * (p2.y - p1.y),
-            .z = p1.z + t * (p2.z - p1.z),
-        };
-
-        return intersection_point;
-    }
-
-    /// > means to change the plane equation, such that the normal becomes a unit vector.
-    pub fn normalize(self: *Plane) void {
-        const magnitude: f32 = std.math.sqrt(self.a * self.a + self.b * self.b + self.c * self.c);
-        self.a /= magnitude;
-        self.b /= magnitude;
-        self.c /= magnitude;
-        self.d /= magnitude;
-    }
-
-};
 
 const GraphicsPipelineConfiguration = struct {
     blend_with_background: bool = false,
@@ -2671,15 +778,6 @@ const GraphicsPipelineConfiguration = struct {
                 .alignment = @alignOf(Vector4f)
             }
         };
-        // if (self.do_triangle_clipping) fields = fields ++ [_]std.builtin.Type.StructField {
-        //         std.builtin.Type.StructField {
-        //         .default_value = null,
-        //         .is_comptime = false,
-        //         .name = "projection_matrix",
-        //         .type = M44,
-        //         .alignment = @alignOf(M44)
-        //     }
-        // };
         // TODO what exactly should I do with declarations?
         // according to the compiler, when I put any declaration whatsoever I ger `error: reified structs must have no decls`
         // not sure what that means
@@ -2697,7 +795,7 @@ const GraphicsPipelineConfiguration = struct {
         return @Type(requirements);
     }
 };
-var global_clipped_triangle: [3]Vector3f = undefined;
+
 fn GraphicsPipeline(
     comptime final_color_type: type,
     comptime context_type: type,
@@ -2781,8 +879,6 @@ fn GraphicsPipeline(
                         trace("ndc", .{});
                         trace_triangle(ndcs[0..3].*);
                         trace_mat4(context.projection_matrix);
-
-                        global_clipped_triangle = ndcs[0..3].*;
 
                         const left_bottom_near = comptime Vector3f.from(-1,-1,0);
                         const right_top_far = comptime Vector3f.from(1,1,1);
@@ -3466,9 +1562,7 @@ const imgui_renderer = struct {
         }.vertex_shader,
         struct {
             fn fragment_shader(context: Context, invariants: Invariant) win32.RGBA {
-                const sample =
-                    if (bilinear) texture_bilinear_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
-                    else texture_point_sample(RGBA, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+                const sample = context.texture.point_sample(true, invariants.texture_uv);
                 const rgba = invariants.color.multiply(sample);
                 return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a);
             }
@@ -3476,7 +1570,7 @@ const imgui_renderer = struct {
     );
 };
 
-fn quad_renderer(comptime texture_type: type) type {
+fn quad_renderer(comptime texture_type: type, comptime use_bilinear: bool) type {
     return struct {
 
         const Self = @This();
@@ -3522,9 +1616,7 @@ fn quad_renderer(comptime texture_type: type) type {
             }.vertex_shader,
             struct {
                 fn fragment_shader(context: Context, invariants: Invariant) win32.RGBA {
-                    const rgba =
-                        if (bilinear) texture_bilinear_sample(texture_type, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
-                        else texture_point_sample(texture_type, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+                    const rgba = if (use_bilinear) context.texture.bilinear_sample(true, invariants.texture_uv) else context.texture.point_sample(true, invariants.texture_uv);
                     if (texture_type == RGBA) return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a)
                     else return win32.rgba(rgba.r, rgba.g, rgba.b, 255);
                 }
@@ -3574,9 +1666,7 @@ const text_renderer = struct {
         }.vertex_shader,
         struct {
             fn fragment_shader(context: Context, invariants: Invariant) win32.RGBA {
-                const rgba =
-                    if (bilinear) texture_bilinear_sample(RGBA, false, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
-                    else texture_point_sample(RGBA, false, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+                const rgba = context.texture.point_sample(false, invariants.texture_uv);
                 return win32.rgba(rgba.r, rgba.g, rgba.b, rgba.a);
             }
         }.fragment_shader,
@@ -3629,9 +1719,7 @@ const gouraud_renderer = struct {
         }.vertex_shader,
         struct {
             fn fragment_shader(context: Context, invariants: Invariant) win32.RGBA {
-                const sample =
-                    if (bilinear) texture_bilinear_sample(RGB, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv)
-                    else texture_point_sample(RGB, true, context.texture.data, context.texture_width, context.texture_height, invariants.texture_uv);
+                const sample = context.texture.point_sample(true, invariants.texture_uv);
                 const rgba = sample.scale(invariants.light_intensity);
                 return win32.rgba(rgba.r, rgba.g, rgba.b, 255);
             }
@@ -3639,50 +1727,3 @@ const gouraud_renderer = struct {
     );
 
 };
-
-// const use_triangle_2 = false;
-
-// helper for rendering in geogebra (sometimes I use it to debug and stuff)
-// https://www.geogebra.org/3d?lang=en
-const gg = struct {
-    fn plane(p: Plane) void {
-        std.debug.print("{d:.8}*x + {d:.8}*y + {d:.8}*z + {d:.8} = 0\n", .{p.a, p.b, p.c, p.d});
-    }
-    fn triangle(t: [3]Vector3f) void {
-        // std.debug.print("polygon({{point({{{d:.8}, {d:.8}, {d:.8}}}), point({{{d:.8}, {d:.8}, {d:.8}}}), point({{{d:.8}, {d:.8}, {d:.8}}})}})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
-        std.debug.print("({d:.8}, {d:.8}, {d:.8}), ({d:.8}, {d:.8}, {d:.8}), ({d:.8}, {d:.8}, {d:.8})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
-    }
-    fn triangle4(t: [3]Vector4f) void {
-        // std.debug.print("polygon({{point({{{d:.8}, {d:.8}, {d:.8}}}), point({{{d:.8}, {d:.8}, {d:.8}}}), point({{{d:.8}, {d:.8}, {d:.8}}})}})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
-        std.debug.print("({d:.8}, {d:.8}, {d:.8}), ({d:.8}, {d:.8}, {d:.8}), ({d:.8}, {d:.8}, {d:.8})\n", .{t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z});
-    }
-    fn point(p: Vector3f) void {
-        // std.debug.print("point({{{d:.8}, {d:.8}, {d:.8}}})\n", .{p.x, p.y, p.z});
-        std.debug.print("({d:.8}, {d:.8}, {d:.8})\n", .{p.x, p.y, p.z});
-    }
-    fn vector(a: Vector3f, b: Vector3f) void {
-        // std.debug.print("point({{{d:.8}, {d:.8}, {d:.8}}})\n", .{p.x, p.y, p.z});
-        std.debug.print("vector(({d:.8}, {d:.8}, {d:.8}), ({d:.8}, {d:.8}, {d:.8}))\n", .{a.x, a.y, a.z, b.x, b.y, b.z});
-    }
-};
-
-fn map_range_to_range(from: f32, to: f32, map_from: f32, map_to: f32) f32 {
-    // std.debug.assert(from < to);
-    // std.debug.assert(map_from < map_to);
-    return (map_to - map_from) / (to - from);
-}
-
-fn map_range_to_range_normalized(n: f32, from: f32, to: f32, map_from: f32, map_to: f32) f32 {
-    // std.debug.assert(from < to);
-    // std.debug.assert(map_from < map_to);
-    const factor = ((map_to - map_from) / (to - from));
-    // put n in normalized space, then multiply by the factor, then map back to original space
-    // this is aking to how, when rotating things with a matrix, you first move it to the origin, rotate it, and then move it back
-    return ((n - from) * factor) + map_from;
-}
-
-test {
-    // To run nested container tests, either, call `refAllDecls` which will
-    // reference all declarations located in the given argument, or reference the container itself.
-    _ = M44;
-}
