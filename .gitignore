@@ -3,3 +3,5 @@ obj
 .vscode
 .vs
 zig-cache
+imgui.ini
+zig-out
