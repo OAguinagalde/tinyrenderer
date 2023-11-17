@@ -35,8 +35,8 @@ pub fn Buffer2D(comptime T: type) type {
         pub fn point_sample(self: Self, comptime point_is_normalized: bool, point: Vector2f) T {
             const tx = if (point_is_normalized) point.x * @as(f32, @floatFromInt(self.width)) else point.x;
             const ty = if (point_is_normalized) point.y * @as(f32, @floatFromInt(self.height)) else point.y;
-            const x = std.math.clamp(@as(usize, @intFromFloat(tx)), 0, self.width-1);
-            const y = std.math.clamp(@as(usize, @intFromFloat(ty)), 0, self.height-1);
+            const x: usize = @intFromFloat( std.math.clamp(tx, 0, @as(f32, @floatFromInt(self.width-1)) ) );
+            const y: usize = @intFromFloat( std.math.clamp(ty, 0, @as(f32, @floatFromInt(self.height-1)) ) );
             return self.data[x + self.width*y];
         }
 
@@ -46,10 +46,10 @@ pub fn Buffer2D(comptime T: type) type {
             const tx = if (point_is_normalized) point.x * @as(f32, @floatFromInt(self.width)) else point.x;
             const ty = if (point_is_normalized) point.y * @as(f32, @floatFromInt(self.height)) else point.y;
             
-            const x_min: usize = @max(@as(usize, @intFromFloat(@floor(tx-0.5))), 0);
-            const x_max: usize = @min(@as(usize, @intFromFloat(@floor(tx+0.5))), self.width-1);
-            const y_min: usize = @max(@as(usize, @intFromFloat(@floor(ty-0.5))), 0);
-            const y_max: usize = @min(@as(usize, @intFromFloat(@floor(ty+0.5))), self.height-1);
+            const x_min: usize = @intFromFloat( @max( @floor(tx-0.5), 0) );
+            const x_max: usize = @intFromFloat( @min( @floor(tx+0.5), @as(f32, @floatFromInt(self.width-1))) );
+            const y_min: usize = @intFromFloat( @max( @floor(ty-0.5), 0) );
+            const y_max: usize = @intFromFloat( @min( @floor(ty+0.5), @as(f32, @floatFromInt(self.height-1))) );
 
             if (x_min == x_max) {
                 if (y_min == y_max) {

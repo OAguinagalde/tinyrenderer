@@ -351,7 +351,7 @@ pub const M44 = struct {
         return change_of_basis_matrix.multiply(M44.translation(camera_location.scale(-1)));
     }
 
-    // same as `lookat_right_handed` but with the math unrolled
+    /// same as `lookat_right_handed` but with the math unrolled
     fn lookat_right_handed_unrolled(c: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
         const normalized_up = up.normalized();
         const z: Vector3f = point_looked_at.substract(c).normalized(); // z axis
@@ -377,20 +377,20 @@ pub const M44 = struct {
         return matrix;
     }
     
-    // constructs an orthographic projection matrix, which
-    // maps the cube [left..right][bottom..top][near..far] to the cube [-1..1][-1..1][0..1] cube
-    // and center it so that:
-    //        
-    //                                 !           (1    , 1  , 1  )
-    //                   O = origin  __!______.  < (right, top, far)
-    //                              /  !     /|
-    //                             /___!____/ |
-    //                             |   !    | |
-    //                         - - - - O - - -/- - - 
-    //    (left, bottom, near)  >  |___!____|/
-    //    (-1  , -1    , 0   )         !
-    //               
-    // https://www.youtube.com/watch?v=U0_ONQQ5ZNM
+    /// constructs an orthographic projection matrix, which
+    /// maps the cube [left..right][bottom..top][near..far] to the cube [-1..1][-1..1][0..1] cube
+    /// and center it so that:
+    ///        
+    ///                                 !           (1    , 1  , 1  )
+    ///                   O = origin  __!______.  < (right, top, far)
+    ///                              /  !     /|
+    ///                             /___!____/ |
+    ///                             |   !    | |
+    ///                         - - - - O - - -/- - - 
+    ///    (left, bottom, near)  >  |___!____|/
+    ///    (-1  , -1    , 0   )         !
+    ///               
+    /// https://www.youtube.com/watch?v=U0_ONQQ5ZNM
     pub fn orthographic_projection(left: f32, right: f32, top: f32, bottom: f32, near: f32, far: f32) M44 {
         if (true) return orthographic_projection_unrolled(left, right, top, bottom, near, far);
         var scale_matrix = M44.identity();
@@ -403,7 +403,7 @@ pub const M44 = struct {
         return scale_matrix.multiply(translate_matrix);
     }
     
-    // same as `orthographic_projection` but with the math unrolled
+    /// same as `orthographic_projection` but with the math unrolled
     pub fn orthographic_projection_unrolled(l: f32, r: f32, t: f32, b: f32, n: f32, f: f32) M44 {
         var matrix = M44.identity();
         matrix.data[0] = 2/(r-l);
@@ -426,7 +426,7 @@ pub const M44 = struct {
         try std.testing.expect((map_range_to_range_normalized(0.1, 0.1, 100, 0, 1) == 0));
     }
 
-    // https://www.youtube.com/watch?v=U0_ONQQ5ZNM
+    /// https://www.youtube.com/watch?v=U0_ONQQ5ZNM
     pub fn perspective_projection(fov_degrees: f32, aspect_ratio: f32, near: f32, far: f32) M44 {
         if (true) return perspective_projection_unrolled(fov_degrees, aspect_ratio, near, far);
         const fov_radians = (@as(f32,std.math.pi)/180) * fov_degrees;
@@ -447,7 +447,7 @@ pub const M44 = struct {
         return ortho_projection.multiply(perspective);
     }
 
-    // same as `perspective_projection_2` but with the math unrolled
+    /// same as `perspective_projection_2` but with the math unrolled
     pub fn perspective_projection_unrolled(fov_degrees: f32, aspect_ratio: f32, n: f32, f: f32) M44 {
         const fov_radians = (@as(f32,std.math.pi)/180) * fov_degrees;
         const t = n * std.math.tan(fov_radians / 2.0);
@@ -489,7 +489,7 @@ pub const M44 = struct {
         return s.multiply(t);
     }
 
-    // returns a matrix which maps the cube [-1,1]*[-1,1]*[0,1] onto the screen cube [x,x+w]*[y,y+h]*[0,d]
+    /// returns a matrix which maps the cube [-1,1]*[-1,1]*[0,1] onto the screen cube [x,x+w]*[y,y+h]*[0,d]
     pub fn viewport(x: f32, y: f32, w: f32, h: f32, depth: f32) M44 {
         var matrix = M44.identity();
         

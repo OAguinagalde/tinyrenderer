@@ -48,8 +48,8 @@ pub fn build(b: *Builder) !void {
 
         // Number of pages reserved for heap memory.
         // This must match the number of pages used in script.js.
-        const number_of_pages = 40;
-
+        const number_of_pages = 2;
+        const optimization_options = b.standardOptimizeOption(.{});
         const lib = b.addSharedLibrary(.{
             .name = "wasm_app",
             .root_source_file = .{ .path = "src/wasm_app.zig" },
@@ -57,7 +57,7 @@ pub fn build(b: *Builder) !void {
                 .cpu_arch = .wasm32,
                 .os_tag = .freestanding,
             },
-            .optimize = .ReleaseSmall,
+            .optimize = optimization_options,
         });
         
         // for a wasm library to export symbols one needs to specify the -rdynamic flag
@@ -82,37 +82,25 @@ pub fn build(b: *Builder) !void {
         // generate a compile time file with the settings used for building the wasm module,
         // which will in turn be embedded into the module itself, so that the module knows
         // these parameters
-        // const step_write_memory_info = b.addWriteFile("memory_info.zig", b.fmt(
-        //     \\pub const initial_memory: usize = {any};
-        //     \\pub const max_memory: usize = {any};
-        //     \\pub const stack_size: usize = {any};
-        //     \\pub const global_base: usize = {any};
-        //     \\
-        //     , .{lib.initial_memory, lib.max_memory, lib.stack_size, lib.global_base})
-        // );
-        // const generated_file = std.Build.GeneratedFile { .step = &step_write_memory_info.step };
+        const str = b.fmt(
+            \\pub const initial_memory: usize = {d};
+            \\pub const max_memory: usize = {d};
+            \\pub const stack_size: usize = {d};
+            \\pub const global_base: usize = {d};
+            , .{
+                lib.initial_memory orelse @as(u64, 0),
+                lib.max_memory orelse @as(u64, 0),
+                lib.stack_size orelse @as(u64, 0),
+                lib.global_base orelse @as(u64, 0)
+            }
+        );
+        std.log.info("{s}",.{str});
 
-        const tool = b.addExecutable(.{
+        const step_tool_runner = b.addRunArtifact(b.addExecutable(.{
             .name = "write_wasm_module_memory_info",
             .root_source_file = .{ .path = "src/stdin_to_file.zig" },
-        });
-        const step_tool_runner = b.addRunArtifact(tool);
-        step_tool_runner.setStdIn(.{.bytes =
-            b.fmt(
-                \\pub const initial_memory: ?usize = {any};
-                \\pub const max_memory: ?usize = {any};
-                \\pub const stack_size: ?usize = {any};
-                \\pub const global_base: ?usize = {any};
-                \\
-                , .{lib.initial_memory, lib.max_memory, lib.stack_size, lib.global_base }
-            )
-        });
-        std.log.info(\\pub const initial_memory: ?usize = {any};
-                \\pub const max_memory: ?usize = {any};
-                \\pub const stack_size: ?usize = {any};
-                \\pub const global_base: ?usize = {any};
-                \\
-                , .{lib.initial_memory, lib.max_memory, lib.stack_size, lib.global_base });
+        }));
+        step_tool_runner.setStdIn(.{ .bytes = str });
         // Its a weird default but this basically adds the file name as the first argument...
         const output = step_tool_runner.addOutputFileArg("memory_info.zig");
         

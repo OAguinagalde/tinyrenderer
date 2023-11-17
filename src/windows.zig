@@ -386,11 +386,11 @@ pub fn main() !void {
             state.mouse.y = mouse_current.y;
         }
 
-        var open: bool = true;
+        // var open: bool = true;
         while (state.running) {
 
-            imgui_win32_impl.setup_new_frame(&state.imgui_platform_context);
-            imgui.c.igNewFrame();
+            // imgui_win32_impl.setup_new_frame(&state.imgui_platform_context);
+            // imgui.c.igNewFrame();
 
             var fps: i64 = undefined;
             var ms: f64 = undefined;
@@ -580,12 +580,12 @@ pub fn main() !void {
                 render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*3) }, "d mouse {d:.8}, {d:.8}", .{mouse_dx, mouse_dy});
                 render_text(allocator, state.pixel_buffer, Vector2i { .x = 10, .y = client_height-10 - (12*4) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z});
                 
-                imgui.c.igShowDemoWindow(&open);
+                // imgui.c.igShowDemoWindow(&open);
                 // _ = open;
                 // imgui.c.igText("Hello, world");  
-                imgui.c.igEndFrame();
-                imgui.c.igRender();
-                imgui_win32_impl.render_draw_data(state.pixel_buffer);
+                // imgui.c.igEndFrame();
+                // imgui.c.igRender();
+                // imgui_win32_impl.render_draw_data(state.pixel_buffer);
             }
 
             state.running = state.running and !app_close_requested;
