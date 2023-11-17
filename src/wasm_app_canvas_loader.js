@@ -3,14 +3,22 @@
 // > and JavaScript can create Memory objects. If you want to access the memory created in
 // > JS from Wasm or vice versa, you can pass a reference to the memory from one side to the other.
 let memory = new WebAssembly.Memory({
-    initial: 2 /* pages */,
-    maximum: 2 /* pages */,
+    initial: 40 /* pages */,
+    maximum: 40 /* pages */,
 });
+
+// This buffer contains all the memory being used by the wasm module.
+// This means that a pointer inside the module is basically an offset in this buffer.
+const wasmMemoryArray = new Uint8Array(memory.buffer);
+const wasmMemoryViewer = new DataView(memory.buffer);
 
 // This contains everything that the wasm module will have access to
 let importObject = {
     env: {
-        consoleLog: (arg) => console.log(arg),
+        console_log: (str_ptr, len) => {
+            console.log(String.fromCharCode.apply(String, wasmMemoryArray.slice(str_ptr, str_ptr+len)));
+        },
+        milli_since_epoch: () => Date.now(),
         memory: memory,
     },
 };
@@ -21,10 +29,6 @@ const canvas_id = "wasm_app_canvas";
 // > streamed underlying source. This is the most efficient, optimized way to load Wasm code.
 WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((result) => {
     
-    // This buffer contains all the memory being used by the wasm module.
-    // This means that a pointer inside the module is basically an offset in this buffer.
-    const wasmMemoryArray = new Uint8Array(memory.buffer);
-    const wasmMemoryViewer = new DataView(memory.buffer);
 
     console.log("[INFO] object `result.instance.exports`: ");
     console.log(result.instance.exports);
@@ -33,6 +37,9 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     const wasm_get_pixel_buffer_ptr = result.instance.exports.wasm_get_pixel_buffer_ptr;
     const wasm_get_canvas_size = result.instance.exports.wasm_get_canvas_size;
     const wasm_tick = result.instance.exports.wasm_tick;
+    const wasm_init = result.instance.exports.wasm_init;
+
+    wasm_init();
     
     // This is the 256 bytes buffer used to interface js code and wasm code
     const interface_buffer_ptr = result.instance.exports.wasm_get_interface_buffer();

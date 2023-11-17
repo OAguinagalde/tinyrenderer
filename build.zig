@@ -48,7 +48,7 @@ pub fn build(b: *Builder) !void {
 
         // Number of pages reserved for heap memory.
         // This must match the number of pages used in script.js.
-        const number_of_pages = 2;
+        const number_of_pages = 40;
 
         const lib = b.addSharedLibrary(.{
             .name = "wasm_app",
@@ -73,18 +73,58 @@ pub fn build(b: *Builder) !void {
         lib.max_memory = std.wasm.page_size * number_of_pages;
         // Out of that memory, we reserve 1 page for the stack
         lib.stack_size = std.wasm.page_size;
-        
         // we could reserve an X ammount of memory out of the provided memory, for example for
         // io mapping or something similar. This is the case with tic80 for instance
         // 
         //    lib.global_base = X;
         // 
 
+        // generate a compile time file with the settings used for building the wasm module,
+        // which will in turn be embedded into the module itself, so that the module knows
+        // these parameters
+        // const step_write_memory_info = b.addWriteFile("memory_info.zig", b.fmt(
+        //     \\pub const initial_memory: usize = {any};
+        //     \\pub const max_memory: usize = {any};
+        //     \\pub const stack_size: usize = {any};
+        //     \\pub const global_base: usize = {any};
+        //     \\
+        //     , .{lib.initial_memory, lib.max_memory, lib.stack_size, lib.global_base})
+        // );
+        // const generated_file = std.Build.GeneratedFile { .step = &step_write_memory_info.step };
+
+        const tool = b.addExecutable(.{
+            .name = "write_wasm_module_memory_info",
+            .root_source_file = .{ .path = "src/stdin_to_file.zig" },
+        });
+        const step_tool_runner = b.addRunArtifact(tool);
+        step_tool_runner.setStdIn(.{.bytes =
+            b.fmt(
+                \\pub const initial_memory: ?usize = {any};
+                \\pub const max_memory: ?usize = {any};
+                \\pub const stack_size: ?usize = {any};
+                \\pub const global_base: ?usize = {any};
+                \\
+                , .{lib.initial_memory, lib.max_memory, lib.stack_size, lib.global_base }
+            )
+        });
+        std.log.info(\\pub const initial_memory: ?usize = {any};
+                \\pub const max_memory: ?usize = {any};
+                \\pub const stack_size: ?usize = {any};
+                \\pub const global_base: ?usize = {any};
+                \\
+                , .{lib.initial_memory, lib.max_memory, lib.stack_size, lib.global_base });
+        // Its a weird default but this basically adds the file name as the first argument...
+        const output = step_tool_runner.addOutputFileArg("memory_info.zig");
+        
+        // allow @import to "see" the generated file `memory_info.zon`
+        lib.addAnonymousModule("comptime_memory_info", .{ .source_file = output });
+
         // There is 3 things that need to happen to build the project for wasm:
         // 1. compile the zig code to targe wasm
         // 2. copy the index.html which has the canvas
         // 3. copy the js logic which links the canvas and the wasm module
         var step_compile_wasm_library = b.addInstallArtifact(lib, .{});
+        // step_compile_wasm_library.step.dependOn(&step_write_memory_info.step);
         var step_copy_html = b.addInstallFile(.{.path="src/index.html"}, "./index.html");
         var step_copy_js = b.addInstallFile(.{.path="src/wasm_app_canvas_loader.js"}, "./wasm_app_canvas_loader.js");
         // All three steps need to be happen in order to consider the build successfull
