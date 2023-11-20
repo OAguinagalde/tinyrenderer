@@ -104,124 +104,33 @@ const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
 const Vector4f = math.Vector4f;
 const M44 = math.M44;
-const Plane = math.Plane;
-const Frustum = math.Frustum;
+// const OBJ = @import("obj.zig");
+// const TGA = @import("tga.zig");
+// const imgui = @import("imgui.zig");
 const Buffer2D = @import("buffer.zig").Buffer2D;
+const RGBA = @import("pixels.zig").RGBA;
+const RGB = @import("pixels.zig").RGB;
+const GraphicsPipelineConfiguration = @import("graphics.zig").GraphicsPipelineConfiguration;
+const GraphicsPipeline = @import("graphics.zig").GraphicsPipeline;
+
+const GouraudShader = @import("shaders/gouraud.zig").Shader(RGBA, RGB);
+const QuadShaderRgb = @import("shaders/quad.zig").Shader(RGBA, RGB, false, false);
+const QuadShaderRgba = @import("shaders/quad.zig").Shader(RGBA, RGBA, false, false);
+const TextRenderer = @import("text.zig").TextRenderer(RGBA, 1024, 1024);
 
 const Camera = struct {
     position: Vector3f,
     direction: Vector3f,
-    looking_at: Vector3f,
     up: Vector3f,
 };
 
-pub const RGBA = extern struct {
-    r: u8 align(1),
-    g: u8 align(1),
-    b: u8 align(1),
-    a: u8 align(1),
-    comptime { std.debug.assert(@sizeOf(@This()) == 4); }
-    pub fn scale(self: RGBA, factor: f32) RGBA {
-        return RGBA {
-            .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
-            .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
-            .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
-            .a = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.a)) * factor))),
-        };
-    }
-    pub fn add(c1: RGBA, c2: RGBA) RGBA {
-        const result = RGBA {
-            .r = @intFromFloat(@max(0, @min(255, (@as(f32, @floatFromInt(c1.r))/255 + @as(f32, @floatFromInt(c2.r))/255)*255))),
-            .g = @intFromFloat(@max(0, @min(255, (@as(f32, @floatFromInt(c1.g))/255 + @as(f32, @floatFromInt(c2.g))/255)*255))),
-            .b = @intFromFloat(@max(0, @min(255, (@as(f32, @floatFromInt(c1.b))/255 + @as(f32, @floatFromInt(c2.b))/255)*255))),
-            .a = @intFromFloat(@max(0, @min(255, (@as(f32, @floatFromInt(c1.a))/255 + @as(f32, @floatFromInt(c2.a))/255)*255))),
-        };
-        return result;
-    }
-    pub fn scale_raw(self: RGBA, factor: f32) RGBA {
-        return RGBA {
-            .r = @intFromFloat(@as(f32, @floatFromInt(self.r)) * factor),
-            .g = @intFromFloat(@as(f32, @floatFromInt(self.g)) * factor),
-            .b = @intFromFloat(@as(f32, @floatFromInt(self.b)) * factor),
-            .a = @intFromFloat(@as(f32, @floatFromInt(self.a)) * factor),
-        };
-    }
-    /// This assumes that the sum of any channel is inside the range of u8, there is no checks!
-    pub fn add_raw(c1: RGBA, c2: RGBA) RGBA {
-        const result = RGBA {
-            .r = c1.r + c2.r,
-            .g = c1.g + c2.g,
-            .b = c1.b + c2.b,
-            .a = c1.a + c2.a,
-        };
-        return result;
-    }
-    /// where `c2` is the background color
-    /// https://learnopengl.com/Advanced-OpenGL/Blending
-    pub fn blend(c1: RGBA, c2: RGBA) RGBA {
-        const a1: f32 = @as(f32, @floatFromInt(c1.a)) / 255;
-        const result = RGBA {
-            .r = @intFromFloat((@as(f32, @floatFromInt(c1.r))/255*a1 + @as(f32, @floatFromInt(c2.r))/255*(1-a1))*255),
-            .g = @intFromFloat((@as(f32, @floatFromInt(c1.g))/255*a1 + @as(f32, @floatFromInt(c2.g))/255*(1-a1))*255),
-            .b = @intFromFloat((@as(f32, @floatFromInt(c1.b))/255*a1 + @as(f32, @floatFromInt(c2.b))/255*(1-a1))*255),
-            .a = @intFromFloat((@as(f32, @floatFromInt(c1.a))/255*a1 + @as(f32, @floatFromInt(c2.a))/255*(1-a1))*255),
-        };
-        return result;
-    }
-    pub fn multiply(c1: RGBA, c2: RGBA) RGBA {
-        const result = RGBA {
-            .r = @intFromFloat( @as(f32, @floatFromInt(c1.r)) * (@as(f32, @floatFromInt(c2.r)) / 255)),
-            .g = @intFromFloat( @as(f32, @floatFromInt(c1.g)) * (@as(f32, @floatFromInt(c2.g)) / 255)),
-            .b = @intFromFloat( @as(f32, @floatFromInt(c1.b)) * (@as(f32, @floatFromInt(c2.b)) / 255)),
-            .a = @intFromFloat( @as(f32, @floatFromInt(c1.a)) * (@as(f32, @floatFromInt(c2.a)) / 255)),
-        };
-        return result;
-    }
-    pub fn mean(c1: RGBA, c2: RGBA, c3: RGBA, c4: RGBA) RGBA {
-        return RGBA {
-            .r = @as(u8, @intCast((@as(u16, @intCast(c1.r)) + @as(u16, @intCast(c2.r)) + @as(u16, @intCast(c3.r)) + @as(u16, @intCast(c4.r))) / 4)),
-            .g = @as(u8, @intCast((@as(u16, @intCast(c1.g)) + @as(u16, @intCast(c2.g)) + @as(u16, @intCast(c3.g)) + @as(u16, @intCast(c4.g))) / 4)),
-            .b = @as(u8, @intCast((@as(u16, @intCast(c1.b)) + @as(u16, @intCast(c2.b)) + @as(u16, @intCast(c3.b)) + @as(u16, @intCast(c4.b))) / 4)),
-            .a = @as(u8, @intCast((@as(u16, @intCast(c1.a)) + @as(u16, @intCast(c2.a)) + @as(u16, @intCast(c3.a)) + @as(u16, @intCast(c4.a))) / 4)),
-        };
-    }
-};
-
-pub const RGB = extern struct {
-    r: u8 align(1),
-    g: u8 align(1),
-    b: u8 align(1),
-    comptime { std.debug.assert(@sizeOf(@This()) == 3); }
-    pub fn scale(self: RGB, factor: f32) RGB {
-        return RGB {
-            .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
-            .g = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.g)) * factor))),
-            .b = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.b)) * factor))),
-        };
-    }
-    pub fn scale_raw(self: RGB, factor: f32) RGB {
-        return RGB {
-            .r = @intFromFloat(@as(f32, @floatFromInt(self.r)) * factor),
-            .g = @intFromFloat(@as(f32, @floatFromInt(self.g)) * factor),
-            .b = @intFromFloat(@as(f32, @floatFromInt(self.b)) * factor),
-        };
-    }
-    /// This assumes that the sum of any channel is inside the range of u8, there is no checks!
-    pub fn add_raw(c1: RGB, c2: RGB) RGB {
-        const result = RGB {
-            .r = c1.r + c2.r,
-            .g = c1.g + c2.g,
-            .b = c1.b + c2.b,
-        };
-        return result;
-    }
-};
-
 const State = struct {
-    pixel_buffer: Buffer2D(RGBA),
     running: bool,
     mouse: Vector2i,
     keys: [256]bool,
+    time: f64,
+    
+    pixel_buffer: Buffer2D(RGBA),
     depth_buffer: Buffer2D(f32),
     texture: Buffer2D(RGB),
     vertex_buffer: []f32,
@@ -230,49 +139,104 @@ const State = struct {
     viewport_matrix: M44,
     projection_matrix: M44,
     frame_index: usize,
-    time: f64,
-    page_index: usize = 0
+    
+    text_renderer: TextRenderer,
+    page_index: usize,
 };
 
 var wasm: Platform = undefined;
 var state: State = undefined;
 
-comptime {
-    std.debug.assert(@sizeOf(RGBA) == 4);
-    std.debug.assert(@sizeOf(RGB) == 3);
-}
-
 fn init() void {
     wasm = Platform.init(external.milli_since_epoch());
     external.util.log("Initialized");
-    const w: usize = 120;
-    const h: usize = 100;
+    const w: usize = 420;
+    const h: usize = 340;
+    var pixel_buffer = Buffer2D(RGBA).from(wasm.memory.allocator().alloc(RGBA, w*h) catch @panic("OOM"), w);
+    var text_renderer = TextRenderer.init(wasm.memory.allocator(), pixel_buffer) catch @panic("OOM");
+    var depth_buffer = Buffer2D(f32).from(wasm.memory.allocator().alloc(f32, @intCast(pixel_buffer.width * pixel_buffer.height)) catch @panic("OOM"), @intCast(pixel_buffer.width));
+    // state.texture = TGA.from_file(RGB, allocator, "res/african_head_diffuse.tga")
+    //     catch |err| { std.debug.print("error reading `res/african_head_diffuse.tga` {?}", .{err}); return; };
+    // state.vertex_buffer = OBJ.from_file(allocator, "res/african_head.obj")
+    //     catch |err| { std.debug.print("error reading `res/african_head.obj` {?}", .{err}); return; };
+    var camera = Camera {
+        .position = Vector3f { .x = 0, .y = 0, .z = 0 },
+        .up = Vector3f { .x = 0, .y = 1, .z = 0 },
+        .direction = Vector3f { .x = 0, .y = 0, .z = 1 },
+    };
     state = .{
-        .pixel_buffer = Buffer2D(RGBA).from(wasm.memory.allocator().alloc(RGBA, w*h) catch @panic("OOM"), w),
+        .pixel_buffer = pixel_buffer,
         .running = true,
         .mouse = undefined,
         .keys = [1]bool{false} ** 256,
-        .depth_buffer = undefined,
+        .depth_buffer = depth_buffer,
         .texture = undefined,
         .vertex_buffer = undefined,
-        .camera = undefined,
+        .camera = camera,
         .view_matrix = undefined,
         .viewport_matrix = undefined,
         .projection_matrix = undefined,
         .frame_index = 0,
         .time = 0,
+        .text_renderer = text_renderer,
+        .page_index = 0
     };
 }
 
 fn update() void {
     
-    for (state.pixel_buffer.data) |*rgba| rgba.* = RGBA { .r = 122, .g = 122, .b = 122, .a = 255, };
+    state.pixel_buffer.clear(RGBA.make(100, 149, 237,255));
+    state.depth_buffer.clear(999999);
 
-    const bytes_per_page = state.pixel_buffer.data.len*3;
-    const total_pages = @divFloor(wasm.all.len, bytes_per_page) + @as(usize, if (@mod(wasm.all.len, bytes_per_page) != 0) 1 else 0);
-    if (state.page_index>=total_pages) state.page_index = 0;
-    external.util.log_1024("page: {}", .{state.page_index});
-    visualize_bytes(state.pixel_buffer, wasm.all[state.page_index*bytes_per_page..@min(state.page_index*bytes_per_page+bytes_per_page, wasm.all.len)]);
+    const looking_at: Vector3f = state.camera.position.add(state.camera.direction);                
+    state.view_matrix = M44.lookat_right_handed(state.camera.position, looking_at, Vector3f.from(0, 1, 0));
+    const aspect_ratio = -@as(f32, @floatFromInt(state.pixel_buffer.width)) / @as(f32, @floatFromInt(state.pixel_buffer.height));
+    state.projection_matrix = M44.perspective_projection(60, aspect_ratio, 0.1, 5);
+    state.viewport_matrix = M44.viewport_i32_2(0, 0, @intCast(state.pixel_buffer.width), @intCast(state.pixel_buffer.height), 255);
+
+    if (false) {
+        const bytes_per_page = state.pixel_buffer.data.len*3;
+        const total_pages = @divFloor(wasm.all.len, bytes_per_page) + @as(usize, if (@mod(wasm.all.len, bytes_per_page) != 0) 1 else 0);
+        if (state.page_index>=total_pages) state.page_index = 0;
+        external.util.log_1024("page: {}", .{state.page_index});
+        visualize_bytes(state.pixel_buffer, wasm.all[state.page_index*bytes_per_page..@min(state.page_index*bytes_per_page+bytes_per_page, wasm.all.len)]);
+    }
+
+    // render the font texture as a quad
+    if (true) {
+        const texture = @import("text.zig").font.texture;
+        const w: f32 = @floatFromInt(texture.width);
+        const h: f32 = @floatFromInt(texture.height);
+        const vertex_buffer = [_]QuadShaderRgba.Vertex{
+            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
+            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
+            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
+            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
+        };
+        const index_buffer = [_]u16{0,1,2,0,2,3};
+        var quad_context = QuadShaderRgba.Context {
+            .texture = texture,
+            .projection_matrix =
+                state.projection_matrix.multiply(
+                    state.view_matrix.multiply(
+                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
+                    )
+                ),
+        };
+        const requirements = QuadShaderRgba.pipeline_configuration.Requirements() {
+            .depth_buffer = state.depth_buffer,
+            .viewport_matrix = state.viewport_matrix,
+            .index_buffer = &index_buffer,
+        };
+        QuadShaderRgba.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
+    }
+
+    state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10) }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z}) catch @panic("OOM");
+    state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10 - (12*1)) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z}) catch @panic("OOM");
+    state.text_renderer.render_all(
+        M44.orthographic_projection(0, @floatFromInt(state.pixel_buffer.width), 0, @floatFromInt(state.pixel_buffer.height), 0, 10),
+        state.viewport_matrix
+    );
 
     state.frame_index += 1;
 }

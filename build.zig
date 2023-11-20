@@ -48,7 +48,7 @@ pub fn build(b: *Builder) !void {
 
         // Number of pages reserved for heap memory.
         // This must match the number of pages used in script.js.
-        const number_of_pages = 2;
+        const number_of_pages = 40;
         const optimization_options = b.standardOptimizeOption(.{});
         const lib = b.addSharedLibrary(.{
             .name = "wasm_app",

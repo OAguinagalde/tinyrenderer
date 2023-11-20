@@ -6,6 +6,9 @@ pub const RGBA = extern struct {
     b: u8 align(1),
     a: u8 align(1),
     comptime { std.debug.assert(@sizeOf(@This()) == 4); }
+    pub inline fn make(r: u8, g: u8, b: u8, a: u8) RGBA {
+        return RGBA { .r = r, .g = g, .b = b, .a = a };
+    }
     pub fn scale(self: RGBA, factor: f32) RGBA {
         return RGBA {
             .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
@@ -68,6 +71,14 @@ pub const RGBA = extern struct {
             .g = @as(u8, @intCast((@as(u16, @intCast(c1.g)) + @as(u16, @intCast(c2.g)) + @as(u16, @intCast(c3.g)) + @as(u16, @intCast(c4.g))) / 4)),
             .b = @as(u8, @intCast((@as(u16, @intCast(c1.b)) + @as(u16, @intCast(c2.b)) + @as(u16, @intCast(c3.b)) + @as(u16, @intCast(c4.b))) / 4)),
             .a = @as(u8, @intCast((@as(u16, @intCast(c1.a)) + @as(u16, @intCast(c2.a)) + @as(u16, @intCast(c3.a)) + @as(u16, @intCast(c4.a))) / 4)),
+        };
+    }
+    pub fn from(comptime T: type, color: T) RGBA {
+        return switch (T) {
+            BGRA => RGBA { .r = color.r, .g = color.g, .b = color.b, .a = color.a },
+            RGB => RGBA { .r = color.r, .g = color.g, .b = color.b, .a = 255 },
+            RGBA => color,
+            else => @compileError("Conversion from " ++ T ++ " -> " ++ RGBA ++ " not implemented!"),
         };
     }
 };
@@ -138,6 +149,7 @@ pub const BGRA = extern struct {
         return switch (T) {
             RGBA => BGRA { .r = color.r, .g = color.g, .b = color.b, .a = color.a },
             RGB => BGRA { .r = color.r, .g = color.g, .b = color.b, .a = 255 },
+            BGRA => color,
             else => @compileError("Conversion from " ++ T ++ " -> " ++ BGRA ++ " not implemented!"),
         };
     }

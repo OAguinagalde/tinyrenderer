@@ -217,12 +217,14 @@ pub fn GraphicsPipeline(
                             }
                         };
 
-                        var vertex_list = VertexList.init(std.heap.c_allocator);
+                        var buffer: [1024*4]u8 = undefined;
+                        var fba = std.heap.FixedBufferAllocator.init(&buffer);
+                        var vertex_list = VertexList.init(fba.allocator());
                         vertex_list.add(ndcs[0]);
                         vertex_list.add(ndcs[1]);
                         vertex_list.add(ndcs[2]);
                         defer vertex_list.free();
-                        var temp_vertex_list = VertexList.init(std.heap.c_allocator);
+                        var temp_vertex_list = VertexList.init(fba.allocator());
                         defer temp_vertex_list.free();
 
                         // for each plane `p`

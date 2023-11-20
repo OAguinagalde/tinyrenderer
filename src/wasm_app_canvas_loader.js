@@ -3,8 +3,8 @@
 // > and JavaScript can create Memory objects. If you want to access the memory created in
 // > JS from Wasm or vice versa, you can pass a reference to the memory from one side to the other.
 let memory = new WebAssembly.Memory({
-    initial: 2 /* pages */,
-    maximum: 2 /* pages */,
+    initial: 40 /* pages */,
+    maximum: 40 /* pages */,
 });
 
 // This buffer contains all the memory being used by the wasm module.
