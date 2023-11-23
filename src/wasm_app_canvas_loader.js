@@ -3,8 +3,8 @@
 // > and JavaScript can create Memory objects. If you want to access the memory created in
 // > JS from Wasm or vice versa, you can pass a reference to the memory from one side to the other.
 let memory = new WebAssembly.Memory({
-    initial: 100 /* pages (64kb per page) */, 
-    maximum: 100 /* pages (64kb per page) */, 
+    initial: 200 /* pages (64kb per page) */, 
+    maximum: 200 /* pages (64kb per page) */, 
 });
 
 // This buffer contains all the memory being used by the wasm module.
@@ -58,12 +58,12 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     extern_fetch = (str_ptr, len) => {
         const str = decoder.decode(memory.buffer.slice(str_ptr, str_ptr+len));
         console.log("INFO: fetch", str, "request from wasm module...")
-        fetch(str).then(r => r.text()).then(text => {
-            const ptr = wasm_request_buffer(text.length);
-            new Uint8Array(memory.buffer).set(encoder.encode(text), ptr);
+        fetch(str).then(r => r.arrayBuffer()).then(buffer => {
+            const ptr = wasm_request_buffer(buffer.byteLength);
+            new Uint8Array(memory.buffer).set(new Uint8Array(buffer), ptr);
             const event = "buffer:" + str;
             new Uint8Array(memory.buffer).set(encoder.encode(event), interface_buffer_ptr);
-            wasm_send_event(event.length, ptr, text.length);
+            wasm_send_event(event.length, ptr, buffer.byteLength);
         });
     }
 

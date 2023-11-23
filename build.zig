@@ -49,7 +49,7 @@ pub fn build(b: *Builder) !void {
         // Number of pages reserved for heap memory.
         // This must match the number of pages used in script.js.
         // 64 kb per page
-        const number_of_pages = 100;
+        const number_of_pages = 200;
         const optimization_options = b.standardOptimizeOption(.{});
         const lib = b.addSharedLibrary(.{
             .name = "wasm_app",
@@ -114,12 +114,19 @@ pub fn build(b: *Builder) !void {
         // 3. copy the js logic which links the canvas and the wasm module
         var step_compile_wasm_library = b.addInstallArtifact(lib, .{});
         // step_compile_wasm_library.step.dependOn(&step_write_memory_info.step);
+        // var step_copy_res = b.addInstallDirectory(.{.path="res"}, "./res");
+        var step_copy_res = b.addInstallDirectory(.{
+            .source_dir = .{.path="res"},
+            .install_dir = .{.custom="./"},
+            .install_subdir = "./res"
+        });
         var step_copy_html = b.addInstallFile(.{.path="src/index.html"}, "./index.html");
         var step_copy_js = b.addInstallFile(.{.path="src/wasm_app_canvas_loader.js"}, "./wasm_app_canvas_loader.js");
         // All three steps need to be happen in order to consider the build successfull
         // NOTE InstallStep is just how zig calls the "main build task", by itself it does nothing
         // but by making it depend on other tasks, it will run those first
         b.getInstallStep().dependOn(&step_compile_wasm_library.step);
+        b.getInstallStep().dependOn(&step_copy_res.step);
         b.getInstallStep().dependOn(&step_copy_html.step);
         b.getInstallStep().dependOn(&step_copy_js.step);
 

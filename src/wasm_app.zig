@@ -203,9 +203,8 @@ const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
 const Vector4f = math.Vector4f;
 const M44 = math.M44;
-// const OBJ = @import("obj.zig");
-// const TGA = @import("tga.zig");
-// const imgui = @import("imgui.zig");
+const OBJ = @import("obj.zig");
+const TGA = @import("tga.zig");
 const Buffer2D = @import("buffer.zig").Buffer2D;
 const RGBA = @import("pixels.zig").RGBA;
 const RGB = @import("pixels.zig").RGB;
@@ -232,6 +231,7 @@ const State = struct {
     pixel_buffer: Buffer2D(RGBA),
     depth_buffer: Buffer2D(f32),
     texture: Buffer2D(RGB),
+    texture_loaded: bool,
     vertex_buffer: []f32,
     camera: Camera,
     view_matrix: M44,
@@ -250,51 +250,57 @@ var state: State = undefined;
 fn init() void {
     external.util.log("Initializing...");
     wasm.init(external.milli_since_epoch());
-    const w: usize = 420;
-    const h: usize = 340;
-    var pixel_buffer = Buffer2D(RGBA).from(wasm.allocator.alloc(RGBA, w*h) catch |e| Platform.panic(e), w);
-    var text_renderer = TextRenderer.init(wasm.allocator, pixel_buffer) catch |e| Platform.panic(e);
-    var depth_buffer = Buffer2D(f32).from(wasm.allocator.alloc(f32, @intCast(pixel_buffer.width * pixel_buffer.height)) catch |e| Platform.panic(e), @intCast(pixel_buffer.width));
-    const file = "index.html";
     tasks = TaskManager.init(wasm.allocator);
-    tasks.register(file, struct {
+    state.running = true;
+    state.keys = [1]bool{false} ** 256;
+    state.pixel_buffer = Buffer2D(RGBA).from(wasm.allocator.alloc(RGBA, 420*340) catch |e| Platform.panic(e), 420);
+    state.depth_buffer = Buffer2D(f32).from(wasm.allocator.alloc(f32, @intCast(state.pixel_buffer.width * state.pixel_buffer.height)) catch |e| Platform.panic(e), @intCast(state.pixel_buffer.width));
+    state.text_renderer = TextRenderer.init(wasm.allocator, state.pixel_buffer) catch |e| Platform.panic(e);
+    state.texture_loaded = false;
+    state.texture = undefined;
+    state.mouse = undefined;
+    state.vertex_buffer = undefined;
+    state.camera = Camera {
+        .position = Vector3f { .x = 0, .y = 0, .z = 0 },
+        .up = Vector3f { .x = 0, .y = 1, .z = 0 },
+        .direction = Vector3f { .x = 0, .y = 0, .z = 1 },
+    };
+    state.view_matrix = undefined;
+    state.viewport_matrix = undefined;
+    state.projection_matrix = undefined;
+    state.frame_index = 0;
+    state.time = 0;
+    state.page_index = 0;
+
+    // fetch texture and obj files and load them
+    const texture_file = "res/african_head_diffuse.tga";
+    tasks.register(texture_file, struct {
         fn f(regist_context: []const u8, completion_context: []const u8) void {
             var cc: struct { ptr: [*]u8, len: usize } = undefined;
             var rc: struct { texture: *Buffer2D(RGB) } = undefined;
             value(&rc, regist_context);
             value(&cc, completion_context);
-            external.util.log_1024("gotta load index.html located at {d} len {} into texture {d}", .{@intFromPtr(cc.ptr), cc.len, @intFromPtr(rc.texture) });
-            defer wasm.allocator.free(cc.ptr[0..cc.len]);
+            const file_bytes = cc.ptr[0..cc.len];
+            defer wasm.allocator.free(file_bytes);
+            state.texture = TGA.from_bytes(RGB, wasm.allocator, file_bytes) catch |e| Platform.panic(e);
+            state.texture_loaded = true;
         }
     }.f, struct { texture: *Buffer2D(RGB) } { .texture = &state.texture });
-    external.fetch(file.ptr, file.len);
-
-    // state.texture = TGA.from_file(RGB, allocator, "res/african_head_diffuse.tga")
-    //     catch |err| { std.debug.print("error reading `res/african_head_diffuse.tga` {?}", .{err}); return; };
-    // state.vertex_buffer = OBJ.from_file(allocator, "res/african_head.obj")
-    //     catch |err| { std.debug.print("error reading `res/african_head.obj` {?}", .{err}); return; };
-    var camera = Camera {
-        .position = Vector3f { .x = 0, .y = 0, .z = 0 },
-        .up = Vector3f { .x = 0, .y = 1, .z = 0 },
-        .direction = Vector3f { .x = 0, .y = 0, .z = 1 },
-    };
-    state = .{
-        .pixel_buffer = pixel_buffer,
-        .running = true,
-        .mouse = undefined,
-        .keys = [1]bool{false} ** 256,
-        .depth_buffer = depth_buffer,
-        .texture = undefined,
-        .vertex_buffer = undefined,
-        .camera = camera,
-        .view_matrix = undefined,
-        .viewport_matrix = undefined,
-        .projection_matrix = undefined,
-        .frame_index = 0,
-        .time = 0,
-        .text_renderer = text_renderer,
-        .page_index = 0
-    };
+    external.fetch(texture_file.ptr, texture_file.len);
+    
+    // const model_file = "res/african_head.obj";
+    // tasks.register(model_file, struct {
+    //     fn f(regist_context: []const u8, completion_context: []const u8) void {
+    //         var cc: struct { ptr: [*]u8, len: usize } = undefined;
+    //         var rc: struct { texture: *Buffer2D(RGB) } = undefined;
+    //         value(&rc, regist_context);
+    //         value(&cc, completion_context);
+    //         defer wasm.allocator.free(cc.ptr[0..cc.len]);
+    //         state.vertex_buffer = OBJ.from_file(allocator, "res/african_head.obj")
+    //             catch |err| { std.debug.print("error reading `res/african_head.obj` {?}", .{err}); return; };
+    //     }
+    // }.f, struct { texture: *Buffer2D(RGB) } { .texture = &state.texture });
+    // external.fetch(model_file.ptr, model_file.len);
 }
 
 fn update() void {
@@ -307,6 +313,33 @@ fn update() void {
     state.projection_matrix = M44.perspective_projection(60, aspect_ratio, 0.1, 5);
     state.viewport_matrix = M44.viewport_i32_2(0, 0, @intCast(state.pixel_buffer.width), @intCast(state.pixel_buffer.height), 255);
 
+    // render the model texture as a quad
+    if (true and state.texture_loaded) {
+        const w: f32 = @floatFromInt(state.texture.width);
+        const h: f32 = @floatFromInt(state.texture.height);
+        var quad_context = QuadShaderRgb.Context {
+            .texture = state.texture,
+            .projection_matrix =
+                state.projection_matrix.multiply(
+                    state.view_matrix.multiply(
+                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1.5 }).multiply(M44.scale(1/w))
+                    )
+                ),
+        };
+        const vertex_buffer = [_]QuadShaderRgb.Vertex{
+            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
+            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
+            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
+            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
+        };
+        const index_buffer = [_]u16{0,1,2,0,2,3};
+        const requirements = QuadShaderRgb.pipeline_configuration.Requirements() {
+            .depth_buffer = state.depth_buffer,
+            .viewport_matrix = state.viewport_matrix,
+            .index_buffer = &index_buffer,
+        };
+        QuadShaderRgb.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
+    }
     // render the font texture as a quad
     if (true) {
         const texture = @import("text.zig").font.texture;

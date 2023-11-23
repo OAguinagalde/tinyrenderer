@@ -119,33 +119,29 @@ comptime { std.debug.assert(@sizeOf(ColorMapSpecification) == 5); }
 comptime { std.debug.assert(@sizeOf(ImageSpecification) == 10); }
 comptime { std.debug.assert(@sizeOf(Header) == 18); }
 
-// TODO decouple this from the platform layer, just pass the file itself already read to the `from_file` function
-/// This can only read TGA files of data type `UncompressedRgb` (2) or `RunLengthEncodedRgb` (10)
-pub fn from_file(comptime expected_pixel_type: type, allocator: std.mem.Allocator, file_path: [] const u8) !Buffer2D(expected_pixel_type) {
-    
-    var file = std.fs.cwd().openFile(file_path, .{}) catch return error.CantOpenFile;
-    defer file.close();
+fn value(out_ptr: anytype, bytes: []const u8) void {
+    const bs: []u8 = @as([*]u8, @ptrCast(out_ptr))[0..@sizeOf(@typeInfo(@TypeOf(out_ptr)).Pointer.child)];
+    @memcpy(bs, bytes);
+}
 
-    // Parse the header only to figure out the size of the pixel data
+pub fn from_bytes(comptime expected_pixel_type: type, allocator: std.mem.Allocator, bytes: [] const u8) !Buffer2D(expected_pixel_type) {
+    var byte_index: usize = 0;
     var header: Header = undefined;
-    {
-        const read_size = file.read(std.mem.asBytes(&header)) catch return error.ReadHeader;
-        if (read_size != @sizeOf(Header)) return error.ReadHeader;
-    }
+    value(&header, bytes[0..@sizeOf(Header)]);
+    byte_index += @sizeOf(Header);
     
     // validate the file
     {
-
         // only care about RGB and RGBA images
         switch (@intFromEnum(header.image_spec.bits_per_pixel)) {
             24, 32 => {},
-            else => return error.FileNotSupported,
+            else => return error.FileNotSupportedA,
         }
         // only care about non color mapped, non compressed files
         // 2023/06/29 and now also run length encoded rgb images!
         switch (@intFromEnum(header.data_type)) {
             2, 10 => {},
-            else => return error.FileNotSupported,
+            else => return error.FileNotSupportedB,
         }
         // if its not color mapped why does it have a color map?
         if (header.color_map_type != 0) {
@@ -157,89 +153,60 @@ pub fn from_file(comptime expected_pixel_type: type, allocator: std.mem.Allocato
 
     }
 
-    if (@sizeOf(expected_pixel_type) != @divExact(@intFromEnum(header.image_spec.bits_per_pixel), 8)) return error.InvalidExpectedPixelType;
+    const pixel_size = @divExact(@intFromEnum(header.image_spec.bits_per_pixel), 8);
+    if (@sizeOf(expected_pixel_type) != pixel_size) return error.InvalidExpectedPixelType;
 
     const width: usize = @intCast(header.image_spec.width);
     const height: usize = @intCast(header.image_spec.height);
 
+    // TODO If there was a color map that would have to be skipped as well but for now we just assume there is not
     // If there is a comment/id or whatever, skip it
-    const id_length: usize = @intCast(header.id_length);
-    if (id_length > 0) {
-        file.seekTo(@sizeOf(Header) + id_length) catch return error.SeekTo;
-        // TODO If there was a color map that would have to be skipped as well but for now we just assume there is not
-    }
+    if (header.id_length > 0) byte_index += @intCast(header.id_length);
 
     // allocate and let the caller handle its lifetime
-    const pixel_data_size_in_bytes = width * height * @as(usize, @intCast(@divExact(@intFromEnum(header.image_spec.bits_per_pixel), 8)));
-    var buffer_pixel_data: []u8 = allocator.alloc(u8, pixel_data_size_in_bytes) catch return error.OutOfMemory;
-    
+    const buffer: []u8 = try allocator.alloc(u8, width * height * @as(usize, @intCast(pixel_size)));
     switch (header.data_type) {
+        DataTypeCode.UncompressedRgb => @memcpy(buffer, bytes[byte_index..byte_index+buffer.len]),
         DataTypeCode.RunLengthEncodedRgb => {
-            
-            var pixel_packet_header: [1]u8 = undefined;
+            var pixel_packet_header: u8 = undefined;
             var pixel_index: usize = 0;
             while (pixel_index < width * height) {
-                const read_size = file.read(&pixel_packet_header) catch return error.ReadPixelDataHeader;
-                if (read_size != 1) return error.ReadPixelDataHeaderReadSize;
-                const is_run_length_packet = (pixel_packet_header[0] >> 7) == 1;
-                const count: usize = @as(usize, @intCast(pixel_packet_header[0] & 0b01111111)) + 1;
-                std.debug.assert(count <= 128);
+                pixel_packet_header = bytes[byte_index];
+                byte_index += 1;
+                const is_run_length_packet = (pixel_packet_header >> 7) == 1;
+                const count: usize = @as(usize, @intCast(pixel_packet_header & 0b01111111)) + 1;
+                // logger("header {b:0>8}: count {}, run_length {}", .{pixel_packet_header, count, is_run_length_packet});
                 if (is_run_length_packet) {
-                    switch (header.image_spec.bits_per_pixel) {
-                        .RGB => {
-                            var color: [3]u8 = undefined;
-                            const read_bytes = file.read(&color) catch return error.ReadPixelData;
-                            std.debug.assert(read_bytes == 3);
-                            for (pixel_index .. pixel_index+count) |i| {
-                                std.mem.copyForwards(u8, buffer_pixel_data[i*3..i*3+3], &color);
-                            }
-                        },
-                        .RGBA => {
-                            var color: [4]u8 = undefined;
-                            const read_bytes = file.read(&color) catch return error.ReadPixelData;
-                            std.debug.assert(read_bytes == 4);
-                            for (pixel_index .. pixel_index+count) |i| {
-                                std.mem.copyForwards(u8, buffer_pixel_data[i*4..i*4+4], &color);
-                            }
-                        },
-                    }
+                    const color: []const u8 = bytes[byte_index..byte_index+pixel_size];
+                    std.debug.assert(color.len == pixel_size);
+                    for (pixel_index .. pixel_index+count) |i| @memcpy(buffer[i*pixel_size..(i*pixel_size)+pixel_size], color[0..pixel_size]);
+                    byte_index += pixel_size;
                 }
                 else {
-                    switch (header.image_spec.bits_per_pixel) {
-                        .RGB => {
-                            // there can never be more than [4*128]u8 bytes worth of pixel data per packet, but there can be less.
-                            var color: [3*128]u8 = undefined;
-                            const read_bytes = file.read(color[0..count*3]) catch return error.ReadPixelData;
-                            std.debug.assert(read_bytes == count*3);
-                            std.mem.copyForwards(
-                                u8,
-                                buffer_pixel_data[pixel_index*3 .. pixel_index*3 + count*3],
-                                color[0 .. count*3]
-                            );
-                        },
-                        .RGBA => {
-                            // there can never be more than [4*128]u8 bytes worth of pixel data per packet, but there can be less.
-                            var color: [4*128]u8 = undefined;
-                            const read_bytes = file.read(color[0..count*4]) catch return error.ReadPixelData;
-                            std.debug.assert(read_bytes == count*4);
-                            std.mem.copyForwards(
-                                u8,
-                                buffer_pixel_data[pixel_index*4 .. pixel_index*4 + count*4],
-                                color[0 .. count*4]
-                            );
-                        },
-                    }
+                    std.debug.assert(bytes[byte_index..byte_index+(count*pixel_size)].len == pixel_size*count);
+                    std.debug.assert(buffer[pixel_index*pixel_size .. (pixel_index*pixel_size) + (count*pixel_size)].len == bytes[byte_index..byte_index+(count*pixel_size)].len);
+                    @memcpy(buffer[pixel_index*pixel_size .. (pixel_index*pixel_size) + (count*pixel_size)], bytes[byte_index..byte_index+(count*pixel_size)]);
+                    byte_index += count*pixel_size;
                 }
                 pixel_index += count;
             }
-            if (pixel_index != width * height) return error.ReadPixelData;
-        },
-        DataTypeCode.UncompressedRgb => {
-            // Only thing left is to read the pixel data
-            const read_size = file.read(buffer_pixel_data) catch return error.ReadPixelData;
-            if (read_size != pixel_data_size_in_bytes) return error.ReadPixelData;
+            std.debug.assert(pixel_index == width * height);
         }
     }
-    return Buffer2D(expected_pixel_type).from(std.mem.bytesAsSlice(expected_pixel_type, buffer_pixel_data), width);
+
+    return Buffer2D(expected_pixel_type).from(std.mem.bytesAsSlice(expected_pixel_type, buffer), width);
+}
+
+// TODO decouple this from the platform layer, just pass the file itself already read to the `from_file` function
+/// This can only read TGA files of data type `UncompressedRgb` (2) or `RunLengthEncodedRgb` (10)
+pub fn from_file(comptime expected_pixel_type: type, allocator: std.mem.Allocator, file_path: [] const u8) !Buffer2D(expected_pixel_type) {
+    var file = std.fs.cwd().openFile(file_path, .{}) catch return error.CantOpenFile;
+    defer file.close();
+    const stats = try file.stat();
+    var buffer = try allocator.alloc(u8, stats.size);
+    defer allocator.free(buffer);
+    const read = try file.readAll(buffer);
+    std.debug.assert(read == stats.size);
+    return try from_bytes(expected_pixel_type, allocator, buffer);
 }
         
