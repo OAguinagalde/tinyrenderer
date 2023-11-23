@@ -48,7 +48,8 @@ pub fn build(b: *Builder) !void {
 
         // Number of pages reserved for heap memory.
         // This must match the number of pages used in script.js.
-        const number_of_pages = 40;
+        // 64 kb per page
+        const number_of_pages = 100;
         const optimization_options = b.standardOptimizeOption(.{});
         const lib = b.addSharedLibrary(.{
             .name = "wasm_app",
@@ -71,7 +72,7 @@ pub fn build(b: *Builder) !void {
         // so both `initial_memory` and `max_memory` are the same
         lib.initial_memory = std.wasm.page_size * number_of_pages;
         lib.max_memory = std.wasm.page_size * number_of_pages;
-        // Out of that memory, we reserve 1 page for the stack
+        // Out of that memory, we reserve 1 page for the shadow stack
         lib.stack_size = std.wasm.page_size;
         // we could reserve an X ammount of memory out of the provided memory, for example for
         // io mapping or something similar. This is the case with tic80 for instance
@@ -82,30 +83,30 @@ pub fn build(b: *Builder) !void {
         // generate a compile time file with the settings used for building the wasm module,
         // which will in turn be embedded into the module itself, so that the module knows
         // these parameters
-        const str = b.fmt(
-            \\pub const initial_memory: usize = {d};
-            \\pub const max_memory: usize = {d};
-            \\pub const stack_size: usize = {d};
-            \\pub const global_base: usize = {d};
-            , .{
-                lib.initial_memory orelse @as(u64, 0),
-                lib.max_memory orelse @as(u64, 0),
-                lib.stack_size orelse @as(u64, 0),
-                lib.global_base orelse @as(u64, 0)
-            }
-        );
-        std.log.info("{s}",.{str});
+        // const str = b.fmt(
+        //     \\pub const initial_memory: usize = {d};
+        //     \\pub const max_memory: usize = {d};
+        //     \\pub const stack_size: usize = {d};
+        //     \\pub const global_base: usize = {d};
+        //     , .{
+        //         lib.initial_memory orelse @as(u64, 0),
+        //         lib.max_memory orelse @as(u64, 0),
+        //         lib.stack_size orelse @as(u64, 0),
+        //         lib.global_base orelse @as(u64, 0)
+        //     }
+        // );
+        // std.log.info("{s}",.{str});
 
-        const step_tool_runner = b.addRunArtifact(b.addExecutable(.{
-            .name = "write_wasm_module_memory_info",
-            .root_source_file = .{ .path = "src/stdin_to_file.zig" },
-        }));
-        step_tool_runner.setStdIn(.{ .bytes = str });
+        // const step_tool_runner = b.addRunArtifact(b.addExecutable(.{
+        //     .name = "write_wasm_module_memory_info",
+        //     .root_source_file = .{ .path = "src/stdin_to_file.zig" },
+        // }));
+        // step_tool_runner.setStdIn(.{ .bytes = str });
         // Its a weird default but this basically adds the file name as the first argument...
-        const output = step_tool_runner.addOutputFileArg("memory_info.zig");
+        // const output = step_tool_runner.addOutputFileArg("memory_info.zig");
         
         // allow @import to "see" the generated file `memory_info.zon`
-        lib.addAnonymousModule("comptime_memory_info", .{ .source_file = output });
+        // lib.addAnonymousModule("comptime_memory_info", .{ .source_file = output });
 
         // There is 3 things that need to happen to build the project for wasm:
         // 1. compile the zig code to targe wasm
