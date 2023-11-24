@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const core = @import("core.zig");
 const math = @import("math.zig");
 const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
@@ -391,7 +392,7 @@ pub fn main() !void {
                 state.viewport_matrix = M44.viewport_i32_2(0, 0, client_width, client_height, 255);
 
                 // Example rendering OBJ model with Gouraud Shading
-                if (true) {
+                if (false) {
                     const horizontally_spinning_position = Vector3f { .x = std.math.cos(@as(f32, @floatCast(state.time)) / 2000), .y = 0, .z = std.math.sin(@as(f32, @floatCast(state.time)) / 2000) };
                     const render_context = GouraudShader.Context {
                         .light_position_camera_space = state.view_matrix.apply_to_vec3(horizontally_spinning_position).discard_w(),
@@ -419,7 +420,7 @@ pub fn main() !void {
                 }
 
                 // render the model texture as a quad
-                if (true) {
+                if (false) {
                     // const texture_data = state.texture.rgba.data;
                     const w: f32 = @floatFromInt(state.texture.width);
                     const h: f32 = @floatFromInt(state.texture.height);
@@ -448,7 +449,7 @@ pub fn main() !void {
                 }
                 
                 // render the font texture as a quad
-                if (true) {
+                if (false) {
                     const texture = @import("text.zig").font.texture;
                     const w: f32 = @floatFromInt(texture.width);
                     const h: f32 = @floatFromInt(texture.height);
@@ -474,6 +475,67 @@ pub fn main() !void {
                         .index_buffer = &index_buffer,
                     };
                     QuadShaderRgba.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
+                }
+
+                if (true) {
+                    const tic = @import("tic80.zig");
+                    const texture = blk: {
+                        
+                        // collor palette
+                        if (false) {
+                            const texture_data = allocator.alloc(RGB, tic.palette_size) catch unreachable;
+                            for (tic.penguknight_original_assets.pallete, 0..) |rgb, i| {
+                                const bytes = core.byte_slice(&rgb);
+                                texture_data[i] = .{ .r = bytes[2], .g = bytes[1], .b = bytes[0] };
+                            }
+                            break :blk Buffer2D(RGB).from(texture_data, tic.palette_size/2);
+                        }
+
+                        // collor palette
+                        if (true) {
+                            const texture_data = allocator.alloc(RGB, 8*8*256) catch unreachable;
+                            for (tic.penguknight_original_assets.tiles, 0..) |sprite, sprite_index| {
+                                const col = sprite_index%16;
+                                const row = @divFloor(sprite_index, 16);
+                                for (sprite, 0..) |palette_index, pixel_index| {
+                                    const x = pixel_index%8;
+                                    const y = @divFloor(pixel_index, 8);
+                                    const bgr = tic.penguknight_original_assets.pallete[palette_index];
+                                    const bytes = core.byte_slice(&bgr);
+                                    
+                                    const coli = col*8 + x;
+                                    const rowi = row*8 + y;
+                                    texture_data[coli + rowi*(8*16)] = .{ .r = bytes[2], .g = bytes[1], .b = bytes[0] };
+                                }
+                            }
+                            break :blk Buffer2D(RGB).from(texture_data, 8*16);
+                        }
+                    };
+                    defer allocator.free(texture.data);
+                    const wf: f32 = @floatFromInt(texture.width);
+                    const hf: f32 = @floatFromInt(texture.height);
+                    const context = QuadShaderRgb.Context {
+                        .texture = texture,
+                        .projection_matrix =
+                            state.projection_matrix.multiply(
+                                state.view_matrix.multiply(
+                                    M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1.5 }).multiply(M44.scale(1/wf))
+                                )
+                            ),
+                    };
+                    const vertex_buffer = [_]QuadShaderRgb.Vertex{
+                        .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=1} },
+                        .{ .pos = .{.x=wf,.y=0}, .uv = .{.x=1,.y=1} },
+                        .{ .pos = .{.x=wf,.y=hf}, .uv = .{.x=1,.y=0} },
+                        .{ .pos = .{.x=0,.y=hf}, .uv = .{.x=0,.y=0} },
+                    };
+                    const index_buffer = [_]u16{0,1,2,0,2,3};
+                    const requirements = QuadShaderRgb.pipeline_configuration.Requirements() {
+                        .depth_buffer = state.depth_buffer,
+                        .viewport_matrix = state.viewport_matrix,
+                        .index_buffer = &index_buffer,
+                    };
+                    QuadShaderRgb.Pipeline.render(state.pixel_buffer, context, &vertex_buffer, index_buffer.len/3, requirements);
                 }
 
                 // some debug information and stuff

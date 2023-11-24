@@ -22,9 +22,6 @@ const QuadShaderRgb = @import("shaders/quad.zig").Shader(RGBA, RGB, false, false
 const QuadShaderRgba = @import("shaders/quad.zig").Shader(RGBA, RGBA, false, false);
 const TextRenderer = @import("text.zig").TextRenderer(RGBA, 1024, 1024);
 
-// This is necessary so that the exported functions are referenced and zig actually compiles it
-comptime { _ = platform; }
-
 const Camera = struct {
     position: Vector3f,
     direction: Vector3f,
@@ -52,6 +49,10 @@ const State = struct {
 };
 
 pub const callbacks = struct {
+
+    // This is necessary so that the exported functions are referenced and zig actually compiles it
+    comptime { _ = @import("wasm.zig"); }
+
     pub fn get_static_buffer() []u8 {
         return &static_buffer_for_runtime_use;
     }
