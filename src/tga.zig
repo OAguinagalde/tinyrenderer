@@ -3,6 +3,7 @@
 // https://www.gamers.org/dEngine/quake3/TGA.txt
 
 const std = @import("std");
+const core = @import("core.zig");
 const Buffer2D = @import("buffer.zig").Buffer2D;
 
 const BitsPerPixel = enum(u8) {
@@ -119,15 +120,10 @@ comptime { std.debug.assert(@sizeOf(ColorMapSpecification) == 5); }
 comptime { std.debug.assert(@sizeOf(ImageSpecification) == 10); }
 comptime { std.debug.assert(@sizeOf(Header) == 18); }
 
-fn value(out_ptr: anytype, bytes: []const u8) void {
-    const bs: []u8 = @as([*]u8, @ptrCast(out_ptr))[0..@sizeOf(@typeInfo(@TypeOf(out_ptr)).Pointer.child)];
-    @memcpy(bs, bytes);
-}
-
 pub fn from_bytes(comptime expected_pixel_type: type, allocator: std.mem.Allocator, bytes: [] const u8) !Buffer2D(expected_pixel_type) {
     var byte_index: usize = 0;
     var header: Header = undefined;
-    value(&header, bytes[0..@sizeOf(Header)]);
+    core.value(&header, bytes[0..@sizeOf(Header)]);
     byte_index += @sizeOf(Header);
     
     // validate the file

@@ -1,202 +1,8 @@
 const std = @import("std");
-
-// functions provided by the wasm module caller (in js, the `env` object passed to `instantiateStreaming`)
-const external = struct {
-    pub extern fn console_log(str: [*]const u8, len: usize) void;
-    pub extern fn milli_since_epoch() usize;
-    pub extern fn fetch(str: [*]const u8, len: usize) void;
-
-    const util = struct {
-        
-        pub fn log(str: []const u8) void {
-            console_log(str.ptr, str.len);
-        }
-
-        pub fn log_1024(comptime fmt: []const u8, args: anytype) void {
-            var buffer: [1024*2]u8 = undefined;
-            log(std.fmt.bufPrint(&buffer, fmt, args) catch |e| Platform.panic(e));
-        }
-    };
-};
-
-/// This buffer is used as a communications buffer between js and wasm
-var wasm_interface_buffer: [256]u8 = undefined;
-pub export fn wasm_get_interface_buffer() [*]u8 {
-    return @ptrCast(&wasm_interface_buffer);
-}
-
-/// NOTE the pointer provided is basically an offset in the wasm module memory
-/// provided byt the wasm runtime
-pub export fn wasm_get_pixel_buffer_ptr() [*]u8 {
-    return @ptrCast(state.pixel_buffer.data.ptr);
-}
-
-pub export fn wasm_get_canvas_size(out_w: *u32, out_h: *u32) void {
-    out_w.* = state.pixel_buffer.width;
-    out_h.* = state.pixel_buffer.height;
-}
-
-pub export fn wasm_send_event(len: usize, a: usize, b: usize) void {
-    const event: []u8 = wasm_interface_buffer[0..len];
-    external.util.log_1024("event received {s}", .{event});
-    var tokens = std.mem.tokenize(u8, event, ":");
-    var event_type = tokens.next().?;
-    if (std.mem.eql(u8, event_type, "mouse")) {
-        if (std.mem.eql(u8, tokens.next().?, "down")) {
-            state.page_index += 1;
-        }
-    }
-    else if (std.mem.eql(u8, event_type, "buffer")) {
-        const id = tokens.next().?;
-        const data: struct { ptr: [*]u8, len: usize } = .{ .ptr = @ptrFromInt(a), .len = b };
-        tasks.finish(id, data);
-    }
-}
-
-pub export fn wasm_request_buffer(len: usize) [*]u8 {
-    external.util.log_1024("buffer request received {}", .{len});
-    return (wasm.allocator.alloc(u8, len) catch |e| Platform.panic(e)).ptr;
-}
-
-pub export fn wasm_init() void {
-    init();
-}
-pub export fn wasm_tick() void {
-    update();
-}
-
-pub const TaskManager = struct {
-    const CallbackType = fn(context_register: []const u8, context_finish: []const u8) void;
-    const Task = struct {
-        callback: *const CallbackType,
-        context: []const u8
-    };
-
-    arena: std.heap.ArenaAllocator,
-    /// key: the id of the task. value: the task itself, which contains a callback and a context provided to the callback on execution.
-    tasks: std.StringHashMap(Task),
-    
-    pub fn init(allocator: std.mem.Allocator) TaskManager {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        var task_map = std.StringHashMap(Task).init(allocator);
-        return .{
-            .arena = arena,
-            .tasks = task_map,
-        };
-    }
-
-    pub fn deinit(self: *TaskManager) void {
-        self.tasks.deinit();
-        self.arena.deinit();
-    }
-    
-    /// clones context and id and manages internally
-    pub fn register(self: *TaskManager, id: []const u8, cb: *const CallbackType, context_value: anytype) void {
-        const context_size = @sizeOf(@TypeOf(context_value));
-        // allocate enough space to store the task until it gets completed and freed on `finish`
-        const size = context_size+id.len;
-        var task_storage = self.arena.allocator().alloc(u8, size) catch |e| Platform.panic(e);
-        var id_storage: []u8 = task_storage[0..id.len];
-        var context_storage: []u8 = task_storage[id.len..size];
-        std.debug.assert(context_size == context_storage.len);
-        std.mem.copy(u8, id_storage, id);
-        std.mem.copy(u8, context_storage, byte_slice(&context_value));        
-        // the task itself just contains a pointer to the context (its memory is manually managed), and a pointer to the callback (which is static code, so no need to manage its lifetime)
-        self.tasks.put(id_storage, .{ .callback = cb, .context = context_storage }) catch |e| Platform.panic(e);
-    }
-
-    pub fn finish(self: *TaskManager, id: []const u8, context_value: anytype) void {
-        const task = self.tasks.get(id).?;
-        task.callback(task.context, byte_slice(&context_value));
-        _ = self.tasks.remove(id);
-    }
-
-};
-
-/// given a pointer to a value, returns a const byte slice of the underlying bytes
-fn byte_slice(v_ptr: anytype) []const u8 {
-    return @as([]const u8, @as([*]const u8, @ptrCast(v_ptr))[0..@sizeOf(@typeInfo(@TypeOf(v_ptr)).Pointer.child)]);
-}
-
-/// from byte slice to value
-fn value(out_ptr: anytype, bytes: []const u8) void {
-    const bs: []u8 = @as([*]u8, @ptrCast(out_ptr))[0..@sizeOf(@typeInfo(@TypeOf(out_ptr)).Pointer.child)];
-    @memcpy(bs, bytes);
-}
-
-pub const Platform = struct {
-    // const memory_info = @import("comptime_memory_info");
-    
-    fba: std.heap.FixedBufferAllocator,
-    allocator: std.mem.Allocator,
-    random: std.rand.Random,
-    random_internal_implementation: std.rand.Xoshiro256,
-    
-    __memory_base: [*]u8,
-    __table_base: [*]u8,
-    __stack_pointer: [*]u8,
-    __data_end: [*]u8,
-    __heap_base: [*]u8,
-    __heap_end: [*]u8,
-    
-    orig_vtable: *const std.mem.Allocator.VTable,
-
-    pub fn init(platform: *Platform, random_seed: u64) void {
-
-        platform.random_internal_implementation = std.rand.DefaultPrng.init(random_seed);
-        platform.random = platform.random_internal_implementation.random();
-
-        // https://github.com/WebAssembly/tool-conventions/blob/main/DynamicLinking.md
-        platform.__memory_base = @extern(?[*]u8, .{.name = "__memory_base"}).?; external.util.log_1024("__memory_base {any} {}", .{platform.__memory_base, @as(usize, @intFromPtr(platform.__memory_base))});
-        platform.__table_base = @extern(?[*]u8, .{.name = "__table_base"}).?; external.util.log_1024("__table_base {any} {}", .{platform.__table_base, @as(usize, @intFromPtr(platform.__table_base))});
-        platform.__stack_pointer = @extern(?[*]u8, .{.name = "__stack_pointer"}).?; external.util.log_1024("__stack_pointer {any} {}", .{platform.__stack_pointer, @as(usize, @intFromPtr(platform.__stack_pointer))});
-        platform.__data_end = @extern(?[*]u8, .{.name = "__data_end"}).?; external.util.log_1024("__data_end {any} {}", .{platform.__data_end, @as(usize, @intFromPtr(platform.__data_end))});
-        platform.__heap_base = @extern(?[*]u8, .{.name = "__heap_base"}).?; external.util.log_1024("__heap_base {any} {}", .{platform.__heap_base, @as(usize, @intFromPtr(platform.__heap_base))});
-        platform.__heap_end = @extern(?[*]u8, .{.name = "__heap_end"}).?; external.util.log_1024("__heap_end {any} {}", .{platform.__heap_end, @as(usize, @intFromPtr(platform.__heap_end))});
-        
-        var zero: [*]allowzero u8 = @ptrFromInt(0);
-        var heap: []u8 = @ptrCast(zero[@intFromPtr(platform.__heap_base)..@intFromPtr(platform.__heap_end)]);
-        external.util.log_1024("heap length {}", .{heap.len});
-        platform.fba = std.heap.FixedBufferAllocator.init(heap);
-        platform.orig_vtable = platform.fba.allocator().vtable;
-        platform.allocator = .{
-            .ptr = &platform.fba,
-            .vtable = &.{
-                .alloc = wrappers.alloc,
-                .resize = wrappers.resize,
-                .free = wrappers.free,
-            },
-        };
-
-    }
-
-    const wrappers = struct {
-        fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
-            const res = wasm.orig_vtable.alloc(ctx, len, ptr_align, ret_addr);
-            external.util.log_1024("Allocator alloc {} at {any}", .{len, res});
-            return res;
-        }
-        fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
-            const res = wasm.orig_vtable.resize(ctx, buf, buf_align, new_len, ret_addr);
-            external.util.log_1024("Allocator resize from {} at {any} to {} -> {}", .{buf.len, buf.ptr, new_len, res});
-            return res;
-        }
-        fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
-            external.util.log_1024("Allocator free {} bytes at {any}", .{buf.len, buf.ptr});
-            wasm.orig_vtable.free(ctx, buf, buf_align, ret_addr);
-        }
-    };
-
-    pub fn slice(ptr: [*]u8, len: usize) []u8 {
-        return ptr[0..len];
-    }
-    
-    pub fn panic(e: anyerror) noreturn {
-        external.util.log_1024("panic {any}", .{e});
-        @panic("ERROR");
-    }
-};
-
+const core = @import("core.zig");
+const platform = @import("wasm.zig");
+const Runtime = platform.Runtime;
+const TaskManager = @import("TaskManager.zig");
 const math = @import("math.zig");
 const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
@@ -215,6 +21,9 @@ const GouraudShader = @import("shaders/gouraud.zig").Shader(RGBA, RGB);
 const QuadShaderRgb = @import("shaders/quad.zig").Shader(RGBA, RGB, false, false);
 const QuadShaderRgba = @import("shaders/quad.zig").Shader(RGBA, RGBA, false, false);
 const TextRenderer = @import("text.zig").TextRenderer(RGBA, 1024, 1024);
+
+// This is necessary so that the exported functions are referenced and zig actually compiles it
+comptime { _ = platform; }
 
 const Camera = struct {
     position: Vector3f,
@@ -243,19 +52,66 @@ const State = struct {
     page_index: usize,
 };
 
-var tasks: TaskManager = undefined;
-var wasm: Platform = undefined;
-var state: State = undefined;
+pub const callbacks = struct {
+    pub fn get_static_buffer() []u8 {
+        return &static_buffer_for_runtime_use;
+    }
+    pub fn get_canvas_pixels() *void {
+        return @ptrCast(state.pixel_buffer.data.ptr);
+    }
+    pub fn get_canvas_size() platform.Callbacks.Dimensions {
+        return .{
+            .w = state.pixel_buffer.width,
+            .h = state.pixel_buffer.height
+        };
+    }
+    pub fn send_event(event: []const u8, a: usize, b: usize) void {
+        platform.flog("event received {s}", .{event});
+        var tokens = std.mem.tokenize(u8, event, ":");
+        var event_type = tokens.next().?;
+        if (std.mem.eql(u8, event_type, "mouse")) {
+            if (std.mem.eql(u8, tokens.next().?, "down")) {
+                state.page_index += 1;
+            }
+        }
+        else if (std.mem.eql(u8, event_type, "buffer")) {
+            const id = tokens.next().?;
+            const data: struct { ptr: [*]u8, len: usize } = .{ .ptr = @ptrFromInt(a), .len = b };
+            tasks.?.finish(id, data);
+        }
+    }
+    pub fn request_buffer(len: usize) []u8 {
+        return runtime.allocator.alloc(u8, len) catch |e| panic(e);
+    }
+    pub fn init() void {
+        initialize();
+    }
+    pub fn tick() void {
+        update();
+    }
+};
 
-fn init() void {
-    external.util.log("Initializing...");
-    wasm.init(external.milli_since_epoch());
-    tasks = TaskManager.init(wasm.allocator);
+fn panic(e: anyerror) noreturn {
+    // NOTE for some reason when wasm panichs with a message the message is not exposed in the browser, hence the separate log message
+    platform.flog("panic {any}", .{e});
+    @panic("ERROR");
+}
+
+var tasks: ?TaskManager = undefined;
+var runtime: Runtime = undefined;
+var state: State = undefined;
+var static_buffer_for_runtime_use: [1024]u8 = undefined;
+
+fn initialize() void {
+    platform.flog("Initializing...", .{});
+    runtime.init(platform.milli_since_epoch());
+    tasks = TaskManager.init(runtime.allocator);
+
     state.running = true;
     state.keys = [1]bool{false} ** 256;
-    state.pixel_buffer = Buffer2D(RGBA).from(wasm.allocator.alloc(RGBA, 420*340) catch |e| Platform.panic(e), 420);
-    state.depth_buffer = Buffer2D(f32).from(wasm.allocator.alloc(f32, @intCast(state.pixel_buffer.width * state.pixel_buffer.height)) catch |e| Platform.panic(e), @intCast(state.pixel_buffer.width));
-    state.text_renderer = TextRenderer.init(wasm.allocator, state.pixel_buffer) catch |e| Platform.panic(e);
+    state.pixel_buffer = Buffer2D(RGBA).from(runtime.allocator.alloc(RGBA, 420*340) catch |e| panic(e), 420);
+    state.depth_buffer = Buffer2D(f32).from(runtime.allocator.alloc(f32, @intCast(state.pixel_buffer.width * state.pixel_buffer.height)) catch |e| panic(e), @intCast(state.pixel_buffer.width));
+    state.text_renderer = TextRenderer.init(runtime.allocator, state.pixel_buffer) catch |e| panic(e);
     state.texture_loaded = false;
     state.texture = undefined;
     state.mouse = undefined;
@@ -272,21 +128,23 @@ fn init() void {
     state.time = 0;
     state.page_index = 0;
 
+    _ = callbacks.get_canvas_pixels();
+
     // fetch texture and obj files and load them
     const texture_file = "res/african_head_diffuse.tga";
-    tasks.register(texture_file, struct {
+    tasks.?.register(texture_file, struct {
         fn f(regist_context: []const u8, completion_context: []const u8) void {
             var cc: struct { ptr: [*]u8, len: usize } = undefined;
             var rc: struct { texture: *Buffer2D(RGB) } = undefined;
-            value(&rc, regist_context);
-            value(&cc, completion_context);
+            core.value(&rc, regist_context);
+            core.value(&cc, completion_context);
             const file_bytes = cc.ptr[0..cc.len];
-            defer wasm.allocator.free(file_bytes);
-            state.texture = TGA.from_bytes(RGB, wasm.allocator, file_bytes) catch |e| Platform.panic(e);
+            defer runtime.allocator.free(file_bytes);
+            state.texture = TGA.from_bytes(RGB, runtime.allocator, file_bytes) catch |e| panic(e);
             state.texture_loaded = true;
         }
-    }.f, struct { texture: *Buffer2D(RGB) } { .texture = &state.texture });
-    external.fetch(texture_file.ptr, texture_file.len);
+    }.f, struct { texture: *Buffer2D(RGB) } { .texture = &state.texture }) catch |e| panic(e);
+    platform.fetch(texture_file.ptr, texture_file.len);
     
     // const model_file = "res/african_head.obj";
     // tasks.register(model_file, struct {
@@ -295,15 +153,24 @@ fn init() void {
     //         var rc: struct { texture: *Buffer2D(RGB) } = undefined;
     //         value(&rc, regist_context);
     //         value(&cc, completion_context);
-    //         defer wasm.allocator.free(cc.ptr[0..cc.len]);
+    //         defer runtime.allocator.free(cc.ptr[0..cc.len]);
     //         state.vertex_buffer = OBJ.from_file(allocator, "res/african_head.obj")
     //             catch |err| { std.debug.print("error reading `res/african_head.obj` {?}", .{err}); return; };
     //     }
     // }.f, struct { texture: *Buffer2D(RGB) } { .texture = &state.texture });
-    // external.fetch(model_file.ptr, model_file.len);
+    // platform.fetch(model_file.ptr, model_file.len);
+
 }
 
 fn update() void {
+
+    // wait for every task registered at init() to finish
+    if (tasks) |tm| {
+        if (!tm.finished()) return;
+        tasks.?.deinit();
+        tasks = null;
+    }
+
     state.pixel_buffer.clear(RGBA.make(100, 149, 237,255));
     state.depth_buffer.clear(999999);
 
@@ -340,6 +207,7 @@ fn update() void {
         };
         QuadShaderRgb.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
     }
+
     // render the font texture as a quad
     if (true) {
         const texture = @import("text.zig").font.texture;
@@ -369,8 +237,8 @@ fn update() void {
         QuadShaderRgba.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
     }
 
-    state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10) }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z}) catch |e| Platform.panic(e);
-    state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10 - (12*1)) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z}) catch |e| Platform.panic(e);
+    state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10) }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z}) catch |e| panic(e);
+    state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10 - (12*1)) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z}) catch |e| panic(e);
     state.text_renderer.render_all(
         M44.orthographic_projection(0, @floatFromInt(state.pixel_buffer.width), 0, @floatFromInt(state.pixel_buffer.height), 0, 10),
         state.viewport_matrix
@@ -378,7 +246,6 @@ fn update() void {
 
     state.frame_index += 1;
 }
-
 
 fn visualize_bytes(pixel_buffer: Buffer2D(RGBA), bytes_to_display: []u8) void {
     // TODO use channels to differentiate stack heap static etc

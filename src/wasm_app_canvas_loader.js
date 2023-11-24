@@ -19,17 +19,17 @@ let extern_console_log = (str_ptr, len) => {
 };
 
 let extern_milli_since_epoch = () => {
-    Date.now()
+    return Date.now()
 };
 
-let extern_fetch = (str_ptr, len, destination_ptr, destination_len) => {
+let extern_fetch = (str_ptr, len) => {
+    
 }
-
 // This contains everything that the wasm module will have access to
 let importObject = {
     env: {
         console_log: (str_ptr, len) => { extern_console_log(str_ptr, len); },
-        milli_since_epoch: () => { extern_milli_since_epoch(); },
+        milli_since_epoch: () => { return extern_milli_since_epoch(); },
         fetch: (str_ptr, len) => { extern_fetch(str_ptr, len) },
         memory: memory,
     },
@@ -45,15 +45,16 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     console.log(result.instance.exports);
     
     // These are the functions provided byt the module
-    const wasm_get_pixel_buffer_ptr = result.instance.exports.wasm_get_pixel_buffer_ptr;
+    const wasm_get_canvas_pixels = result.instance.exports.wasm_get_canvas_pixels;
     const wasm_get_canvas_size = result.instance.exports.wasm_get_canvas_size;
     const wasm_tick = result.instance.exports.wasm_tick;
     const wasm_init = result.instance.exports.wasm_init;
     const wasm_send_event = result.instance.exports.wasm_send_event;
     const wasm_request_buffer = result.instance.exports.wasm_request_buffer;
+    const wasm_get_static_buffer = result.instance.exports.wasm_get_static_buffer;
 
     // This is the 256 bytes buffer used to interface js code and wasm code
-    const interface_buffer_ptr = result.instance.exports.wasm_get_interface_buffer();
+    const interface_buffer_ptr = wasm_get_static_buffer();
 
     extern_fetch = (str_ptr, len) => {
         const str = decoder.decode(memory.buffer.slice(str_ptr, str_ptr+len));
@@ -97,7 +98,7 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
         () => {
             wasm_tick();
             
-            const pixel_data_offset = wasm_get_pixel_buffer_ptr();
+            const pixel_data_offset = wasm_get_canvas_pixels();
             const module_pixel_data = new Uint8Array(memory.buffer).slice(
                 pixel_data_offset,
                 pixel_data_offset + (canvas.width * canvas.height * canvas_pixel_size)
