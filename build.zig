@@ -80,41 +80,12 @@ pub fn build(b: *Builder) !void {
         //    lib.global_base = X;
         // 
 
-        // generate a compile time file with the settings used for building the wasm module,
-        // which will in turn be embedded into the module itself, so that the module knows
-        // these parameters
-        // const str = b.fmt(
-        //     \\pub const initial_memory: usize = {d};
-        //     \\pub const max_memory: usize = {d};
-        //     \\pub const stack_size: usize = {d};
-        //     \\pub const global_base: usize = {d};
-        //     , .{
-        //         lib.initial_memory orelse @as(u64, 0),
-        //         lib.max_memory orelse @as(u64, 0),
-        //         lib.stack_size orelse @as(u64, 0),
-        //         lib.global_base orelse @as(u64, 0)
-        //     }
-        // );
-        // std.log.info("{s}",.{str});
-
-        // const step_tool_runner = b.addRunArtifact(b.addExecutable(.{
-        //     .name = "write_wasm_module_memory_info",
-        //     .root_source_file = .{ .path = "src/stdin_to_file.zig" },
-        // }));
-        // step_tool_runner.setStdIn(.{ .bytes = str });
-        // Its a weird default but this basically adds the file name as the first argument...
-        // const output = step_tool_runner.addOutputFileArg("memory_info.zig");
-        
-        // allow @import to "see" the generated file `memory_info.zon`
-        // lib.addAnonymousModule("comptime_memory_info", .{ .source_file = output });
-
         // There is 3 things that need to happen to build the project for wasm:
         // 1. compile the zig code to targe wasm
         // 2. copy the index.html which has the canvas
         // 3. copy the js logic which links the canvas and the wasm module
+        // 3. copy resources
         var step_compile_wasm_library = b.addInstallArtifact(lib, .{});
-        // step_compile_wasm_library.step.dependOn(&step_write_memory_info.step);
-        // var step_copy_res = b.addInstallDirectory(.{.path="res"}, "./res");
         var step_copy_res = b.addInstallDirectory(.{
             .source_dir = .{.path="res"},
             .install_dir = .{.custom="./"},
@@ -122,7 +93,6 @@ pub fn build(b: *Builder) !void {
         });
         var step_copy_html = b.addInstallFile(.{.path="src/index.html"}, "./index.html");
         var step_copy_js = b.addInstallFile(.{.path="src/wasm_app_canvas_loader.js"}, "./wasm_app_canvas_loader.js");
-        // All three steps need to be happen in order to consider the build successfull
         // NOTE InstallStep is just how zig calls the "main build task", by itself it does nothing
         // but by making it depend on other tasks, it will run those first
         b.getInstallStep().dependOn(&step_compile_wasm_library.step);
@@ -140,6 +110,29 @@ pub fn build(b: *Builder) !void {
         run_step.dependOn(step_run);
     }
 
+}
+
+// Allows you to `@import(name)` any data into a compilation unit:
+// 
+//     embed_str_as_module(b, "pub const SomeConstant: usize = 1337;", "constants.zig", lib);
+// 
+// Then somewhere in the lib's code:
+// 
+//     const constants = @import("constants.zig");
+//     std.log.debug("{}", .{constants.SomeConstant});
+// 
+// which will print "1337"
+fn embed_str_as_module(b: *std.Build, comptime str: []const u8, comptime name: []const u8, compilation: *std.Build.Step.Compile) void {
+    const step_tool_runner = b.addRunArtifact(b.addExecutable(.{
+        .name = "Embed data as anonymous module",
+        .root_source_file = .{ .path = "src/stdin_to_file.zig" },
+    }));
+    step_tool_runner.setStdIn(.{ .bytes = str });
+    // Its a weird default but this basically adds the file name as the first argument...
+    const output = step_tool_runner.addOutputFileArg(name);
+    // allow @import to "see" the generated file `memory_info.zon`
+    compilation.addAnonymousModule(name, .{ .source_file = output });
+    compilation.step.dependOn(&step_tool_runner.step);
 }
 
 fn addRunCodeStep(builder: *std.Build, comptime code: fn()void) *std.Build.Step {
