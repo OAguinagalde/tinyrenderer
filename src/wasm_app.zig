@@ -40,8 +40,7 @@ const State = struct {
     pixel_buffer: Buffer2D(RGBA),
     depth_buffer: Buffer2D(f32),
     texture: Buffer2D(RGB),
-    texture_loaded: bool,
-    vertex_buffer: []f32,
+    vertex_buffer: std.ArrayList(GouraudShader.Vertex),
     camera: Camera,
     view_matrix: M44,
     viewport_matrix: M44,
@@ -112,7 +111,6 @@ fn initialize() void {
     state.pixel_buffer = Buffer2D(RGBA).from(runtime.allocator.alloc(RGBA, 420*340) catch |e| panic(e), 420);
     state.depth_buffer = Buffer2D(f32).from(runtime.allocator.alloc(f32, @intCast(state.pixel_buffer.width * state.pixel_buffer.height)) catch |e| panic(e), @intCast(state.pixel_buffer.width));
     state.text_renderer = TextRenderer.init(runtime.allocator, state.pixel_buffer) catch |e| panic(e);
-    state.texture_loaded = false;
     state.texture = undefined;
     state.mouse = undefined;
     state.vertex_buffer = undefined;
@@ -130,7 +128,6 @@ fn initialize() void {
 
     _ = callbacks.get_canvas_pixels();
 
-    // fetch texture and obj files and load them
     const texture_file = "res/african_head_diffuse.tga";
     tasks.?.register(texture_file, struct {
         fn f(regist_context: []const u8, completion_context: []const u8) void {
@@ -141,24 +138,34 @@ fn initialize() void {
             const file_bytes = cc.ptr[0..cc.len];
             defer runtime.allocator.free(file_bytes);
             state.texture = TGA.from_bytes(RGB, runtime.allocator, file_bytes) catch |e| panic(e);
-            state.texture_loaded = true;
         }
     }.f, struct { texture: *Buffer2D(RGB) } { .texture = &state.texture }) catch |e| panic(e);
     platform.fetch(texture_file.ptr, texture_file.len);
-    
-    // const model_file = "res/african_head.obj";
-    // tasks.register(model_file, struct {
-    //     fn f(regist_context: []const u8, completion_context: []const u8) void {
-    //         var cc: struct { ptr: [*]u8, len: usize } = undefined;
-    //         var rc: struct { texture: *Buffer2D(RGB) } = undefined;
-    //         value(&rc, regist_context);
-    //         value(&cc, completion_context);
-    //         defer runtime.allocator.free(cc.ptr[0..cc.len]);
-    //         state.vertex_buffer = OBJ.from_file(allocator, "res/african_head.obj")
-    //             catch |err| { std.debug.print("error reading `res/african_head.obj` {?}", .{err}); return; };
-    //     }
-    // }.f, struct { texture: *Buffer2D(RGB) } { .texture = &state.texture });
-    // platform.fetch(model_file.ptr, model_file.len);
+
+    const model_file = "res/african_head.obj";
+    tasks.?.register(model_file, struct {
+        fn f(regist_context: []const u8, completion_context: []const u8) void {
+            var cc: struct { ptr: [*]u8, len: usize } = undefined;
+            var rc: struct { texture: *Buffer2D(RGB) } = undefined;
+            core.value(&rc, regist_context);
+            core.value(&cc, completion_context);
+            const file_bytes = cc.ptr[0..cc.len];
+            defer runtime.allocator.free(file_bytes);
+            state.vertex_buffer = blk: {
+                const buffer = OBJ.from_bytes(runtime.allocator, file_bytes) catch |e| panic(e);
+                var i: usize = 0;
+                var vertex_buffer = std.ArrayList(GouraudShader.Vertex).initCapacity(runtime.allocator, @divExact(buffer.len, 8)) catch |e| panic(e);
+                while (i < buffer.len) : (i = i + 8) {
+                    const pos: Vector3f = .{ .x=buffer[i+0], .y=buffer[i+1], .z=buffer[i+2] };
+                    const uv: Vector2f = .{ .x=buffer[i+3], .y=buffer[i+4] };
+                    const normal: Vector3f = .{ .x=buffer[i+5], .y=buffer[i+6], .z=buffer[i+7] };
+                    vertex_buffer.appendAssumeCapacity(.{ .pos = pos, .uv = uv, .normal = normal });
+                }
+                break :blk vertex_buffer;
+            };
+        }
+    }.f, struct { texture: *Buffer2D(RGB) } { .texture = &state.texture }) catch |e| panic(e);
+    platform.fetch(model_file.ptr, model_file.len);
 
 }
 
@@ -181,7 +188,7 @@ fn update() void {
     state.viewport_matrix = M44.viewport_i32_2(0, 0, @intCast(state.pixel_buffer.width), @intCast(state.pixel_buffer.height), 255);
 
     // render the model texture as a quad
-    if (true and state.texture_loaded) {
+    if (false) {
         const w: f32 = @floatFromInt(state.texture.width);
         const h: f32 = @floatFromInt(state.texture.height);
         var quad_context = QuadShaderRgb.Context {
@@ -209,7 +216,7 @@ fn update() void {
     }
 
     // render the font texture as a quad
-    if (true) {
+    if (false) {
         const texture = @import("text.zig").font.texture;
         const w: f32 = @floatFromInt(texture.width);
         const h: f32 = @floatFromInt(texture.height);
@@ -235,6 +242,30 @@ fn update() void {
             .index_buffer = &index_buffer,
         };
         QuadShaderRgba.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
+    }
+
+    // Example rendering OBJ model with Gouraud Shading
+    if (true) {
+        const horizontally_spinning_position = Vector3f {
+            .x = std.math.cos(@as(f32, @floatFromInt(state.frame_index)) / 10),
+            .y = 0,
+            .z = 1 + std.math.sin(@as(f32, @floatFromInt(state.frame_index)) / 10)
+        };
+        const render_context = GouraudShader.Context {
+            .light_position_camera_space = state.view_matrix.apply_to_vec3(horizontally_spinning_position).discard_w(),
+            .projection_matrix = state.projection_matrix,
+            .texture = state.texture,
+            .texture_height = state.texture.height,
+            .texture_width = state.texture.width,
+            .view_model_matrix = state.view_matrix.multiply(
+                M44.translation(Vector3f { .x = 0, .y = 0, .z = 1 }).multiply(M44.scaling_matrix(Vector3f.from(0.5, -0.5, -0.5)))
+            ),
+        };
+        const render_requirements: GouraudShader.pipeline_configuration.Requirements() = .{
+            .depth_buffer = state.depth_buffer,
+            .viewport_matrix = state.viewport_matrix,
+        };
+        GouraudShader.Pipeline.render(state.pixel_buffer, render_context, state.vertex_buffer.items, @divExact(state.vertex_buffer.items.len, 3), render_requirements);
     }
 
     state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10) }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z}) catch |e| panic(e);
