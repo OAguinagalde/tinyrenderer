@@ -371,8 +371,8 @@ pub fn main() !void {
                 const up = Vector3f {.x = 0, .y = 1, .z = 0 };
                 // TODO so, I'm doing something wrong either in the cross product or I just dont know math, because both my looakat_right_handed and this real_right here are not what
                 // they are supposed to be
-                const real_right = state.camera.direction.cross_product(up).normalized();
-                const real_up = state.camera.direction.cross_product(real_right).scale(-1).normalized();
+                const real_right = state.camera.direction.cross_product(up).scale(-1).normalized();
+                const real_up = state.camera.direction.cross_product(real_right).normalized();
                 if (false) if (mouse_dx != 0 or mouse_dy != 0) {
                     state.camera.direction = state.camera.direction.add(real_right.scale(mouse_dx*mouse_sensitivity));
                     if (state.camera.direction.y < 0.95 and state.camera.direction.y > -0.95) {
@@ -394,7 +394,7 @@ pub fn main() !void {
 
                 // calculate view_matrix, projection_matrix and viewport_matrix
                 const looking_at: Vector3f = state.camera.position.add(state.camera.direction);
-                state.view_matrix = M44.lookat_right_handed(state.camera.position, looking_at, Vector3f.from(0, 1, 0));
+                state.view_matrix = M44.lookat_left_handed(state.camera.position, looking_at, Vector3f.from(0, 1, 0));
                 // const aspect_ratio = @as(f32, @floatFromInt(client_width)) / @as(f32, @floatFromInt(client_height));
                 // state.projection_matrix = M44.perspective_projection(60, aspect_ratio, 0.1, 255);
                 state.projection_matrix = M44.orthographic_projection(0, @floatFromInt(@divExact(client_width,4)), @floatFromInt(@divExact(client_height,4)), 0, 0, 10);

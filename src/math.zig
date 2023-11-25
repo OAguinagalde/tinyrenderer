@@ -311,9 +311,9 @@ pub const M44 = struct {
     /// The camera is looking towards +Z.
     /// The right direction is in the +X direction.
     /// The up direction is in the +Y direction.
-    pub fn lookat_right_handed(camera_location: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
+    pub fn lookat_left_handed(camera_location: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
         
-        if (true) return lookat_right_handed_unrolled(camera_location, point_looked_at, up);
+        if (true) return lookat_left_handed_unrolled(camera_location, point_looked_at, up);
 
         // just in case, normalize the up direction
         const normalized_up = up.normalized();
@@ -355,8 +355,23 @@ pub const M44 = struct {
         return change_of_basis_matrix.multiply(M44.translation(camera_location.scale(-1)));
     }
 
-    /// same as `lookat_right_handed` but with the math unrolled
-    fn lookat_right_handed_unrolled(c: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
+    /// same as `lookat_left_handed` but with the math unrolled
+    fn lookat_left_handed_unrolled(c: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
+
+        // NOTE So, for a while I thought that I decided whether I wanted my reference system to be left handed or right handed,
+        // and based on that, I would figure out the rest. But aparently thats not the case. As this gamedev.stackexchange answer
+        // says:
+        // 
+        // > https://gamedev.stackexchange.com/questions/146930/help-to-understand-positive-rotation-direction-on-left-right-handed-cord-spaces
+        // > You got it backwards, the rotation direction defines the handedness.
+        // 
+        // So, rather than choose left or right handed, you decide how your camera works (in my case, front is +z, right is +x and up is + y).
+        // 
+        // > https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/geometry/coordinate-systems.html#:~:text=With%20the%20x%2Daxis%20pointing,a%20right%2Dhand%20coordinate%20system.
+        // > With the x-axis pointing to the right and the y-axis pointing up, if the z-axis points away from you,
+        // > it's a left-hand coordinate system. If it points in your direction, it is a right-hand coordinate system.
+        // 
+
         const normalized_up = up.normalized();
         const z: Vector3f = point_looked_at.substract(c).normalized(); // z axis
         const x: Vector3f = normalized_up.cross_product(z).normalized(); // x axis

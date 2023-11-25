@@ -183,7 +183,7 @@ fn update() void {
     state.depth_buffer.clear(999999);
 
     const looking_at: Vector3f = state.camera.position.add(state.camera.direction);                
-    state.view_matrix = M44.lookat_right_handed(state.camera.position, looking_at, Vector3f.from(0, 1, 0));
+    state.view_matrix = M44.lookat_left_handed(state.camera.position, looking_at, Vector3f.from(0, 1, 0));
     const aspect_ratio = @as(f32, @floatFromInt(state.pixel_buffer.width)) / @as(f32, @floatFromInt(state.pixel_buffer.height));
     state.projection_matrix = M44.perspective_projection(60, aspect_ratio, 0.1, 5);
     state.viewport_matrix = M44.viewport_i32_2(0, 0, @intCast(state.pixel_buffer.width), @intCast(state.pixel_buffer.height), 255);
