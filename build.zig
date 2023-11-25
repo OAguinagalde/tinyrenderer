@@ -29,17 +29,18 @@ pub fn build(b: *Builder) !void {
         exe.addModule("win32", win32);
         
         // imgui
-        exe.linkLibCpp();
-        exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui.cpp" }, .flags = &[_] []const u8 {""} });
-        exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_draw.cpp" }, .flags = &[_] []const u8 {""} });
-        exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_demo.cpp" }, .flags = &[_] []const u8 {""} });
-        exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_tables.cpp" }, .flags = &[_] []const u8 {""} });
-        exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_widgets.cpp" }, .flags = &[_] []const u8 {""} });
-        exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/cimgui.cpp" }, .flags = &[_] []const u8 {""} });
-        exe.addIncludePath(.{ .path = "dep/cimgui" });
+        if (false) {
+            exe.linkLibCpp();
+            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui.cpp" }, .flags = &[_] []const u8 {""} });
+            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_draw.cpp" }, .flags = &[_] []const u8 {""} });
+            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_demo.cpp" }, .flags = &[_] []const u8 {""} });
+            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_tables.cpp" }, .flags = &[_] []const u8 {""} });
+            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_widgets.cpp" }, .flags = &[_] []const u8 {""} });
+            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/cimgui.cpp" }, .flags = &[_] []const u8 {""} });
+            exe.addIncludePath(.{ .path = "dep/cimgui" });
+        }
 
         b.installArtifact(exe);
-        // TODO make a ultra simple web server just for serving the wasm project lol
         var step_run = b.addRunArtifact(exe);
         run_step.dependOn(&step_run.step);
     }

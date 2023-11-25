@@ -36,6 +36,10 @@ pub const Vector2i = struct {
 pub const Vector2f = struct {
     x: f32,
     y: f32,
+    
+    pub fn from(x: f32, y: f32) Vector2f {
+        return Vector2f { .x = x, .y = y };
+    }
 
     pub fn add(self: Vector2f, other: Vector2f) Vector2f {
         return Vector2f { .x = self.x + other.x, .y = self.y + other.y };
@@ -355,8 +359,8 @@ pub const M44 = struct {
     fn lookat_right_handed_unrolled(c: Vector3f, point_looked_at: Vector3f, up: Vector3f) M44 {
         const normalized_up = up.normalized();
         const z: Vector3f = point_looked_at.substract(c).normalized(); // z axis
-        const x: Vector3f = normalized_up.cross_product(z).scale(-1).normalized(); // x axis
-        const y: Vector3f = z.cross_product(x).scale(-1).normalized(); // y axis
+        const x: Vector3f = normalized_up.cross_product(z).normalized(); // x axis
+        const y: Vector3f = z.cross_product(x).normalized(); // y axis
         var matrix: M44 = undefined;
         matrix.data[0] = x.x;
         matrix.data[4] = x.y;

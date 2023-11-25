@@ -51,22 +51,14 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
                 const u_2: i32 = u_1 + char_width;
                 const v_2: i32 = v_1 + char_height;
 
-                try self.vertex_buffer.append(.{
-                    .pos = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) },
-                    .uv = .{ .x = @floatFromInt(u_1), .y = @floatFromInt(v_1) },
-                });
-                try self.vertex_buffer.append(.{
-                    .pos = .{ .x = @floatFromInt(x + char_width * size), .y = @floatFromInt(y) },
-                    .uv = .{ .x = @floatFromInt(u_2), .y = @floatFromInt(v_1) },
-                });
-                try self.vertex_buffer.append(.{
-                    .pos = .{ .x = @floatFromInt(x + char_width * size), .y = @floatFromInt(y - char_height * size) },
-                    .uv = .{ .x = @floatFromInt(u_2), .y = @floatFromInt(v_2) },
-                });
-                try self.vertex_buffer.append(.{
-                    .pos = .{ .x = @floatFromInt(x), .y = @floatFromInt(y - char_height * size) },
-                    .uv = .{ .x = @floatFromInt(u_1), .y = @floatFromInt(v_2) },
-                });
+                const vertices = [4] Shader.Vertex {
+                    .{ .pos = .{ .x = @floatFromInt(x),                     .y = @floatFromInt(y)                      }, .uv = .{ .x = @floatFromInt(u_1), .y = @floatFromInt(v_2), } },
+                    .{ .pos = .{ .x = @floatFromInt(x + char_width * size), .y = @floatFromInt(y)                      }, .uv = .{ .x = @floatFromInt(u_2), .y = @floatFromInt(v_2) }, },
+                    .{ .pos = .{ .x = @floatFromInt(x + char_width * size), .y = @floatFromInt(y + char_height * size) }, .uv = .{ .x = @floatFromInt(u_2), .y = @floatFromInt(v_1) }, },
+                    .{ .pos = .{ .x = @floatFromInt(x),                     .y = @floatFromInt(y + char_height * size) }, .uv = .{ .x = @floatFromInt(u_1), .y = @floatFromInt(v_1) }, }
+                };
+                
+                try self.vertex_buffer.appendSlice(&vertices);                
             }
         }
 

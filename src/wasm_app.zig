@@ -48,10 +48,10 @@ const State = struct {
     page_index: usize,
 };
 
+// This is necessary so that the exported functions are referenced and zig actually compiles it
+comptime { _ = @import("wasm.zig"); }
 pub const callbacks = struct {
 
-    // This is necessary so that the exported functions are referenced and zig actually compiles it
-    comptime { _ = @import("wasm.zig"); }
 
     pub fn get_static_buffer() []u8 {
         return &static_buffer_for_runtime_use;
@@ -184,7 +184,7 @@ fn update() void {
 
     const looking_at: Vector3f = state.camera.position.add(state.camera.direction);                
     state.view_matrix = M44.lookat_right_handed(state.camera.position, looking_at, Vector3f.from(0, 1, 0));
-    const aspect_ratio = -@as(f32, @floatFromInt(state.pixel_buffer.width)) / @as(f32, @floatFromInt(state.pixel_buffer.height));
+    const aspect_ratio = @as(f32, @floatFromInt(state.pixel_buffer.width)) / @as(f32, @floatFromInt(state.pixel_buffer.height));
     state.projection_matrix = M44.perspective_projection(60, aspect_ratio, 0.1, 5);
     state.viewport_matrix = M44.viewport_i32_2(0, 0, @intCast(state.pixel_buffer.width), @intCast(state.pixel_buffer.height), 255);
 
@@ -202,10 +202,10 @@ fn update() void {
                 ),
         };
         const vertex_buffer = [_]QuadShaderRgb.Vertex{
-            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
-            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
-            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
-            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
+            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=1} },
+            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=1} },
+            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=0} },
+            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=0} },
         };
         const index_buffer = [_]u16{0,1,2,0,2,3};
         const requirements = QuadShaderRgb.pipeline_configuration.Requirements() {
@@ -222,10 +222,10 @@ fn update() void {
         const w: f32 = @floatFromInt(texture.width);
         const h: f32 = @floatFromInt(texture.height);
         const vertex_buffer = [_]QuadShaderRgba.Vertex{
-            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=0} },
-            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=0} },
-            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=1} },
-            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=1} },
+            .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=1} },
+            .{ .pos = .{.x=w,.y=0}, .uv = .{.x=1,.y=1} },
+            .{ .pos = .{.x=w,.y=h}, .uv = .{.x=1,.y=0} },
+            .{ .pos = .{.x=0,.y=h}, .uv = .{.x=0,.y=0} },
         };
         const index_buffer = [_]u16{0,1,2,0,2,3};
         var quad_context = QuadShaderRgba.Context {
@@ -233,7 +233,7 @@ fn update() void {
             .projection_matrix =
                 state.projection_matrix.multiply(
                     state.view_matrix.multiply(
-                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1 }).multiply(M44.scale(1/@as(f32, @floatFromInt(texture.width))))
+                        M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1 }).multiply(M44.scale(1/w))
                     )
                 ),
         };
@@ -259,7 +259,7 @@ fn update() void {
             .texture_height = state.texture.height,
             .texture_width = state.texture.width,
             .view_model_matrix = state.view_matrix.multiply(
-                M44.translation(Vector3f { .x = 0, .y = 0, .z = 1 }).multiply(M44.scaling_matrix(Vector3f.from(0.5, -0.5, -0.5)))
+                M44.translation(Vector3f { .x = 0, .y = 0, .z = 1 }).multiply(M44.scaling_matrix(Vector3f.from(0.5, 0.5, 0.5)))
             ),
         };
         const render_requirements: GouraudShader.pipeline_configuration.Requirements() = .{
@@ -269,6 +269,7 @@ fn update() void {
         GouraudShader.Pipeline.render(state.pixel_buffer, render_context, state.vertex_buffer.items, @divExact(state.vertex_buffer.items.len, 3), render_requirements);
     }
 
+    state.text_renderer.print(Vector2i { .x = 3, .y = 0 }, "wasm!", .{}) catch |e| panic(e);
     state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10) }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z}) catch |e| panic(e);
     state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10 - (12*1)) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z}) catch |e| panic(e);
     state.text_renderer.render_all(

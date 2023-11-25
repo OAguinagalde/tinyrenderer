@@ -96,20 +96,19 @@ pub fn GraphicsPipeline(
             var face_index: usize = 0;
             label_outer: while (face_index < face_count) : (face_index += 1) {
                 
-                const vertex_count = if (pipeline_configuration.do_triangle_clipping) 4 else 3;
-
                 // 0, 1 and 2 will be the original triangle vertices.
                 // if there is clipping however
-                var invariants: [vertex_count]invariant_type = undefined;
-                var clip_space_positions: [vertex_count]Vector4f = undefined;
-                var ndcs: [vertex_count]Vector3f = undefined;
-                var tri: [vertex_count]Vector3f = undefined;
-                var w_used_for_perspective_correction: [vertex_count]f32 = undefined;
-                var depth: [vertex_count]f32 = undefined;
+                var invariants: [3]invariant_type = undefined;
+                var clip_space_positions: [3]Vector4f = undefined;
+                var ndcs: [3]Vector3f = undefined;
+                var screen_space_position: [3]Vector3f = undefined;
+                var w_used_for_perspective_correction: [3]f32 = undefined;
+                var depth: [3]f32 = undefined;
                 var clipped_count: usize = 0;
 
                 // pass all 3 vertices of this face through the vertex shader
                 inline for(0..3) |i| {
+                    
                     const vertex_index = index: {
                         if (pipeline_configuration.use_index_buffer) break :index requirements.index_buffer[face_index * 3 + i]
                         else if (pipeline_configuration.use_index_buffer_auto) break :index
@@ -117,10 +116,13 @@ pub fn GraphicsPipeline(
                             if (face_index%2==0) face_index * 2 + i else if (i==0) (face_index-1) * 2 else ((face_index-1) * 2) + i + 1
                         else break :index face_index * 3 + i;
                     };
+
                     const vertex_data: vertex_type = vertex_buffer[vertex_index];
-                    // As far as I know, in your standard opengl vertex shader, the returned position is usually in
+
+                    // As far as I understand, in your standard opengl vertex shader, the returned position is usually in
                     // clip space, which is a homogeneous coordinate system. The `w` will be used for perspective correction.
                     clip_space_positions[i] = vertex_shader(context, vertex_data, &invariants[i]);
+                    
                     // NOTE This is quivalent to checking whether a point is inside the NDC cube after perspective division
                     // 
                     //     if (ndc.x > 1 or ndc.x < -1 or ndc.y > 1 or ndc.y < -1 or ndc.z > 1 or ndc.z < 0) {
@@ -142,14 +144,12 @@ pub fn GraphicsPipeline(
                     }
                     if (pipeline_configuration.do_depth_testing) depth[i] = ndc.z;
                     if (pipeline_configuration.do_perspective_correct_interpolation) w_used_for_perspective_correction[i] = clip_space_positions[i].w;
-                    const screen_space_position = requirements.viewport_matrix.apply_to_vec3(ndc).perspective_division();
-                    tri[i] = screen_space_position;
+                    screen_space_position[i] = requirements.viewport_matrix.apply_to_vec3(ndc).perspective_division();
                 }
 
                 if (pipeline_configuration.do_triangle_clipping) {
                     if (clipped_count == 0) {
-                        if (pipeline_configuration.use_triangle_2) rasterizers.rasterize_2(pixel_buffer, context, requirements, tri[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*)
-                        else rasterizers.rasterize_1(pixel_buffer, context, requirements, tri[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*);
+                        rasterizer(pixel_buffer, context, requirements, screen_space_position[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*);
                         
                         // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[0].x), .y = @intFromFloat(tri[0].y) }, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
                         // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(tri[1].x), .y = @intFromFloat(tri[1].y) }, Vector2i { .x = @intFromFloat(tri[2].x), .y = @intFromFloat(tri[2].y) }, .{.r = 255, .g = 0, .b = 0, .a = 255 });
@@ -223,9 +223,7 @@ pub fn GraphicsPipeline(
                         vertex_list.add(ndcs[0]);
                         vertex_list.add(ndcs[1]);
                         vertex_list.add(ndcs[2]);
-                        defer vertex_list.free();
                         var temp_vertex_list = VertexList.init(fba.allocator());
-                        defer temp_vertex_list.free();
 
                         // for each plane `p`
                         inline for (@typeInfo(Frustum).Struct.fields) |field| {
@@ -305,9 +303,9 @@ pub fn GraphicsPipeline(
                             b.z = 0;
                             var c = screen_space_3;
                             c.z = 0;
-                            const bar_a = barycentric(tri[0..3].*, a);
-                            const bar_b = barycentric(tri[0..3].*, b);
-                            const bar_c = barycentric(tri[0..3].*, c);
+                            const bar_a = barycentric(screen_space_position[0..3].*, a);
+                            const bar_b = barycentric(screen_space_position[0..3].*, b);
+                            const bar_c = barycentric(screen_space_position[0..3].*, c);
 
                             const interpolated_a: to_interpolate = 
                                 if (pipeline_configuration.do_perspective_correct_interpolation) interpolate_with_correction(to_interpolate, orig_triangle_data, w_used_for_perspective_correction[0..3].*, bar_a.x, bar_a.y, bar_a.z)
@@ -331,8 +329,7 @@ pub fn GraphicsPipeline(
                             // 2. sometimes the NDC coordinates suddenly go from, say, 23, to -134. Usually when I am close to the clipped triangle and rotate the camera until I'm getting more paralel
                             // meaning that the resulting clipped triangle looks completely out of place. I'm not sure how to go about that
 
-                            if (pipeline_configuration.use_triangle_2) rasterizers.rasterize_2(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c })
-                            else rasterizers.rasterize_1(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c });
+                            rasterizer(pixel_buffer, context, requirements, .{ screen_space_1, screen_space_2, screen_space_3 }, .{ interpolated_a.depth, interpolated_b.depth, interpolated_c.depth }, .{ interpolated_a.w_used_for_perspective_correction, interpolated_b.w_used_for_perspective_correction, interpolated_c.w_used_for_perspective_correction }, .{ invariants_a, invariants_b, invariants_c });
 
                             // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_1.x), .y = @intFromFloat(screen_space_1.y) }, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
                             // line(win32.RGBA, pixel_buffer, Vector2i { .x = @intFromFloat(screen_space_2.x), .y = @intFromFloat(screen_space_2.y) }, Vector2i { .x = @intFromFloat(screen_space_3.x), .y = @intFromFloat(screen_space_3.y) }, .{.r = 0, .g = 255, .b = 0, .a = 255 });
@@ -347,11 +344,13 @@ pub fn GraphicsPipeline(
                         }
                     }
                 }
-                else if (pipeline_configuration.use_triangle_2) rasterizers.rasterize_2(pixel_buffer, context, requirements, tri[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*)
-                else rasterizers.rasterize_1(pixel_buffer, context, requirements, tri[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*);
+                else rasterizer(pixel_buffer, context, requirements, screen_space_position[0..3].*, depth[0..3].*, w_used_for_perspective_correction[0..3].*, invariants[0..3].*);
             }
         }
     
+        // NOTE currently rasterize_2 has some issues with filling conventions, gotta fix those. It performs much better however.
+        // eventually if multithreading is added, I expect rasterize_1 to be much more multithreading friendly tho...
+        const rasterizer = if (pipeline_configuration.use_triangle_2) rasterizers.rasterize_2 else  rasterizers.rasterize_1;
         const rasterizers = struct {
             fn rasterize_2(pixel_buffer: Buffer2D(final_color_type), context: context_type, requirements: pipeline_configuration.Requirements(), tri: [3]Vector3f, depth: [3]f32, w_used_for_perspective_correction: [3]f32, invariants: [3]invariant_type) void {
                 

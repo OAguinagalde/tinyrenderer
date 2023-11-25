@@ -113,13 +113,29 @@ pub const RGB = extern struct {
     }
 };
 
+pub const BGR = extern struct {
+    b: u8 align(1),
+    g: u8 align(1),
+    r: u8 align(1),
+    comptime { std.debug.assert(@sizeOf(@This()) == 3); }
+    pub inline fn make(r: u8, g: u8, b: u8) BGR {
+        return BGR { .r = r, .g = g, .b = b };
+    }
+    pub fn from(comptime T: type, color: T) BGR {
+        return switch (T) {
+            BGRA, RGBA, RGB => BGR { .r = color.r, .g = color.g, .b = color.b },
+            else => @compileError("Conversion from " ++ T ++ " -> " ++ BGR ++ " not implemented!"),
+        };
+    }
+};
+
 /// In windows pixels are stored as BGRA
 pub const BGRA = extern struct {
     b: u8 align(1),
     g: u8 align(1),
     r: u8 align(1),
     a: u8 align(1),
-    comptime { std.debug.assert(@sizeOf(@This()) == @sizeOf(u32)); }
+    comptime { std.debug.assert(@sizeOf(@This()) == 4); }
 
     pub inline fn make(r: u8, g: u8, b: u8, a: u8) BGRA {
         return BGRA { .r = r, .g = g, .b = b, .a = a };
@@ -149,6 +165,7 @@ pub const BGRA = extern struct {
         return switch (T) {
             RGBA => BGRA { .r = color.r, .g = color.g, .b = color.b, .a = color.a },
             RGB => BGRA { .r = color.r, .g = color.g, .b = color.b, .a = 255 },
+            BGR => BGRA { .r = color.r, .g = color.g, .b = color.b, .a = 255 },
             BGRA => color,
             else => @compileError("Conversion from " ++ T ++ " -> " ++ BGRA ++ " not implemented!"),
         };

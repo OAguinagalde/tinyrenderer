@@ -19,6 +19,7 @@ const RGB = @import("pixels.zig").RGB;
 const BGRA = @import("pixels.zig").BGRA;
 const GraphicsPipelineConfiguration = @import("graphics.zig").GraphicsPipelineConfiguration;
 const GraphicsPipeline = @import("graphics.zig").GraphicsPipeline;
+const tic80 = @import("tic80.zig");
 
 const GouraudShader = @import("shaders/gouraud.zig").Shader(BGRA, RGB);
 const QuadShaderRgb = @import("shaders/quad.zig").Shader(BGRA, RGB, false, false);
@@ -153,17 +154,18 @@ const State = struct {
     time: f64,
     text_renderer: TextRenderer,
     
-    imgui_platform_context: imgui_win32_impl.Context,
+    // imgui_platform_context: imgui_win32_impl.Context,
     imgui_font_texture: Buffer2D(RGBA),
+    renderer: tic80.Renderer(BGRA),
 };
 
 var state = State {
     .x = 10,
     .y = 10,
     // .w = 1000,
-    .w = 600,
+    .w = 240*4,
     // .h = 1000,
-    .h = 500,
+    .h = 136*4,
     .render_target = undefined,
     .pixel_buffer = undefined,
     .running = true,
@@ -181,7 +183,8 @@ var state = State {
     .text_renderer = undefined,
     
     .imgui_font_texture = undefined,
-    .imgui_platform_context = undefined,
+    .renderer = undefined,
+    // .imgui_platform_context = undefined,
 };
 
 pub fn main() !void {
@@ -253,9 +256,9 @@ pub fn main() !void {
             state.depth_buffer = Buffer2D(f32).from(try allocator.alloc(f32, @intCast(state.w * state.h)), @intCast(state.w));
             
             // Initialize the imgui stuff
-            const imgui_context = imgui.c.igCreateContext(null);
-            _ = imgui_context;
-            imgui_win32_impl.init(&state.imgui_platform_context, window_handle, &state.imgui_font_texture);
+            // const imgui_context = imgui.c.igCreateContext(null);
+            // _ = imgui_context;
+            // imgui_win32_impl.init(&state.imgui_platform_context, window_handle, &state.imgui_font_texture);
 
             // Load the diffuse texture data
             state.texture = TGA.from_file(RGB, allocator, "res/african_head_diffuse.tga")
@@ -271,6 +274,8 @@ pub fn main() !void {
             state.camera.direction = Vector3f { .x = 0, .y = 0, .z = 1 };
 
             state.time = 0;
+
+            state.renderer = try tic80.Renderer(BGRA).init(allocator, tic80.penguknight_original_assets.palette, tic80.penguknight_original_assets.tiles);
         }
 
         // Deinitialize the application state
@@ -279,6 +284,7 @@ pub fn main() !void {
             allocator.free(state.texture.data);
             allocator.free(state.vertex_buffer);
             state.text_renderer.deinit();
+            state.renderer.deinit();
         }
         
         var cpu_counter: i64 = blk: {
@@ -353,10 +359,7 @@ pub fn main() !void {
 
             var app_close_requested = false;
             { // tick / update
-                
-                const red = BGRA.make(255, 0, 0, 255);
-                const blue = BGRA.make(0, 0, 255, 255);
-                
+
                 // Clear the screen and the zbuffer
                 state.pixel_buffer.clear(BGRA.make(100, 149, 237,255));
                 state.depth_buffer.clear(999999);
@@ -366,29 +369,35 @@ pub fn main() !void {
                 // camera movement with mouse
                 const mouse_sensitivity = 0.60;
                 const up = Vector3f {.x = 0, .y = 1, .z = 0 };
+                // TODO so, I'm doing something wrong either in the cross product or I just dont know math, because both my looakat_right_handed and this real_right here are not what
+                // they are supposed to be
                 const real_right = state.camera.direction.cross_product(up).normalized();
                 const real_up = state.camera.direction.cross_product(real_right).scale(-1).normalized();
-                if (mouse_dx != 0 or mouse_dy != 0) {
+                if (false) if (mouse_dx != 0 or mouse_dy != 0) {
                     state.camera.direction = state.camera.direction.add(real_right.scale(mouse_dx*mouse_sensitivity));
                     if (state.camera.direction.y < 0.95 and state.camera.direction.y > -0.95) {
                         state.camera.direction = state.camera.direction.add(real_up.scale(-mouse_dy*mouse_sensitivity));
                     }
                     state.camera.direction.normalize();
-                }
+                };
                 
                 // camera position with AWSD and QE
-                if (state.keys['W']) state.camera.position = state.camera.position.add(state.camera.direction.scale(0.02));
-                if (state.keys['S']) state.camera.position = state.camera.position.add(state.camera.direction.scale(-0.02));
-                if (state.keys['A']) state.camera.position = state.camera.position.add(real_right.scale(-0.02));
-                if (state.keys['D']) state.camera.position = state.camera.position.add(real_right.scale(0.02));
-                if (state.keys['Q']) state.camera.position.y += 0.02;
-                if (state.keys['E']) state.camera.position.y -= 0.02;
+                const unit: f32 = @floatCast(5/ms);
+                // if (state.keys['W']) state.camera.position = state.camera.position.add(state.camera.direction.scale(unit));
+                // if (state.keys['S']) state.camera.position = state.camera.position.add(state.camera.direction.scale(-unit));
+                if (state.keys['A']) state.camera.position = state.camera.position.add(real_right.scale(-unit));
+                if (state.keys['D']) state.camera.position = state.camera.position.add(real_right.scale(unit));
+                // if (state.keys['Q']) state.camera.position.y += unit;
+                // if (state.keys['E']) state.camera.position.y -= unit;
+                if (state.keys['W']) state.camera.position.y += unit;
+                if (state.keys['S']) state.camera.position.y -= unit;
 
                 // calculate view_matrix, projection_matrix and viewport_matrix
-                const looking_at: Vector3f = state.camera.position.add(state.camera.direction);                
+                const looking_at: Vector3f = state.camera.position.add(state.camera.direction);
                 state.view_matrix = M44.lookat_right_handed(state.camera.position, looking_at, Vector3f.from(0, 1, 0));
-                const aspect_ratio = @as(f32, @floatFromInt(client_width)) / @as(f32, @floatFromInt(client_height));
-                state.projection_matrix = M44.perspective_projection(60, aspect_ratio, 0.1, 5);
+                // const aspect_ratio = @as(f32, @floatFromInt(client_width)) / @as(f32, @floatFromInt(client_height));
+                // state.projection_matrix = M44.perspective_projection(60, aspect_ratio, 0.1, 255);
+                state.projection_matrix = M44.orthographic_projection(0, @floatFromInt(@divExact(client_width,4)), @floatFromInt(@divExact(client_height,4)), 0, 0, 10);
                 state.viewport_matrix = M44.viewport_i32_2(0, 0, client_width, client_height, 255);
 
                 // Example rendering OBJ model with Gouraud Shading
@@ -477,79 +486,45 @@ pub fn main() !void {
                     QuadShaderRgba.Pipeline.render(state.pixel_buffer, quad_context, &vertex_buffer, index_buffer.len/3, requirements);
                 }
 
-                if (true) {
-                    const tic = @import("tic80.zig");
-                    const texture = blk: {
-                        
-                        // collor palette
-                        if (false) {
-                            const texture_data = allocator.alloc(RGB, tic.palette_size) catch unreachable;
-                            for (tic.penguknight_original_assets.pallete, 0..) |rgb, i| {
-                                const bytes = core.byte_slice(&rgb);
-                                texture_data[i] = .{ .r = bytes[2], .g = bytes[1], .b = bytes[0] };
-                            }
-                            break :blk Buffer2D(RGB).from(texture_data, tic.palette_size/2);
-                        }
-
-                        // collor palette
-                        if (true) {
-                            const texture_data = allocator.alloc(RGB, 8*8*256) catch unreachable;
-                            for (tic.penguknight_original_assets.tiles, 0..) |sprite, sprite_index| {
-                                const col = sprite_index%16;
-                                const row = @divFloor(sprite_index, 16);
-                                for (sprite, 0..) |palette_index, pixel_index| {
-                                    const x = pixel_index%8;
-                                    const y = @divFloor(pixel_index, 8);
-                                    const bgr = tic.penguknight_original_assets.pallete[palette_index];
-                                    const bytes = core.byte_slice(&bgr);
-                                    
-                                    const coli = col*8 + x;
-                                    const rowi = row*8 + y;
-                                    texture_data[coli + rowi*(8*16)] = .{ .r = bytes[2], .g = bytes[1], .b = bytes[0] };
-                                }
-                            }
-                            break :blk Buffer2D(RGB).from(texture_data, 8*16);
-                        }
-                    };
-                    defer allocator.free(texture.data);
-                    const wf: f32 = @floatFromInt(texture.width);
-                    const hf: f32 = @floatFromInt(texture.height);
-                    const context = QuadShaderRgb.Context {
-                        .texture = texture,
-                        .projection_matrix =
-                            state.projection_matrix.multiply(
-                                state.view_matrix.multiply(
-                                    M44.translation(Vector3f { .x = -0.5, .y = -0.5, .z = 1.5 }).multiply(M44.scale(1/wf))
-                                )
-                            ),
-                    };
-                    const vertex_buffer = [_]QuadShaderRgb.Vertex{
-                        .{ .pos = .{.x=0,.y=0}, .uv = .{.x=0,.y=1} },
-                        .{ .pos = .{.x=wf,.y=0}, .uv = .{.x=1,.y=1} },
-                        .{ .pos = .{.x=wf,.y=hf}, .uv = .{.x=1,.y=0} },
-                        .{ .pos = .{.x=0,.y=hf}, .uv = .{.x=0,.y=0} },
-                    };
-                    const index_buffer = [_]u16{0,1,2,0,2,3};
-                    const requirements = QuadShaderRgb.pipeline_configuration.Requirements() {
-                        .depth_buffer = state.depth_buffer,
-                        .viewport_matrix = state.viewport_matrix,
-                        .index_buffer = &index_buffer,
-                    };
-                    QuadShaderRgb.Pipeline.render(state.pixel_buffer, context, &vertex_buffer, index_buffer.len/3, requirements);
-                }
-
-                // some debug information and stuff
-                state.pixel_buffer.line(Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
-                state.pixel_buffer.line(Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
-                try state.text_renderer.print(Vector2i { .x = 10, .y = client_height-10 }, "ms {d: <9.2}", .{ms});
-                try state.text_renderer.print(Vector2i { .x = 10, .y = client_height-22 }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z});
-                try state.text_renderer.print(Vector2i { .x = 10, .y = client_height-10 - (12*2) }, "{d:.3}, {d:.3}, {d:.3}", .{real_right.x, real_right.y, real_right.z});
-                try state.text_renderer.print(Vector2i { .x = 10, .y = client_height-10 - (12*3) }, "d mouse {d:.8}, {d:.8}", .{mouse_dx, mouse_dy});
-                try state.text_renderer.print(Vector2i { .x = 10, .y = client_height-10 - (12*4) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z});
-                state.text_renderer.render_all(
-                    M44.orthographic_projection(0, @floatFromInt(state.w), @floatFromInt(state.h), 0, 0, 10),
+                
+                const w = 8;
+                const h = 8;
+                try state.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.weird_block, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*0, h*0));
+                try state.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.slime1, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*2, h*2));
+                try state.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.slime2, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*3, h*3));
+                try state.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.pengu1, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*4, h*4));
+                try state.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.pengu2, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*5, h*5));
+                try state.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.id0, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*0, h*0));
+                try state.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.id255, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*15, h*15));
+                try state.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.id15, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*15, h*0));
+                try state.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.id240, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*0, h*15));
+                state.renderer.render(
+                    state.pixel_buffer,
+                    state.projection_matrix.multiply(
+                        state.view_matrix.multiply(
+                            M44.translation(Vector3f.from(0, 0, 1)).multiply(M44.scale(1))
+                        )
+                    ),
                     state.viewport_matrix
                 );
+
+                // some debug information and stuff
+                if (true) {
+                    const red = BGRA.make(255, 0, 0, 255);
+                    const blue = BGRA.make(0, 0, 255, 255);
+                    if (false) state.pixel_buffer.line(Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.x)), .y = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.y)) }, red);
+                    if (false) state.pixel_buffer.line(Vector2i { .x = 150, .y = 150 }, Vector2i { .x = 150 + @as(i32, @intFromFloat(50 * state.camera.direction.z)), .y = 150 }, blue);
+                    try state.text_renderer.print(Vector2i { .x = 0, .y = 0 }, "hello from (0, 0), the lowest possible text!!!", .{});
+                    try state.text_renderer.print(Vector2i { .x = 5, .y = client_height-10 }, "ms {d: <9.2}", .{ms});
+                    try state.text_renderer.print(Vector2i { .x = 5, .y = client_height-22 }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z});
+                    try state.text_renderer.print(Vector2i { .x = 5, .y = client_height-10 - (12*2) }, "{d:.3}, {d:.3}, {d:.3}", .{real_right.x, real_right.y, real_right.z});
+                    try state.text_renderer.print(Vector2i { .x = 5, .y = client_height-10 - (12*3) }, "d mouse {d:.8}, {d:.8}", .{mouse_dx, mouse_dy});
+                    try state.text_renderer.print(Vector2i { .x = 5, .y = client_height-10 - (12*4) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z});
+                    state.text_renderer.render_all(
+                        M44.orthographic_projection(0, @floatFromInt(state.w), @floatFromInt(state.h), 0, 0, 10),
+                        state.viewport_matrix
+                    );
+                }
                 // imgui.c.igShowDemoWindow(&open);
                 // _ = open;
                 // imgui.c.igText("Hello, world");  
