@@ -259,7 +259,7 @@ fn update() void {
             .texture_height = state.texture.height,
             .texture_width = state.texture.width,
             .view_model_matrix = state.view_matrix.multiply(
-                M44.translation(Vector3f { .x = 0, .y = 0, .z = 1 }).multiply(M44.scaling_matrix(Vector3f.from(0.5, 0.5, 0.5)))
+                M44.translation(Vector3f { .x = 0, .y = 0, .z = 1 }).multiply(M44.scaling_matrix(Vector3f.from(0.5, 0.5, -0.5)))
             ),
         };
         const render_requirements: GouraudShader.pipeline_configuration.Requirements() = .{
@@ -273,7 +273,7 @@ fn update() void {
     state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10) }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z}) catch |e| panic(e);
     state.text_renderer.print(Vector2i { .x = 10, .y = @intCast(state.pixel_buffer.height-10 - (12*1)) }, "direction {d:.8}, {d:.8}, {d:.8}", .{state.camera.direction.x, state.camera.direction.y, state.camera.direction.z}) catch |e| panic(e);
     state.text_renderer.render_all(
-        M44.orthographic_projection(0, @floatFromInt(state.pixel_buffer.width), 0, @floatFromInt(state.pixel_buffer.height), 0, 10),
+        M44.orthographic_projection(0, @floatFromInt(state.pixel_buffer.width), @floatFromInt(state.pixel_buffer.height), 0, 0, 10),
         state.viewport_matrix
     );
 
