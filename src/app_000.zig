@@ -1,20 +1,30 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const core = @import("core.zig");
+const TaskManager = @import("TaskManager.zig");
 const math = @import("math.zig");
 const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
+const Vector4f = math.Vector4f;
 const M44 = math.M44;
 const OBJ = @import("obj.zig");
 const TGA = @import("tga.zig");
 const Buffer2D = @import("buffer.zig").Buffer2D;
+const BGRA = @import("pixels.zig").BGRA;
 const RGBA = @import("pixels.zig").RGBA;
 const RGB = @import("pixels.zig").RGB;
-const BGRA = @import("pixels.zig").BGRA;
-const GouraudShader = @import("shaders/gouraud.zig").Shader(BGRA, RGB);
-const QuadShaderRgb = @import("shaders/quad.zig").Shader(BGRA, RGB, false, false);
-const QuadShaderRgba = @import("shaders/quad.zig").Shader(BGRA, RGBA, false, false);
-const TextRenderer = @import("text.zig").TextRenderer(BGRA, 1024, 1024);
-const Platform = @import("windows.zig").Platform;
+const GraphicsPipelineConfiguration = @import("graphics.zig").GraphicsPipelineConfiguration;
+const GraphicsPipeline = @import("graphics.zig").GraphicsPipeline;
+const wasm = @import("wasm.zig");
+const windows =  @import("windows.zig");
+const Platform = if (builtin.os.tag == .windows) windows.Platform else wasm.Platform;
+const ScreenPixelType = if (builtin.os.tag == .windows) BGRA else RGBA;
+
+const GouraudShader = @import("shaders/gouraud.zig").Shader(ScreenPixelType, RGB);
+const QuadShaderRgb = @import("shaders/quad.zig").Shader(ScreenPixelType, RGB, false, false);
+const QuadShaderRgba = @import("shaders/quad.zig").Shader(ScreenPixelType, RGBA, false, false);
+const TextRenderer = @import("text.zig").TextRenderer(ScreenPixelType, 1024, 1024);
 
 const Camera = struct {
     position: Vector3f,
@@ -27,27 +37,83 @@ const App = struct {
     text_renderer: TextRenderer,
     depth_buffer: Buffer2D(f32),
     texture: Buffer2D(RGB),
-    vertex_buffer: []f32,
+    vertex_buffer: std.ArrayList(GouraudShader.Vertex),
     camera: Camera,
     time: f64,
+    page_index: usize,
 };
 
 var app: App = undefined;
 
-pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
+const ReadTgaContext = struct {
+    allocator: std.mem.Allocator,
+    texture: *Buffer2D(RGB)
+};
+fn read_tga_texture(bytes: []const u8, context: []const u8) !void {
+    var ctx: ReadTgaContext = undefined;
+    core.value(&ctx, context);
+    defer ctx.allocator.free(bytes);
+    ctx.texture.* = try TGA.from_bytes(RGB, ctx.allocator, bytes);
+}
+const ReadObjContext = struct {
+    allocator: std.mem.Allocator,
+    vertex_buffer: *std.ArrayList(GouraudShader.Vertex)
+};
+fn read_obj_model(bytes: []const u8, context: []const u8) !void {
+    var ctx: ReadObjContext = undefined;
+    core.value(&ctx, context);
+    defer ctx.allocator.free(bytes);
+    ctx.vertex_buffer.* = blk: {
+        const buffer = try OBJ.from_bytes(ctx.allocator, bytes);
+        defer ctx.allocator.free(buffer);
+        var i: usize = 0;
+        var vertex_buffer = try std.ArrayList(GouraudShader.Vertex).initCapacity(ctx.allocator, @divExact(buffer.len, 8));
+        while (i < buffer.len) : (i = i + 8) {
+            const pos: Vector3f = .{ .x=buffer[i+0], .y=buffer[i+1], .z=buffer[i+2] };
+            const uv: Vector2f = .{ .x=buffer[i+3], .y=buffer[i+4] };
+            const normal: Vector3f = .{ .x=buffer[i+5], .y=buffer[i+6], .z=buffer[i+7] };
+            vertex_buffer.appendAssumeCapacity(.{ .pos = pos, .uv = uv, .normal = normal });
+        }
+        break :blk vertex_buffer;
+    };
+}
+
+pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(ScreenPixelType)) !void {
     app.depth_buffer = Buffer2D(f32).from(try allocator.alloc(f32, @intCast(pixel_buffer.width * pixel_buffer.height)), @intCast(pixel_buffer.width));
-    app.texture = try TGA.from_file(RGB, allocator, "res/african_head_diffuse.tga");
-    app.vertex_buffer = try OBJ.from_file(allocator, "res/african_head.obj");
     app.camera.position = Vector3f { .x = 0, .y = 0, .z = 0 };
     app.camera.up = Vector3f { .x = 0, .y = 1, .z = 0 };
     app.camera.direction = Vector3f { .x = 0, .y = 0, .z = 1 };
     app.time = 0;
     app.text_renderer = try TextRenderer.init(allocator, pixel_buffer);
+
+    if (builtin.os.tag == .windows) {
+        app.texture = try TGA.from_file(RGB, allocator, "res/african_head_diffuse.tga");
+        app.vertex_buffer = blk: {
+            const buffer = try OBJ.from_file(allocator, "res/african_head.obj");
+            defer allocator.free(buffer);
+            var i: usize = 0;
+            var vertex_buffer = try std.ArrayList(GouraudShader.Vertex).initCapacity(allocator, @divExact(buffer.len, 8));
+            while (i < buffer.len) : (i = i + 8) {
+                const pos: Vector3f = .{ .x=buffer[i+0], .y=buffer[i+1], .z=buffer[i+2] };
+                const uv: Vector2f = .{ .x=buffer[i+3], .y=buffer[i+4] };
+                const normal: Vector3f = .{ .x=buffer[i+5], .y=buffer[i+6], .z=buffer[i+7] };
+                vertex_buffer.appendAssumeCapacity(.{ .pos = pos, .uv = uv, .normal = normal });
+            }
+            break :blk vertex_buffer;
+        };
+    }
+    else {
+        app.texture = undefined;
+        try wasm.read_file("res/african_head_diffuse.tga", read_tga_texture, ReadTgaContext { .allocator = allocator, .texture = &app.texture });
+
+        app.vertex_buffer = undefined;
+        try wasm.read_file("res/african_head.obj", read_obj_model, ReadObjContext { .allocator = allocator, .vertex_buffer = &app.vertex_buffer });
+    }
 }
 
 pub fn update(platform: *Platform) !bool {
     
-    platform.pixel_buffer.clear(BGRA.make(100, 149, 237,255));
+    platform.pixel_buffer.clear(ScreenPixelType.make(100, 149, 237,255));
     app.depth_buffer.clear(999999);
 
     app.time += platform.ms;
@@ -94,20 +160,20 @@ pub fn update(platform: *Platform) !bool {
                 M44.translation(Vector3f { .x = 0, .y = 0, .z = 4 }).multiply(M44.scaling_matrix(Vector3f.from(0.5, 0.5, -0.5)))
             ),
         };
-        var i: usize = 0;
-        var vertex_buffer = std.ArrayList(GouraudShader.Vertex).initCapacity(platform.allocator, @divExact(app.vertex_buffer.len, 8)) catch unreachable;
-        defer vertex_buffer.clearAndFree();
-        while (i < app.vertex_buffer.len) : (i = i + 8) {
-            const pos: Vector3f = .{ .x=app.vertex_buffer[i+0], .y=app.vertex_buffer[i+1], .z=app.vertex_buffer[i+2] };
-            const uv: Vector2f = .{ .x=app.vertex_buffer[i+3], .y=app.vertex_buffer[i+4] };
-            const normal: Vector3f = .{ .x=app.vertex_buffer[i+5], .y=app.vertex_buffer[i+6], .z=app.vertex_buffer[i+7] };
-            vertex_buffer.appendAssumeCapacity(.{ .pos = pos, .uv = uv, .normal = normal });
-        }
+        // var i: usize = 0;
+        // var vertex_buffer = std.ArrayList(GouraudShader.Vertex).initCapacity(platform.allocator, @divExact(app.vertex_buffer.len, 8)) catch unreachable;
+        // defer vertex_buffer.clearAndFree();
+        // while (i < app.vertex_buffer.len) : (i = i + 8) {
+        //     const pos: Vector3f = .{ .x=app.vertex_buffer[i+0], .y=app.vertex_buffer[i+1], .z=app.vertex_buffer[i+2] };
+        //     const uv: Vector2f = .{ .x=app.vertex_buffer[i+3], .y=app.vertex_buffer[i+4] };
+        //     const normal: Vector3f = .{ .x=app.vertex_buffer[i+5], .y=app.vertex_buffer[i+6], .z=app.vertex_buffer[i+7] };
+        //     vertex_buffer.appendAssumeCapacity(.{ .pos = pos, .uv = uv, .normal = normal });
+        // }
         const render_requirements: GouraudShader.pipeline_configuration.Requirements() = .{
             .depth_buffer = app.depth_buffer,
             .viewport_matrix = viewport_matrix,
         };
-        GouraudShader.Pipeline.render(platform.pixel_buffer, render_context, vertex_buffer.items, @divExact(vertex_buffer.items.len, 3), render_requirements);
+        GouraudShader.Pipeline.render(platform.pixel_buffer, render_context, app.vertex_buffer.items, @divExact(app.vertex_buffer.items.len, 3), render_requirements);
     }
 
     // render the model texture as a quad

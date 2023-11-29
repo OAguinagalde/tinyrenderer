@@ -1,14 +1,62 @@
 const std = @import("std");
+const TaskManager = @import("TaskManager.zig");
+const math = @import("math.zig");
+const core = @import("core.zig");
+const Vector2i = math.Vector2i;
+const Buffer2D = @import("buffer.zig").Buffer2D;
+const RGBA = @import("pixels.zig").RGBA;
+const RGB = @import("pixels.zig").RGB;
 
 // functions provided by the wasm module caller (in js, the `env` object passed to `instantiateStreaming`)
 pub extern fn console_log(str: [*]const u8, len: usize) void;
 pub extern fn milli_since_epoch() usize;
 pub extern fn fetch(str: [*]const u8, len: usize) void;
 
-pub fn flog(comptime fmt: []const u8, args: anytype) void {
-    var buffer: [1024*2]u8 = undefined;
-    var str = std.fmt.bufPrint(&buffer, fmt, args) catch "flog failed"[0..];
-    console_log(str.ptr, str.len);
+pub export fn wasm_get_static_buffer() [*]u8 {
+    return @ptrCast(&static_buffer_for_runtime_use);
+}
+
+pub export fn wasm_get_canvas_pixels() [*]u8 {
+    return @ptrCast(state.pixel_buffer.data.ptr);
+}
+
+pub export fn wasm_get_canvas_size(out_w: *u32, out_h: *u32) void {
+    out_w.* = state.pixel_buffer.width;
+    out_h.* = state.pixel_buffer.height;
+}
+
+pub export fn wasm_send_event(len: usize, a: usize, b: usize) void {
+    const event: []const u8 = wasm_get_static_buffer()[0..len];
+    flog("event received {s}", .{event});
+    var tokens = std.mem.tokenize(u8, event, ":");
+    var event_type = tokens.next().?;
+    if (std.mem.eql(u8, event_type, "mouse")) {
+        if (std.mem.eql(u8, tokens.next().?, "down")) {
+            flog("mouse down!", .{});
+        }
+    }
+    else if (std.mem.eql(u8, event_type, "buffer")) {
+        const id = tokens.next().?;
+        const data: struct { ptr: [*]u8, len: usize } = .{ .ptr = @ptrFromInt(a), .len = b };
+        state.tasks.?.finish(id, data);
+    }
+}
+
+pub export fn wasm_request_buffer(len: usize) [*]u8 {
+    return @ptrCast(state.allocator.alloc(u8, len) catch |e| panic(e));
+}
+
+pub export fn wasm_init() void {
+    init();
+}
+
+pub export fn wasm_tick() void {
+    tick();
+}
+
+pub export fn wasm_set_mouse(x: i32, y: i32) void {
+    mousex = x;
+    mousey = y;
 }
 
 const WasmLoggingAllocator = struct {
@@ -34,7 +82,6 @@ const WasmLoggingAllocator = struct {
 
     fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
         var self = ptrCast(WasmLoggingAllocator, ctx);
-        // const res = self.child_allocator.alloc(ctx, len, ptr_align, ret_addr);
         const res = self.child_allocator.rawAlloc(len, ptr_align, ret_addr);
         flog("Allocator alloc {} at {any}", .{len, res});
         return res;
@@ -60,8 +107,27 @@ const WasmLoggingAllocator = struct {
 
 };
 
-pub const Runtime = struct {
+pub fn flog(comptime fmt: []const u8, args: anytype) void {
+    var buffer: [1024*2]u8 = undefined;
+    var str = std.fmt.bufPrint(&buffer, fmt, args) catch "flog failed"[0..];
+    console_log(str.ptr, str.len);
+}
 
+fn panic(e: anyerror) noreturn {
+    flog("panic {any}", .{e});
+    @panic("ERROR");
+}
+
+const State = struct {
+    w: i32,
+    h: i32,
+    
+    mouse: Vector2i,
+    keys: [256]bool,
+    pixel_buffer: Buffer2D(RGBA),
+    frame_index: usize,
+    tasks: ?TaskManager,
+    
     fba: std.heap.FixedBufferAllocator,
     wla: WasmLoggingAllocator,
     allocator: std.mem.Allocator,
@@ -74,100 +140,136 @@ pub const Runtime = struct {
     __data_end: [*]u8,
     __heap_base: [*]u8,
     __heap_end: [*]u8,
+};
+
+var state: State = undefined;
+var mousex: i32 = undefined;
+var mousey: i32 = undefined;
+var static_buffer_for_runtime_use: [1024]u8 = undefined;
+
+fn init() void {
+    
+    const random_seed = milli_since_epoch();
+    state.random_internal_implementation = std.rand.DefaultPrng.init(random_seed);
+    state.random = state.random_internal_implementation.random();
+
+    // https://github.com/WebAssembly/tool-conventions/blob/main/DynamicLinking.md
+    state.__memory_base = @extern(?[*]u8, .{.name = "__memory_base"}).?;
+    flog("__memory_base {any} {}", .{state.__memory_base, @as(usize, @intFromPtr(state.__memory_base))});
+    state.__table_base = @extern(?[*]u8, .{.name = "__table_base"}).?;
+    flog("__table_base {any} {}", .{state.__table_base, @as(usize, @intFromPtr(state.__table_base))});
+    state.__stack_pointer = @extern(?[*]u8, .{.name = "__stack_pointer"}).?;
+    flog("__stack_pointer {any} {}", .{state.__stack_pointer, @as(usize, @intFromPtr(state.__stack_pointer))});
+    state.__data_end = @extern(?[*]u8, .{.name = "__data_end"}).?;
+    flog("__data_end {any} {}", .{state.__data_end, @as(usize, @intFromPtr(state.__data_end))});
+    state.__heap_base = @extern(?[*]u8, .{.name = "__heap_base"}).?;
+    flog("__heap_base {any} {}", .{state.__heap_base, @as(usize, @intFromPtr(state.__heap_base))});
+    state.__heap_end = @extern(?[*]u8, .{.name = "__heap_end"}).?;
+    flog("__heap_end {any} {}", .{state.__heap_end, @as(usize, @intFromPtr(state.__heap_end))});
+    var zero: [*]allowzero u8 = @ptrFromInt(0);
+    var heap: []u8 = @ptrCast(zero[@intFromPtr(state.__heap_base)..@intFromPtr(state.__heap_end)]);
+    flog("heap length {}", .{heap.len});
+    
+    state.fba = std.heap.FixedBufferAllocator.init(heap);
+    state.wla = WasmLoggingAllocator { .child_allocator = state.fba.allocator() };
+    state.allocator = state.wla.allocator();
+
+    state.tasks = TaskManager.init(state.allocator);
+    state.keys = [1]bool{false} ** 256;
+    state.pixel_buffer = Buffer2D(RGBA).from(state.allocator.alloc(RGBA, 420*340) catch |e| panic(e), 420);
+    state.w = @intCast(state.pixel_buffer.width);
+    state.h = @intCast(state.pixel_buffer.height);
+    state.mouse = undefined;
+    state.frame_index = 0;
+
+    app.init(state.allocator, state.pixel_buffer) catch |e| panic(e);
+}
+
+pub const Platform = struct {
+    allocator: std.mem.Allocator,
+    w: i32,
+    h: i32,
+    mouse: Vector2i,
+    mouse_d: Vector2i,
+    keys: [256]bool,
+    pixel_buffer: Buffer2D(RGBA),
+    fps: usize,
+    ms: f32,
+    frame: usize,
+};
 
 
-    pub fn init(out_runtime: *Runtime, random_seed: u64) void {
-
-        out_runtime.random_internal_implementation = std.rand.DefaultPrng.init(random_seed);
-        out_runtime.random = out_runtime.random_internal_implementation.random();
-
-        // https://github.com/WebAssembly/tool-conventions/blob/main/DynamicLinking.md
-        out_runtime.__memory_base = @extern(?[*]u8, .{.name = "__memory_base"}).?; flog("__memory_base {any} {}", .{out_runtime.__memory_base, @as(usize, @intFromPtr(out_runtime.__memory_base))});
-        out_runtime.__table_base = @extern(?[*]u8, .{.name = "__table_base"}).?; flog("__table_base {any} {}", .{out_runtime.__table_base, @as(usize, @intFromPtr(out_runtime.__table_base))});
-        out_runtime.__stack_pointer = @extern(?[*]u8, .{.name = "__stack_pointer"}).?; flog("__stack_pointer {any} {}", .{out_runtime.__stack_pointer, @as(usize, @intFromPtr(out_runtime.__stack_pointer))});
-        out_runtime.__data_end = @extern(?[*]u8, .{.name = "__data_end"}).?; flog("__data_end {any} {}", .{out_runtime.__data_end, @as(usize, @intFromPtr(out_runtime.__data_end))});
-        out_runtime.__heap_base = @extern(?[*]u8, .{.name = "__heap_base"}).?; flog("__heap_base {any} {}", .{out_runtime.__heap_base, @as(usize, @intFromPtr(out_runtime.__heap_base))});
-        out_runtime.__heap_end = @extern(?[*]u8, .{.name = "__heap_end"}).?; flog("__heap_end {any} {}", .{out_runtime.__heap_end, @as(usize, @intFromPtr(out_runtime.__heap_end))});
-        
-        var zero: [*]allowzero u8 = @ptrFromInt(0);
-        var heap: []u8 = @ptrCast(zero[@intFromPtr(out_runtime.__heap_base)..@intFromPtr(out_runtime.__heap_end)]);
-        flog("heap length {}", .{heap.len});
-        out_runtime.fba = std.heap.FixedBufferAllocator.init(heap);
-        out_runtime.wla = WasmLoggingAllocator { .child_allocator = out_runtime.fba.allocator() };
-        out_runtime.allocator = out_runtime.wla.allocator();
+fn tick() void {
+    
+    // wait for every task registered at init() to finish
+    if (state.tasks) |tm| {
+        if (!tm.finished()) return;
+        state.tasks.?.deinit();
+        state.tasks = null;
     }
 
-};
+    state.mouse = Vector2i { .x = mousex, .y = mousey };
 
-pub export fn wasm_get_static_buffer() [*]u8 {
-    const buffer = callbacks.get_static_buffer();
-    return @ptrCast(buffer.ptr);
+    var platform = Platform {
+        .pixel_buffer = state.pixel_buffer,
+        .keys = state.keys,
+        .allocator = state.allocator,
+        .w = state.w,
+        .h = state.h,
+        .frame = state.frame_index,
+        .mouse = state.mouse,
+        .mouse_d  = undefined,
+        .fps = undefined,
+        .ms = undefined,
+    };
+
+    const keep_running = app.update(&platform) catch |e| panic(e);
+    if (!keep_running) {
+        // Too bad, there is no stopping!!!
+    }
+    state.frame_index += 1;
 }
 
-pub export fn wasm_get_canvas_pixels() [*]u8 {
-    return @ptrCast(callbacks.get_canvas_pixels());
+fn finish_read_file_task(regist_context: []const u8, completion_context: []const u8) void {
+    var cc: struct { ptr: [*]u8, len: usize } = undefined;
+    core.value(&cc, completion_context);
+    const file_bytes = cc.ptr[0..cc.len];
+    defer state.allocator.free(file_bytes);
+
+    const original_callback_storage = regist_context[0..@sizeOf(*const ReadFileCallback)];
+    var original_callback: *const ReadFileCallback = undefined;
+    core.value(&original_callback, original_callback_storage);
+
+    const original_context_storage = regist_context[@sizeOf(*const ReadFileCallback)..];
+    original_callback(file_bytes, original_context_storage) catch |e| panic(e);
 }
 
-pub export fn wasm_get_canvas_size(out_w: *u32, out_h: *u32) void {
-    const wh = callbacks.get_canvas_size();
-    out_w.* = wh.w;
-    out_h.* = wh.h;
-}
+pub const ReadFileCallback = fn (bytes: []const u8, context: []const u8) anyerror!void;
 
-pub export fn wasm_send_event(len: usize, a: usize, b: usize) void {
-    const event: []const u8 = callbacks.get_static_buffer()[0..len];
-    callbacks.send_event(event, a, b);
-}
-
-pub export fn wasm_request_buffer(len: usize) [*]u8 {
-    const buffer = callbacks.request_buffer(len);
-    return @ptrCast(buffer.ptr);
-}
-
-pub export fn wasm_init() void {
-    callbacks.init();
-}
-pub export fn wasm_tick() void {
-    callbacks.tick();
-}
-
-/// These are the callbacks that javascript will use to interact with the wasm module.
-/// As such, the application code should implement this inside a `const callbacks = struct { ... }` struct
-/// and the exported functions in this file will automatically call them like this: `@import("root").callbacks.get_static_buffer;`
-///
-/// This line is necessary in the root zig file, so that the exported functions located in this file are referenced and zig actually compiles it
-/// 
-///     comptime { _ = @import("wasm.zig"); }
-/// 
-pub const Callbacks = struct {
-    /// Should return a static buffer which the runtime should be
-    /// able to access at any time for its own purposes
-    get_static_buffer: fn () []u8,
-    /// Should return a pointer to the actual pixel buffer to be rendered
-    get_canvas_pixels: fn () *void,
-    /// Should return the width and height of the pixel buffer to be rendered
-    get_canvas_size: fn () Dimensions,
-    /// Should handle events sent by the runtime
-    send_event: fn (event: []const u8, a: usize, b: usize) void,
-    /// Should return a buffer big enough, used when fetching files from the module
-    request_buffer: fn (len: usize) []u8,
-    /// Should initialize the status of the application
-    init: fn () void,
-    /// Should update the state of the application and make sure that `get_canvas_pixels`
-    /// and `get_canvas_size` are properly set
-    tick: fn () void,
+pub fn read_file(file: []const u8, callback: *const ReadFileCallback, context_value: anytype) !void {
+    const self: *TaskManager = &state.tasks.?;
+    const context_size = @sizeOf(@TypeOf(context_value));
+    const callback_size = @sizeOf(@TypeOf(callback));
     
-    pub const Dimensions = struct { w: usize, h: usize };
-};
+    // allocate enough space to store the task until it gets completed and freed on `finish`
+    const size = context_size+file.len+callback_size;
+    var task_storage = try self.arena.allocator().alloc(u8, size);
+    
+    var file_storage: []u8 = task_storage[0..file.len];
+    var callback_storage: []u8 = task_storage[file.len..file.len+callback_size];
+    var context_storage: []u8 = task_storage[file.len+callback_size..size];
+    var context_and_callback = task_storage[file.len..size];
+    
+    std.debug.assert(context_size == context_storage.len);
+    std.mem.copy(u8, file_storage, file);
+    std.mem.copy(u8, context_storage, core.byte_slice(&context_value));        
+    std.mem.copy(u8, callback_storage, core.byte_slice(&callback));        
+    // the task itself just contains a pointer to the context (its memory is manually managed), and a pointer to the callback (which is static code, so no need to manage its lifetime)
+    try self.tasks.put(file_storage, .{ .callback = finish_read_file_task, .context = context_and_callback });
+    
+    fetch(file.ptr, file.len);
+}
 
-const callbacks: Callbacks = blk: {
-    var cbs: Callbacks = undefined;
-    cbs.get_static_buffer = @import("root").callbacks.get_static_buffer;
-    cbs.get_canvas_pixels = @import("root").callbacks.get_canvas_pixels;
-    cbs.get_canvas_size = @import("root").callbacks.get_canvas_size;
-    cbs.send_event = @import("root").callbacks.send_event;
-    cbs.request_buffer = @import("root").callbacks.request_buffer;
-    cbs.init = @import("root").callbacks.init;
-    cbs.tick = @import("root").callbacks.tick;
-    break :blk cbs;
-};
+
+// This is the actual application that is being run, which exposes update and init functions
+const app = @import("app_000.zig");

@@ -52,6 +52,7 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     const wasm_send_event = result.instance.exports.wasm_send_event;
     const wasm_request_buffer = result.instance.exports.wasm_request_buffer;
     const wasm_get_static_buffer = result.instance.exports.wasm_get_static_buffer;
+    const wasm_set_mouse = result.instance.exports.wasm_set_mouse;
 
     // This is the 256 bytes buffer used to interface js code and wasm code
     const interface_buffer_ptr = wasm_get_static_buffer();
@@ -96,6 +97,7 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     const tick_interval = 1/60;
     setInterval(
         () => {
+            wasm_set_mouse(mousePos.x, mousePos.y);
             wasm_tick();
             
             const pixel_data_offset = wasm_get_canvas_pixels();
@@ -109,4 +111,9 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
         },
         tick_interval
     );
+});
+
+let mousePos = { x: undefined, y: undefined };
+window.addEventListener('mousemove', (event) => {
+    mousePos = { x: event.clientX, y: event.clientY };
 });
