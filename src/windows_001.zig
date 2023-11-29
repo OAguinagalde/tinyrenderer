@@ -41,14 +41,7 @@ pub fn update(platform: *Platform) !bool {
     const w = 8;
     const h = 8;
     try app.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.weird_block, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*0, h*0));
-    try app.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.slime1, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*2, h*2));
-    try app.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.slime2, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*3, h*3));
-    try app.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.pengu1, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*4, h*4));
-    try app.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.pengu2, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*5, h*5));
-    try app.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.id0, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*0, h*0));
-    try app.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.id255, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*15, h*15));
-    try app.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.id15, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*15, h*0));
-    try app.renderer.add_sprite(tic80.penguknight_original_assets.SpriteEnum.id240, tic80.penguknight_original_assets.SpriteMap, Vector2f.from(w*0, h*15));
+    try app.renderer.add_map(tic80.penguknight_original_assets.map, Vector2i.from(0,119), Vector2i.from(20,136), Vector2f.from(0,0));
     app.renderer.render(
         platform.pixel_buffer,
         projection_matrix.multiply(view_matrix.multiply(M44.translation(Vector3f.from(0, 0, 1)))),

@@ -4,6 +4,10 @@ pub const Vector2i = struct {
     x: i32,
     y: i32,
 
+    pub fn from(x: i32, y: i32) Vector2i {
+        return Vector2i { .x = x, .y = y };
+    }
+
     pub fn add(self: Vector2i, other: Vector2i) Vector2i {
         return Vector2i { .x = self.x + other.x, .y = self.y + other.y };
     }
