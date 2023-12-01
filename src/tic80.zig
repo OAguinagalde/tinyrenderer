@@ -38,8 +38,8 @@ pub const map_width = 240;
 pub const map_height = 136;
 pub const MapRow = [map_width]AtlasIndex;
 pub const Map = [map_height]MapRow;
-pub const Flags = u8;
-pub const FlagAtlas = [sprites_per_atlas]Flags;
+pub const SpriteFlags = u8;
+pub const Flags = [sprites_per_atlas]SpriteFlags;
 
 pub fn Renderer(comptime output_pixel_type: type) type {
     return struct {

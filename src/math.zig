@@ -41,7 +41,7 @@ pub const Vector2f = struct {
     x: f32,
     y: f32,
     
-    pub fn from(x: f32, y: f32) Vector2f {
+    pub inline fn from(x: f32, y: f32) Vector2f {
         return Vector2f { .x = x, .y = y };
     }
 
