@@ -90,6 +90,18 @@ pub fn Renderer(comptime output_pixel_type: type) type {
             try self.vertex_buffer.appendSlice(&vertices);
         }
 
+        pub fn add_sprite_from_atlas_index(self: *Self, index: u8, pos: Vector2f) !void {
+            const colf: f32 = @floatFromInt(index%16);
+            const rowf: f32 = @floatFromInt(@divFloor(index,16));
+            const vertices = [4] Shader_.Vertex {
+                .{ .pos = .{ .x = pos.x,               .y = pos.y               }, .uv = .{ .x = colf*sprite_size + 0,           .y = rowf*sprite_size + sprite_size } }, // 0 - bottom left
+                .{ .pos = .{ .x = pos.x + sprite_size, .y = pos.y               }, .uv = .{ .x = colf*sprite_size + sprite_size, .y = rowf*sprite_size + sprite_size } }, // 1 - bottom right
+                .{ .pos = .{ .x = pos.x + sprite_size, .y = pos.y + sprite_size }, .uv = .{ .x = colf*sprite_size + sprite_size, .y = rowf*sprite_size + 0           } }, // 2 - top right
+                .{ .pos = .{ .x = pos.x,               .y = pos.y + sprite_size }, .uv = .{ .x = colf*sprite_size + 0,           .y = rowf*sprite_size + 0           } }, // 3 - top left
+            };
+            try self.vertex_buffer.appendSlice(&vertices);
+        }
+
         pub fn add_map(self: *Self, comptime map: Map, tl: Vector2i, br: Vector2i, pos: Vector2f) !void {
             const top: usize = @intCast(tl.y);
             const bottom: usize = @intCast(br.y);

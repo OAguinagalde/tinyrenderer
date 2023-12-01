@@ -563,6 +563,7 @@ pub fn GraphicsPipeline(
                 const ac = c.substract(a.*);
                 const ca = a.substract(c.*);
                 const paralelogram_area_abc: f32 = ab.cross_product(ac).z;
+                if (paralelogram_area_abc < std.math.floatEps(f32)) return;
 
                 // calculate the bounds in pixels of the triangle on the screen
                 var left: usize = @intFromFloat(@min(a.x, @min(b.x, c.x)));

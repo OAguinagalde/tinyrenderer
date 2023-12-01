@@ -4,7 +4,7 @@ pub const Vector2i = struct {
     x: i32,
     y: i32,
 
-    pub fn from(x: i32, y: i32) Vector2i {
+    pub inline fn from(x: i32, y: i32) Vector2i {
         return Vector2i { .x = x, .y = y };
     }
 
@@ -33,7 +33,7 @@ pub const Vector2i = struct {
     }
 
     pub fn to_vec2f(self: Vector2i) Vector2f {
-        return Vector2f { .x = @intCast(self.x), .y = @intCast(self.y) };
+        return Vector2f { .x = @floatFromInt(self.x), .y = @floatFromInt(self.y) };
     }
 };
 
@@ -652,7 +652,7 @@ pub const Plane = struct {
 
     pub fn classify_point(plane: Plane, point: Vector3f) Halfspace {
         const distance: f32 = signed_distance_to_point(plane, point);
-        return if (distance < 0) Halfspace.negative else if (distance > 0) Halfspace.positive else Halfspace.on_plane;
+        return if (distance < -std.math.floatEps(f32)) Halfspace.negative else if (distance > std.math.floatEps(f32)) Halfspace.positive else Halfspace.on_plane;
     }
 
     pub fn intersection(plane: Plane, p1: Vector3f, p2: Vector3f) Vector3f {

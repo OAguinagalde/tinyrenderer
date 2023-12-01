@@ -11,17 +11,23 @@ const TextRenderer = @import("text.zig").TextRenderer(BGRA, 1024, 1024);
 const Platform = @import("windows.zig").Platform;
 
 const App = struct {
-    camera_position: Vector3f,
     text_renderer: TextRenderer,
     renderer: tic80.Renderer(BGRA),
+    entities: EntitySystem,
+    level_background: Assets.LevelBackgroundDescriptor,
+    player: Player,
+    camera: Camera,
 };
 
 var app: App = undefined;
 
 pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
-    app.camera_position = Vector3f { .x = 0, .y = 0, .z = 0 };
     app.text_renderer = try TextRenderer.init(allocator, pixel_buffer);
     app.renderer = try tic80.Renderer(BGRA).init(allocator, Assets.palette, Assets.atlas_tiles);
+    app.entities = EntitySystem.init(allocator);
+    app.player = Player.init(0);
+    app.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
+    try loadLevel(Assets.level_the_hueco, Assets.spawn_level_the_hueco_0, 0);
 }
 
 pub fn update(platform: *Platform) !bool {
@@ -29,70 +35,264 @@ pub fn update(platform: *Platform) !bool {
     platform.pixel_buffer.clear(BGRA.make(100, 149, 237,255));
     
     const unit: f32 = 2*(platform.ms / 16.6666);
-    if (platform.keys['A']) app.camera_position.x -= unit;
-    if (platform.keys['D']) app.camera_position.x += unit;
-    if (platform.keys['W']) app.camera_position.y += unit;
-    if (platform.keys['S']) app.camera_position.y -= unit;
+    if (platform.keys['Q']) try loadLevel(Assets.level_first, Assets.spawn_start_0, platform.frame);
+    if (platform.keys['E']) try loadLevel(Assets.level_slime, Assets.spawn_level_slime_0, platform.frame);
+    
+    if (platform.keys['A']) app.player.pos.x -= unit;
+    if (platform.keys['D']) app.player.pos.x += unit;
+    if (platform.keys['W']) app.player.pos.y += unit;
+    if (platform.keys['S']) app.player.pos.y -= unit;
 
-    const view_matrix = M44.lookat_left_handed(app.camera_position, app.camera_position.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
+    // TODO physics on the player
+
+    app.camera.move_to(app.player.pos, @floatFromInt(@divExact(platform.w,4)), @floatFromInt(@divExact(platform.h,4)));
+    
+    const view_matrix = M44.lookat_left_handed(app.camera.pos, app.camera.pos.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
     const projection_matrix = M44.orthographic_projection(0, @floatFromInt(@divExact(platform.w,4)), @floatFromInt(@divExact(platform.h,4)), 0, 0, 2);
     const viewport_matrix = M44.viewport_i32_2(0, 0, platform.w, platform.h, 255);
-
-    const size = tic80.sprite_size;
-    const level = Assets.level_slime;
-    const map = Assets.map;
-    const sprite = Assets.sprite_pengu1;
-    try app.renderer.add_map(map, level.tl, level.br, Vector2f.from(size*0, size*0));
-    try app.renderer.add_sprite(sprite.col, sprite.row, Vector2f.from(size*5, size*1));
+    try app.renderer.add_map(Assets.map, app.level_background.tl, app.level_background.br, Vector2f.from(@floatFromInt(app.level_background.tl.x*8), @floatFromInt(correct_y(app.level_background.br.y-1)*8)));
+    for (app.entities.entities.items) |runtime_entity| {
+        const sprite = runtime_entity.animation.calculate_frame(platform.frame);
+        const pos = runtime_entity.pos;
+        try app.renderer.add_sprite_from_atlas_index(sprite, Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8)));
+    }
+    try app.renderer.add_sprite_from_atlas_index(app.player.animation.calculate_frame(platform.frame), app.player.pos);
+    
     app.renderer.render(
         platform.pixel_buffer,
         projection_matrix.multiply(view_matrix.multiply(M44.translation(Vector3f.from(0, 0, 1)))),
         viewport_matrix
     );
 
+    try render_debug_interface(platform);
+    return true;
+}
+
+pub fn render_debug_interface(platform: *Platform) !void {
     try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*1) - 4 }, "ms {d: <9.2}", .{platform.ms});
     try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*2) - 4 }, "fps {}", .{platform.fps});
     try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*3) - 4 }, "frame {}", .{platform.frame});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*4) - 4 }, "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera_position.x, app.camera_position.y, app.camera_position.z});
+    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*4) - 4 }, "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z});
     try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*5) - 4 }, "mouse {} {}", .{platform.mouse.x, platform.mouse.y});
     try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*6) - 4 }, "dimensions {} {}", .{platform.w, platform.h});
-    try app.text_renderer.print(Vector2i { .x = 0, .y = 0 }, "hello from (0, 0), the lowest possible text!!!", .{});
     app.text_renderer.render_all(
-        // projection_matrix,
         M44.orthographic_projection(0, @floatFromInt(platform.w), @floatFromInt(platform.h), 0, 0, 10),
-        viewport_matrix
+        M44.viewport_i32_2(0, 0, platform.w, platform.h, 255)
     );
-
-    return true;
 }
+
+pub fn loadLevel(level: Assets.LevelDescriptor, spawn: Assets.SpawnDescriptor, frame: usize) !void {
+    app.entities.clear();
+    // app.particles.clear();
+    app.player.reset_soft(frame);
+
+    // app.camera.pos = Vector3f.from(@floatFromInt(app.level_background.tl.x*8), @floatFromInt(correct_y(app.level_background.br.y-1)*8), app.camera.pos.z);
+    app.level_background = level.background;
+    // app.doors = level.doors;
+    // app.static_texts = level.doors;
+    
+    for (level.entity_spawns) |entity_spawn| {
+        try app.entities.spawn(entity_spawn.entity, entity_spawn.pos, frame);
+    }
+    
+    app.player.spawn(spawn.pos);
+    app.camera.set_bounds(level.background.tl, app.level_background.br);
+}
+
+const Camera = struct {
+    pos: Vector3f,
+    bound_right: f32,
+    bound_left: f32,
+    bound_top: f32,
+    bound_bottom: f32,
+    
+    pub fn init(pos: Vector3f) Camera {
+        return Camera {
+            .pos = pos,
+            .bound_right = undefined,
+            .bound_left = undefined,
+            .bound_top = undefined,
+            .bound_bottom = undefined,
+        };
+    }
+
+    pub fn move_to(self: *Camera, pos: Vector2f, real_width: f32, real_height: f32) void {
+        const bound_width = self.bound_right - self.bound_left;
+        const bound_height = self.bound_top - self.bound_bottom;
+
+        // center the camera on the level bound
+        self.pos.x = self.bound_left - (real_width/2) + (bound_width/2);
+        if (bound_width > real_width) {
+            // if the level is bigger than the screen, pan it without showing the outside of the level
+            const half_diff = (bound_width - real_width)/2;
+            const c = self.pos.x;
+            self.pos.x = std.math.clamp(pos.x-(real_width/2), c-half_diff, c+half_diff);
+        }
+        
+        self.pos.y = self.bound_bottom - (real_height/2) + (bound_height/2);
+        if (bound_height > real_height) {
+            const half_diff = (bound_height - real_height)/2;
+            const c = self.pos.y;
+            self.pos.y = std.math.clamp(pos.y-(real_height/2), c-half_diff, c+half_diff);
+        }
+
+    }
+
+    pub fn set_bounds(self: *Camera, tl: Vector2i, br: Vector2i) void {
+        self.bound_left = @floatFromInt(tl.x*8); // the left border of the cell 
+        self.bound_right = @floatFromInt((br.x)*8); // the right border of the cell 
+        self.bound_top = @floatFromInt(correct_y(tl.y-1)*8); // the top border of the cell
+        self.bound_bottom = @floatFromInt(correct_y(br.y-1)*8); // the bottom border of the cell
+    }
+};
+const Player = struct {
+    animation: RuntimeAnimation,
+    pos: Vector2f,
+    
+    pub fn init(frame: usize) Player {
+        return Player {
+            .animation = RuntimeAnimation {
+                .animation = Assets.animation_player_idle,
+                .frame_start = frame,
+            },
+            .pos = Vector2f.from(0,0)
+        };
+    }
+
+    pub fn reset_soft(self: *Player, frame: usize) void {
+        self.animation = RuntimeAnimation {
+            .animation = Assets.animation_player_idle,
+            .frame_start = frame,
+        };
+    }
+
+    pub fn spawn(self: *Player, pos: Vector2i) void {
+        self.pos = Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8));
+    }
+};
+
+const RuntimeAnimation = struct {
+    animation: Assets.AnimationDescriptor,
+    frame_start: usize,
+    pub fn calculate_frame(self: RuntimeAnimation, frame: usize) tic80.AtlasIndex {
+        const total_frames: usize = frame - self.frame_start;
+        const normalized: usize = total_frames % self.animation.duration;
+        const time_between_animation_frames: usize = @divFloor(self.animation.duration, self.animation.sprites.len);
+        const animation_index: usize = @divFloor(normalized, time_between_animation_frames);
+        return self.animation.sprites[animation_index];
+    }
+};
+
+const RuntimeEntity = struct {
+    animation: RuntimeAnimation,
+    pos: Vector2i,
+};
+
+const EntitySystem = struct {
+    
+    entities: std.ArrayList(RuntimeEntity),
+    
+    pub fn init(allocator: std.mem.Allocator) EntitySystem {
+        return EntitySystem {
+            .entities = std.ArrayList(RuntimeEntity).init(allocator)
+        };
+    }
+    
+    pub fn clear(self: *EntitySystem) void {
+        self.entities.clearRetainingCapacity();
+    }
+
+    pub fn spawn(self: *EntitySystem, entity: Assets.EntityDescriptor, pos: Vector2i, frame_number: usize) !void {
+        try self.entities.append(RuntimeEntity {
+            .animation = RuntimeAnimation {
+                .animation = entity.default_animation,
+                .frame_start = frame_number,
+            },
+            .pos = pos
+        });
+    }
+
+};
 
 pub const Assets = struct {
     
     // TODO group assets required per level on load (which doors, which entities, which static texts, which map to render, where to spawn the player etc...)
-    
     pub const LevelDescriptor = struct {
+        background: LevelBackgroundDescriptor,
+        doors: []const DoorDescriptor,
+        static_texts: []const StaticTextDescriptor,
+        entity_spawns: []const EntitySpawnDescriptor,
+        fn from(background: LevelBackgroundDescriptor, doors: []const DoorDescriptor, static_texts: []const StaticTextDescriptor, entity_spawns: []const EntitySpawnDescriptor) LevelDescriptor {
+            return LevelDescriptor {
+                .background = background,
+                .doors = doors,
+                .static_texts = static_texts,
+                .entity_spawns = entity_spawns,
+            };
+        }
+    };
+
+    pub const level_first = LevelDescriptor.from(
+        level_bg_first,
+        &[_] DoorDescriptor { door_level_first_0 },
+        &[_] StaticTextDescriptor { static_text_tutorial_0, static_text_tutorial_1 },
+        &[_] EntitySpawnDescriptor { },
+    );
+
+    pub const level_slime = LevelDescriptor.from(
+        level_bg_slime,
+        &[_] DoorDescriptor { door_level_slime_0, door_level_slime_1 },
+        &[_] StaticTextDescriptor { static_text_tutorial_2 },
+        &[_] EntitySpawnDescriptor { entity_spawn_enemy_slime_3 },
+    );
+
+    pub const level_the_hueco = LevelDescriptor.from(
+        level_bg_the_hueco,
+        &[_] DoorDescriptor {
+            door_level_the_hueco_0,
+            door_level_the_hueco_1,
+            door_level_the_hueco_2_0,
+            door_level_the_hueco_2_1,
+            door_level_the_hueco_2_2,
+            door_level_the_hueco_2_3,
+            door_level_the_hueco_2_4,
+            door_level_the_hueco_2_5,
+            door_level_the_hueco_2_6,
+            door_level_the_hueco_2_7,
+            door_level_the_hueco_2_8,
+            door_level_the_hueco_2_9,
+            door_level_the_hueco_3
+        },
+        &[_] StaticTextDescriptor { },
+        &[_] EntitySpawnDescriptor { },
+    );
+
+    pub const LevelBackgroundDescriptor = struct {
         tl: Vector2i,
         br: Vector2i,
-        fn from(tl: Vector2i, br: Vector2i) LevelDescriptor {
-            return LevelDescriptor { .tl = tl, .br = br };
+        fn from(tl: Vector2i, br: Vector2i) LevelBackgroundDescriptor {
+            return LevelBackgroundDescriptor { .tl = tl, .br = br };
         }
     };
     
-    pub const level_first = LevelDescriptor.from(Vector2i.from(0, 119), Vector2i.from(19+1, 135+1));
-    pub const level_slime = LevelDescriptor.from(Vector2i.from(30, 123), Vector2i.from(50+1, 135+1));
-    pub const level_two_directions = LevelDescriptor.from(Vector2i.from(60, 126), Vector2i.from(89+1, 135+1));
-    pub const level_poison_corridor = LevelDescriptor.from(Vector2i.from(90, 126), Vector2i.from(119+1, 135+1));
-    pub const level_entrance_to_something = LevelDescriptor.from(Vector2i.from(120, 126), Vector2i.from(134+1, 135+1));
-    pub const level_first_floor = LevelDescriptor.from(Vector2i.from(58, 112), Vector2i.from(82+1, 118+1));
-    pub const level_the_hueco = LevelDescriptor.from(Vector2i.from(90, 95), Vector2i.from(119+1, 118+1));
-    pub const level_dash = LevelDescriptor.from(Vector2i.from(60, 95), Vector2i.from(89+1, 101+1));
-    pub const level_last_level = LevelDescriptor.from(Vector2i.from(1, 17), Vector2i.from(25+1, 32+1));
+    pub const level_bg_first = LevelBackgroundDescriptor.from(Vector2i.from(0, 119), Vector2i.from(19+1, 135+1));
+    pub const level_bg_slime = LevelBackgroundDescriptor.from(Vector2i.from(30, 123), Vector2i.from(50+1, 135+1));
+    pub const level_bg_two_directions = LevelBackgroundDescriptor.from(Vector2i.from(60, 126), Vector2i.from(89+1, 135+1));
+    pub const level_bg_poison_corridor = LevelBackgroundDescriptor.from(Vector2i.from(90, 126), Vector2i.from(119+1, 135+1));
+    pub const level_bg_entrance_to_something = LevelBackgroundDescriptor.from(Vector2i.from(120, 126), Vector2i.from(134+1, 135+1));
+    pub const level_bg_first_floor = LevelBackgroundDescriptor.from(Vector2i.from(58, 112), Vector2i.from(82+1, 118+1));
+    pub const level_bg_the_hueco = LevelBackgroundDescriptor.from(Vector2i.from(90, 95), Vector2i.from(119+1, 118+1));
+    pub const level_bg_dash = LevelBackgroundDescriptor.from(Vector2i.from(60, 95), Vector2i.from(89+1, 101+1));
+    pub const level_bg_last_level = LevelBackgroundDescriptor.from(Vector2i.from(1, 17), Vector2i.from(25+1, 32+1));
     
     pub const AtlasPosition = struct {
         col: usize,
         row: usize,
         pub fn from(col: usize, row: usize) AtlasPosition {
             return .{ .col = col, .row = row };
+        }
+        pub fn from_id(id: usize) AtlasPosition {
+            return .{ .col = id%16, .row = @divFloor(id, 16) };
         }
     };
 
@@ -105,6 +305,21 @@ pub const Assets = struct {
     pub const sprite_id255 = AtlasPosition.from(15, 15);
     pub const sprite_id15 = AtlasPosition.from(15, 0);
     pub const sprite_id240 = AtlasPosition.from(0, 15);
+    
+    pub const sprite_knight_a_0 = AtlasPosition.from(0, 11);
+    pub const sprite_knight_a_1 = AtlasPosition.from(1, 11);
+    pub const sprite_archer_0 = AtlasPosition.from(0, 10);
+    pub const sprite_archer_1 = AtlasPosition.from(1, 10);
+    pub const sprite_pengu_0 = AtlasPosition.from(0, 12);
+    pub const sprite_pengu_1 = AtlasPosition.from(1, 12);
+    pub const sprite_slime_0 = AtlasPosition.from(2, 10);
+    pub const sprite_slime_1 = AtlasPosition.from(3, 10);
+    pub const sprite_knight_b_0 = AtlasPosition.from(4, 10);
+    pub const sprite_knight_b_1 = AtlasPosition.from(5, 10);
+    pub const sprite_penguknight_0 = AtlasPosition.from_id(35);
+    pub const sprite_penguknight_1 = AtlasPosition.from_id(36);
+    pub const sprite_penguknight_2 = AtlasPosition.from_id(51);
+
 
     pub const SpawnDescriptor = struct {
         /// indexes into a `tic80.Map` 
@@ -136,7 +351,7 @@ pub const Assets = struct {
         pos: Vector2i,
         destination: SpawnDescriptor,
         pub inline fn from(pos: Vector2i, destination: SpawnDescriptor) DoorDescriptor {
-            return DoorDescriptor { .pos = pos, .destionation = destination };
+            return DoorDescriptor { .pos = pos, .destination = destination };
         }
     };
 
@@ -148,7 +363,7 @@ pub const Assets = struct {
     pub const door_level_poison_corridor_0 = DoorDescriptor.from(Vector2i.from(90, 133), spawn_level_two_directions_1);
     pub const door_level_poison_corridor_1 = DoorDescriptor.from(Vector2i.from(119, 133), spawn_level_entrance_to_something_0);
     pub const door_level_entrance_to_something_0 = DoorDescriptor.from(Vector2i.from(120, 133), spawn_level_poison_corridor_1);
-    pub const door_level_first_loor_0 = DoorDescriptor.from(Vector2i.from(82, 116), spawn_level_the_hueco_0);
+    pub const door_level_first_floor_0 = DoorDescriptor.from(Vector2i.from(82, 116), spawn_level_the_hueco_0);
     pub const door_level_the_hueco_0 = DoorDescriptor.from(Vector2i.from(90, 116), spawn_level_first_floor_0);
     pub const door_level_the_hueco_1 = DoorDescriptor.from(Vector2i.from(119, 116), spawn_level_last_level_0);
     pub const door_level_the_hueco_2_0 = DoorDescriptor.from(Vector2i.from(104, 118), spawn_level_poison_corridor_2);
@@ -183,32 +398,57 @@ pub const Assets = struct {
         /// indexes into a `tic80.Map` 
         pos: Vector2i,
         entity: EntityDescriptor,
-        pub inline fn from(pos: Vector2i, size: Vector2i, text: []const u8) StaticTextDescriptor {
-            return StaticTextDescriptor  { .pos = pos, .size = size, .text = text };
+        pub inline fn from(pos: Vector2i, entity: EntityDescriptor) EntitySpawnDescriptor {
+            return EntitySpawnDescriptor  { .pos = pos, .entity = entity };
         }
     };
     
-    pub const entity_spawn_enemy_slime_king_0 = EntitySpawnDescriptor.from(Vector2i.from(131, 131), entity_default);
-    pub const entity_spawn_enemy_knight_0 = EntitySpawnDescriptor.from(Vector2i.from(71, 116), entity_default);
-    pub const entity_spawn_enemy_knight_1 = EntitySpawnDescriptor.from(Vector2i.from(77, 116), entity_default);
-    pub const entity_spawn_enemy_slime_0 = EntitySpawnDescriptor.from(Vector2i.from(68, 132), entity_default);
-    pub const entity_spawn_enemy_slime_1 = EntitySpawnDescriptor.from(Vector2i.from(72, 132), entity_default);
-    pub const entity_spawn_enemy_slime_2 = EntitySpawnDescriptor.from(Vector2i.from(81, 129), entity_default);
-    pub const entity_spawn_enemy_slime_3 = EntitySpawnDescriptor.from(Vector2i.from(36, 132), entity_default);
-    pub const entity_spawn_enemy_slime_4 = EntitySpawnDescriptor.from(Vector2i.from(48, 132), entity_default);
-    pub const entity_spawn_enemy_knight_2 = EntitySpawnDescriptor.from(Vector2i.from(7, 25), entity_default);
-    pub const entity_spawn_enemy_knight_3 = EntitySpawnDescriptor.from(Vector2i.from(13, 23), entity_default);
-    pub const entity_spawn_enemy_knight_4 = EntitySpawnDescriptor.from(Vector2i.from(15, 20), entity_default);
-    pub const entity_spawn_enemy_knight_5 = EntitySpawnDescriptor.from(Vector2i.from(21, 25), entity_default);
+    pub const entity_spawn_enemy_slime_king_0 = EntitySpawnDescriptor.from(Vector2i.from(131, 131), entity_slime_king);
+    pub const entity_spawn_enemy_knight_0 = EntitySpawnDescriptor.from(Vector2i.from(71, 116), entity_knight_1);
+    pub const entity_spawn_enemy_knight_1 = EntitySpawnDescriptor.from(Vector2i.from(77, 116), entity_knight_2);
+    pub const entity_spawn_enemy_slime_0 = EntitySpawnDescriptor.from(Vector2i.from(68, 132), entity_slime);
+    pub const entity_spawn_enemy_slime_1 = EntitySpawnDescriptor.from(Vector2i.from(72, 132), entity_slime);
+    pub const entity_spawn_enemy_slime_2 = EntitySpawnDescriptor.from(Vector2i.from(81, 129), entity_slime);
+    pub const entity_spawn_enemy_slime_3 = EntitySpawnDescriptor.from(Vector2i.from(36, 132), entity_slime);
+    pub const entity_spawn_enemy_slime_4 = EntitySpawnDescriptor.from(Vector2i.from(48, 132), entity_slime);
+    pub const entity_spawn_enemy_knight_2 = EntitySpawnDescriptor.from(Vector2i.from(7, 25), entity_knight_1);
+    pub const entity_spawn_enemy_knight_3 = EntitySpawnDescriptor.from(Vector2i.from(13, 23), entity_knight_2);
+    pub const entity_spawn_enemy_knight_4 = EntitySpawnDescriptor.from(Vector2i.from(15, 20), entity_knight_1);
+    pub const entity_spawn_enemy_knight_5 = EntitySpawnDescriptor.from(Vector2i.from(21, 25), entity_knight_2);
 
     pub const EntityDescriptor = struct {
-        default_sprite: AtlasPosition,
-        pub inline fn from(default_sprite: AtlasPosition) EntityDescriptor {
-            return EntityDescriptor  { .default_sprite = default_sprite };
+        default_animation: AnimationDescriptor,
+        pub inline fn from(default_animation: AnimationDescriptor) EntityDescriptor {
+            return EntityDescriptor  { .default_animation = default_animation };
         }
     };
     
-    pub const entity_default = EntityDescriptor.from(sprite_pengu1);
+    pub const entity_slime = EntityDescriptor.from(animation_slime);
+    pub const entity_knight_1 = EntityDescriptor.from(animation_knight_1);
+    pub const entity_knight_2 = EntityDescriptor.from(animation_knight_2);
+    pub const entity_archer = EntityDescriptor.from(animation_archer);
+    pub const entity_slime_king = EntityDescriptor.from(animation_slime);
+
+    pub const AnimationDescriptor = struct {
+        sprites: []const tic80.AtlasIndex,
+        duration: usize,
+        pub inline fn from(sprites: []const tic80.AtlasIndex, duration: usize) AnimationDescriptor {
+            return AnimationDescriptor { .sprites = sprites, .duration = duration };
+        }
+    };
+
+    pub const animation_attack_0 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 65, 66, 67 }, 30);
+    pub const animation_attack_1 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 37, 38, 39, 40, 41 }, 10);
+    pub const animation_fire = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 139, 140 }, 15);
+    pub const animation_wings = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 113, 114 }, 30);
+    pub const animation_slime = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 178, 179 }, 60);
+    pub const animation_knight_1 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 176, 177 }, 60);
+    pub const animation_knight_2 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 180, 181 }, 60);
+    pub const animation_penguin = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 192, 193 }, 60);
+    pub const animation_archer = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 160, 161 }, 120);
+    pub const animation_player_idle = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 35, 51 }, 60);
+    pub const animation_player_walk = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 35, 36 }, 10);
+    pub const animation_preparing_attack = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 97, 98, 0, 0, 100, 99 }, 15);
     
     pub const palette = tic80.Palette {
         0x1a1c2c,
@@ -449,4 +689,11 @@ pub const Assets = struct {
         break :blk data;
     };
 
+    // TODO in place effects such as: attack slash animation 1, attack slash animation 2 and kinght attack flash animation
+    // consists of: animation, location, and creation frame
+
 };
+
+inline fn correct_y(thing: anytype) @TypeOf(thing) {
+    return  135 - thing;
+}
