@@ -41,17 +41,15 @@ pub const Map = [map_height]MapRow;
 pub const SpriteFlags = u8;
 pub const Flags = [sprites_per_atlas]SpriteFlags;
 
-pub fn Renderer(comptime output_pixel_type: type) type {
+pub fn Renderer(comptime output_pixel_type: type, comptime shader: type) type {
     return struct {
         
-        const Shader_ = Shader(output_pixel_type);
         const Self = @This();
 
         allocator: std.mem.Allocator,
         palette: Palette,
         texture: Buffer2D(PaletteIndex),
-        shader: Shader_,
-        vertex_buffer: std.ArrayList(Shader_.Vertex),
+        vertex_buffer: std.ArrayList(shader.Vertex),
 
         /// Will manage its own state, esentially has its own copy of the `sprite_atlas` and `palette`
         pub fn init(allocator: std.mem.Allocator, palette: Palette, sprite_atlas: SpriteAtlas) !Self {
@@ -73,7 +71,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
             self.allocator = allocator;
             self.texture = Buffer2D(PaletteIndex).from(texture_data, pixels_per_row);
             @memcpy(&self.palette, &palette);
-            self.vertex_buffer = std.ArrayList(Shader_.Vertex).init(allocator);
+            self.vertex_buffer = std.ArrayList(shader.Vertex).init(allocator);
             return self;
         }
 
@@ -81,7 +79,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
         pub fn add_sprite(self: *Self, col: i32, row: i32, pos: Vector2f) !void {
             const colf: f32 = @floatFromInt(col);
             const rowf: f32 = @floatFromInt(row);
-            const vertices = [4] Shader_.Vertex {
+            const vertices = [4] shader.Vertex {
                 .{ .pos = .{ .x = pos.x,               .y = pos.y               }, .uv = .{ .x = colf*sprite_size + 0,           .y = rowf*sprite_size + sprite_size } }, // 0 - bottom left
                 .{ .pos = .{ .x = pos.x + sprite_size, .y = pos.y               }, .uv = .{ .x = colf*sprite_size + sprite_size, .y = rowf*sprite_size + sprite_size } }, // 1 - bottom right
                 .{ .pos = .{ .x = pos.x + sprite_size, .y = pos.y + sprite_size }, .uv = .{ .x = colf*sprite_size + sprite_size, .y = rowf*sprite_size + 0           } }, // 2 - top right
@@ -90,15 +88,24 @@ pub fn Renderer(comptime output_pixel_type: type) type {
             try self.vertex_buffer.appendSlice(&vertices);
         }
 
-        pub fn add_sprite_from_atlas_index(self: *Self, index: u8, pos: Vector2f) !void {
+        pub const AddSpriteParameters = struct {
+            mirror: bool = false
+        };
+        pub fn add_sprite_from_atlas_index(self: *Self, index: u8, pos: Vector2f, parameters: AddSpriteParameters) !void {
             const colf: f32 = @floatFromInt(index%16);
             const rowf: f32 = @floatFromInt(@divFloor(index,16));
-            const vertices = [4] Shader_.Vertex {
+            var vertices = [4] shader.Vertex {
                 .{ .pos = .{ .x = pos.x,               .y = pos.y               }, .uv = .{ .x = colf*sprite_size + 0,           .y = rowf*sprite_size + sprite_size } }, // 0 - bottom left
                 .{ .pos = .{ .x = pos.x + sprite_size, .y = pos.y               }, .uv = .{ .x = colf*sprite_size + sprite_size, .y = rowf*sprite_size + sprite_size } }, // 1 - bottom right
                 .{ .pos = .{ .x = pos.x + sprite_size, .y = pos.y + sprite_size }, .uv = .{ .x = colf*sprite_size + sprite_size, .y = rowf*sprite_size + 0           } }, // 2 - top right
                 .{ .pos = .{ .x = pos.x,               .y = pos.y + sprite_size }, .uv = .{ .x = colf*sprite_size + 0,           .y = rowf*sprite_size + 0           } }, // 3 - top left
             };
+            if (parameters.mirror) {
+                vertices[0].uv.x = colf*sprite_size + sprite_size;
+                vertices[1].uv.x = colf*sprite_size + 0;
+                vertices[2].uv.x = colf*sprite_size + 0;
+                vertices[3].uv.x = colf*sprite_size + sprite_size;
+            }
             try self.vertex_buffer.appendSlice(&vertices);
         }
 
@@ -113,7 +120,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                     const row: f32 = @floatFromInt(atlas_index%16);
                     const col: f32 = @floatFromInt(@divFloor(atlas_index, 16));
                     const offset = Vector2f.from(@floatFromInt(col_i*8), @floatFromInt(((bottom-top-1)*8)-(row_i*8)));
-                    const vertices = [4] Shader_.Vertex {
+                    const vertices = [4] shader.Vertex {
                         .{ .pos = .{ .x = offset.x + pos.x,               .y = offset.y + pos.y               }, .uv = .{ .x = col*sprite_size + 0,           .y = row*sprite_size + sprite_size } }, // 0 - bottom left
                         .{ .pos = .{ .x = offset.x + pos.x + sprite_size, .y = offset.y + pos.y               }, .uv = .{ .x = col*sprite_size + sprite_size, .y = row*sprite_size + sprite_size } }, // 1 - bottom right
                         .{ .pos = .{ .x = offset.x + pos.x + sprite_size, .y = offset.y + pos.y + sprite_size }, .uv = .{ .x = col*sprite_size + sprite_size, .y = row*sprite_size + 0           } }, // 2 - top right
@@ -125,12 +132,12 @@ pub fn Renderer(comptime output_pixel_type: type) type {
         }
 
         pub fn render(self: *Self, pixel_buffer: Buffer2D(output_pixel_type), projection_matrix: M44, viewport_matrix: M44) void {
-            const context = Shader_.Context {
+            const context = shader.Context {
                 .texture = self.texture,
                 .palette = self.palette,
                 .projection_matrix = projection_matrix,
             };
-            Shader_.Pipeline.render(pixel_buffer, context, self.vertex_buffer.items, @divExact(self.vertex_buffer.items.len, 2), .{ .viewport_matrix = viewport_matrix });
+            shader.Pipeline.render(pixel_buffer, context, self.vertex_buffer.items, @divExact(self.vertex_buffer.items.len, 2), .{ .viewport_matrix = viewport_matrix });
             self.vertex_buffer.clearRetainingCapacity();
         }
 
@@ -164,7 +171,7 @@ pub fn Shader(comptime output_pixel_type: type) type {
         pub const pipeline_configuration = GraphicsPipelineConfiguration {
             .blend_with_background = false,
             .do_depth_testing = false,
-            .do_perspective_correct_interpolation = true,
+            .do_perspective_correct_interpolation = false,
             .do_scissoring = false,
             .do_triangle_clipping = true,
             .trace = false,
@@ -188,6 +195,61 @@ pub fn Shader(comptime output_pixel_type: type) type {
             struct {
                 fn fragment_shader(context: Context, invariants: Invariant) output_pixel_type {
                     const palette_index = context.texture.point_sample(false, invariants.texture_uv);
+                    const bgr = context.palette[palette_index];
+                    return output_pixel_type.from(BGR, @bitCast(bgr));
+                }
+            }.fragment_shader,
+        );
+    };
+}
+
+/// The same as the Shader above, but color blending is enabled and the fragment shader will return a transparent pixel if the palette matches the key_color
+pub fn ShaderWithBlendAndKeyColor(comptime output_pixel_type: type, comptime key_color: PaletteIndex) type {
+    return struct {
+
+        pub const Context = struct {
+            texture: Buffer2D(PaletteIndex),
+            palette: Palette,
+            projection_matrix: M44,
+        };
+
+        pub const Invariant = struct {
+            texture_uv: Vector2f,
+        };
+
+        pub const Vertex = struct {
+            pos: Vector2f,
+            uv: Vector2f,
+        };
+
+        pub const pipeline_configuration = GraphicsPipelineConfiguration {
+            .blend_with_background = true,
+            .do_depth_testing = false,
+            .do_perspective_correct_interpolation = false,
+            .do_scissoring = false,
+            .do_triangle_clipping = true,
+            .trace = false,
+            .use_index_buffer = false,
+            .use_index_buffer_auto = true,
+            .use_triangle_2 = false,
+        };
+
+        pub const Pipeline = GraphicsPipeline(
+            output_pixel_type,
+            Context,
+            Invariant,
+            Vertex,
+            pipeline_configuration,
+            struct {
+                fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector4f {
+                    out_invariant.texture_uv = vertex.uv;
+                    return context.projection_matrix.apply_to_vec3(Vector3f { .x = vertex.pos.x, .y = vertex.pos.y, .z = 0 });
+                }
+            }.vertex_shader,
+            struct {
+                fn fragment_shader(context: Context, invariants: Invariant) output_pixel_type {
+                    const palette_index = context.texture.point_sample(false, invariants.texture_uv);
+                    if (palette_index == key_color) return output_pixel_type.from(BGRA, BGRA.make(0,0,0,0));
                     const bgr = context.palette[palette_index];
                     return output_pixel_type.from(BGR, @bitCast(bgr));
                 }

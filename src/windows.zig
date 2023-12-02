@@ -12,6 +12,7 @@ const State = struct {
     w: i32 = 240*4,
     h: i32 = 136*4,
     render_target: win32.BITMAPINFO = undefined,
+    keys_old: [256]bool = [1]bool{false} ** 256,
     keys: [256]bool = [1]bool{false} ** 256,
     pixel_buffer: Buffer2D(BGRA) = undefined,
 };
@@ -143,46 +144,41 @@ pub fn main() !void {
             mouse.x = mouse_current.x;
             mouse.y = mouse_current.y;
         }
-            
-        var cpu_counter: i64 = blk: {
+        var frame: usize = 0;    
+        var cpu_counter_now: i64 = blk: {
             var counter: win32.LARGE_INTEGER = undefined;
             _ = win32.QueryPerformanceCounter(&counter);
             break :blk counter.QuadPart;
         };
-        const cpu_counter_first: i64 = cpu_counter;
+        const cpu_counter_first: i64 = cpu_counter_now;
+        var cpu_counter_since_first: usize = @intCast(cpu_counter_now - cpu_counter_first);
         const cpu_frequency_seconds: i64 = blk: {
             var performance_frequency: win32.LARGE_INTEGER = undefined;
             _ = win32.QueryPerformanceFrequency(&performance_frequency);
             break :blk performance_frequency.QuadPart;
         };
-        std.debug.assert(cpu_frequency_seconds >= 0);
-        std.debug.assert(cpu_counter_first >= 0);
-        std.debug.assert(cpu_counter >= 0);
 
         try init(allocator, state.pixel_buffer);
 
         var running: bool = true;
         while (running) {
 
-            var fps: usize = undefined;
             var ms: f32 = undefined;
-            {
-                var new_counter: win32.LARGE_INTEGER = undefined;
-                _ = win32.QueryPerformanceCounter(&new_counter);
-
-                var counter_difference = new_counter.QuadPart - cpu_counter;
-                
+            while (true) {
+                var current_cpu_counter: win32.LARGE_INTEGER = undefined;
+                _ = win32.QueryPerformanceCounter(&current_cpu_counter);
+                var cpu_counter_delta = current_cpu_counter.QuadPart - cpu_counter_now;
                 // TODO sometimes it comes out as 0????? not sure why but its not important right now
-                {
-                    if (counter_difference == 0) counter_difference = 1;
+                if (cpu_counter_delta == 0) cpu_counter_delta = 1;
+                ms = 1000.0 * @as(f32, @floatFromInt(cpu_counter_delta)) / @as(f32, @floatFromInt(cpu_frequency_seconds));
+                // TODO figure out a proper timing mechanism lol
+                // https://gafferongames.com/post/fix_your_timestep/
+                if (ms >= 1000/60) {
+                    cpu_counter_now = current_cpu_counter.QuadPart;
+                    cpu_counter_since_first = @intCast(cpu_counter_now - cpu_counter_first);
+                    break;
                 }
-
-                ms = 1000.0 * @as(f32, @floatFromInt(counter_difference)) / @as(f32, @floatFromInt(cpu_frequency_seconds));
-                fps = @intCast(@divFloor(cpu_frequency_seconds, counter_difference));
-                cpu_counter = new_counter.QuadPart;
             }
-            
-            const counted_since_start: usize = @intCast(cpu_counter - cpu_counter_first);
 
             // windows message loop
             {
@@ -214,12 +210,12 @@ pub fn main() !void {
             mouse.y = mouse_current.y;
 
             var platform = Platform {
-                .frame = counted_since_start,
-                .fps = fps,
+                .frame = frame,
                 .ms = ms,
                 .mouse_d = Vector2i { .x = mouse_dx, .y = mouse_dy },
                 .mouse = mouse,
                 .pixel_buffer = state.pixel_buffer,
+                .keys_old = state.keys_old,
                 .keys = state.keys,
                 .allocator = allocator,
                 .w =  state.w,
@@ -227,27 +223,29 @@ pub fn main() !void {
             };
             
             const keep_running = try update(&platform);
-
+            
+            state.keys_old = state.keys;
+            frame += 1;
             running = running and keep_running;
+
             if (running == false) continue;
 
-            { // render
-                const device_context_handle = win32.GetDC(window_handle).?;
-                _ = win32.StretchDIBits(
-                    device_context_handle,
-                    // The destination x, y (upper left) and width height (in logical units)
-                    0, 0, client_width, client_height,
-                    // The source x, y (upper left) and width height (in pixels)
-                    0, 0, client_width, client_height,
-                    // A pointer to the data and a structure with information about the DIB
-                    state.pixel_buffer.data.ptr, &state.render_target,
-                    // This is used to tell windows whether the colors are just RGB or whether we are using a color palette (in which case, it would be defined in the DIB structure)
-                    win32.DIB_USAGE.RGB_COLORS,
-                    // Finally, what operation to use when rastering. We just want to copy it.
-                    win32.SRCCOPY
-                );
-                _ = win32.ReleaseDC(window_handle, device_context_handle);
-            }
+            // render
+            const device_context_handle = win32.GetDC(window_handle).?;
+            _ = win32.StretchDIBits(
+                device_context_handle,
+                // The destination x, y (upper left) and width height (in logical units)
+                0, 0, client_width, client_height,
+                // The source x, y (upper left) and width height (in pixels)
+                0, 0, client_width, client_height,
+                // A pointer to the data and a structure with information about the DIB
+                state.pixel_buffer.data.ptr, &state.render_target,
+                // This is used to tell windows whether the colors are just RGB or whether we are using a color palette (in which case, it would be defined in the DIB structure)
+                win32.DIB_USAGE.RGB_COLORS,
+                // Finally, what operation to use when rastering. We just want to copy it.
+                win32.SRCCOPY
+            );
+            _ = win32.ReleaseDC(window_handle, device_context_handle);
         }
     }
 
@@ -259,9 +257,9 @@ pub const Platform = struct {
     h: i32,
     mouse: Vector2i,
     mouse_d: Vector2i,
+    keys_old: [256]bool,
     keys: [256]bool,
     pixel_buffer: Buffer2D(BGRA),
-    fps: usize,
     ms: f32,
     frame: usize,
 };

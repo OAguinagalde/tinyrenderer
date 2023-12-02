@@ -13,21 +13,25 @@ const physics = @import("physics.zig");
 
 const App = struct {
     text_renderer: TextRenderer,
-    renderer: tic80.Renderer(BGRA),
+    renderer: tic80.Renderer(BGRA, tic80.Shader(BGRA)),
+    renderer_blending: tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)),
     entities: EntitySystem,
     level_background: Assets.LevelBackgroundDescriptor,
     player: Player,
     camera: Camera,
+    animations_in_place: AnimationSystem,
 };
 
 var app: App = undefined;
 
 pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
     app.text_renderer = try TextRenderer.init(allocator, pixel_buffer);
-    app.renderer = try tic80.Renderer(BGRA).init(allocator, Assets.palette, Assets.atlas_tiles);
+    app.renderer = try tic80.Renderer(BGRA, tic80.Shader(BGRA)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    app.renderer_blending = try tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.entities = EntitySystem.init(allocator);
     app.player = Player.init(0);
     app.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
+    app.animations_in_place = try AnimationSystem.init(allocator);
     try loadLevel(Assets.level_first, Assets.spawn_start_0, 0);
 }
 
@@ -38,35 +42,80 @@ pub fn update(platform: *Platform) !bool {
     if (platform.keys['Q']) try loadLevel(Assets.level_first, Assets.spawn_start_0, platform.frame);
     if (platform.keys['E']) try loadLevel(Assets.level_slime, Assets.spawn_level_slime_0, platform.frame);
     
-    // const unit: f32 = 2*(platform.ms / 16.6666);
-    const unit: f32 = 5*(platform.ms / 16.6666);
-    if (platform.keys['A']) app.player.physical_component.velocity.x = -unit;
-    if (platform.keys['D']) app.player.physical_component.velocity.x = unit;
-    if (platform.keys['W']) app.player.physical_component.velocity.y = unit;
-    if (platform.keys['S']) app.player.physical_component.velocity.y = -unit;
+    if (app.player.attack_start_frame > 0 and platform.frame - app.player.attack_start_frame >= Assets.config.player.attack.cooldown) {
+        app.player.attack_start_frame = 0;
+    }
+
+    var player_is_walking: bool = false;
+    if (platform.keys['A'] and app.player.attack_start_frame == 0) {
+        app.player.physical_component.velocity.x -= 0.02;
+        app.player.look_direction = .Left;
+        player_is_walking = true;
+    }
+    if (platform.keys['D'] and app.player.attack_start_frame == 0) {
+        app.player.physical_component.velocity.x += 0.02;
+        app.player.look_direction = .Right;
+        player_is_walking = true;
+    }
+    if (!platform.keys_old['W'] and platform.keys['W'] and app.player.jumps > 0) {
+        app.player.physical_component.velocity.y = 0.16;
+        app.player.jumps -= 1;
+        // TODO sfx
+        // TODO particles
+    }
+    if (!platform.keys_old['F'] and platform.keys['F'] and app.player.attack_start_frame == 0) {
+        _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, platform.frame), app.player.pos, false, platform.frame);
+        app.player.attack_start_frame = platform.frame;
+        // TODO sfx
+        // TODO particles
+        // TODO hitbox
+    }
 
     const player_floored = Physics.apply(&app.player.physical_component);
     app.player.pos = Physics.calculate_real_pos(app.player.physical_component.physical_pos);
-    _ = player_floored;
+    
+    if (player_floored) {
+        app.player.jumps = 2;
+        if (player_is_walking) {
+            // TODO particles
+        }
+    }
 
-    app.camera.move_to(app.player.pos, @floatFromInt(@divExact(platform.w,4)), @floatFromInt(@divExact(platform.h,4)));
+    app.camera.move_to(app.player.pos, @floatFromInt(@divExact(platform.w, 4)), @floatFromInt(@divExact(platform.h, 4)));
+
+    try update_animations_in_place(&app.animations_in_place, platform.frame);
     
     const view_matrix = M44.lookat_left_handed(app.camera.pos, app.camera.pos.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
     const projection_matrix = M44.orthographic_projection(0, @floatFromInt(@divExact(platform.w,4)), @floatFromInt(@divExact(platform.h,4)), 0, 0, 2);
     const viewport_matrix = M44.viewport_i32_2(0, 0, platform.w, platform.h, 255);
+    const mvp_matrix = projection_matrix.multiply(view_matrix.multiply(M44.translation(Vector3f.from(0, 0, 1))));
+    
     try app.renderer.add_map(Assets.map, app.level_background.tl, app.level_background.br, Vector2f.from(@floatFromInt(app.level_background.tl.x*8), @floatFromInt(correct_y(app.level_background.br.y-1)*8)));
     for (app.entities.entities.items) |runtime_entity| {
         const sprite = runtime_entity.animation.calculate_frame(platform.frame);
         const pos = runtime_entity.pos;
-        try app.renderer.add_sprite_from_atlas_index(sprite, Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8)));
+        try app.renderer.add_sprite_from_atlas_index(sprite, Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8)), .{});
     }
-    try app.renderer.add_sprite_from_atlas_index(app.player.animation.calculate_frame(platform.frame), app.player.pos);
-    
     app.renderer.render(
         platform.pixel_buffer,
-        projection_matrix.multiply(view_matrix.multiply(M44.translation(Vector3f.from(0, 0, 1)))),
+        mvp_matrix,
         viewport_matrix
     );
+
+    try app.renderer_blending.add_sprite_from_atlas_index(app.player.animation.calculate_frame(platform.frame), app.player.pos.add(Vector2f.from(-4,0)), .{.mirror = (app.player.look_direction == .Left)});
+    
+    var it = AnimationSystem.view(.{ Visual }).iterator();
+    while (it.next(&app.animations_in_place)) |entity| {
+        const visual = (try app.animations_in_place.getComponent(Visual, entity)).?;
+        try app.renderer_blending.add_sprite_from_atlas_index(visual.sprite, visual.position, .{ .mirror = visual.flipped });
+    }
+    
+    app.renderer_blending.render(
+        platform.pixel_buffer,
+        mvp_matrix,
+        viewport_matrix
+    );
+
 
     try render_debug_interface(platform);
     return true;
@@ -74,7 +123,7 @@ pub fn update(platform: *Platform) !bool {
 
 pub fn render_debug_interface(platform: *Platform) !void {
     try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*1) - 4 }, "ms {d: <9.2}", .{platform.ms});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*2) - 4 }, "fps {}", .{platform.fps});
+    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*2) - 4 }, "fps {d:0.4}", .{platform.ms / 1000*60});
     try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*3) - 4 }, "frame {}", .{platform.frame});
     try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*4) - 4 }, "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z});
     try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*5) - 4 }, "mouse {} {}", .{platform.mouse.x, platform.mouse.y});
@@ -108,18 +157,18 @@ pub fn loadLevel(level: Assets.LevelDescriptor, spawn: Assets.SpawnDescriptor, f
     app.camera.set_bounds(level.background.tl, app.level_background.br);
 }
 
-const granularity = 16;
+const granularity = 1;
 const Physics = physics.PhysicalWorld(
     physics.PhysicsConfig {
         // barely no air friction, but enough for it to be there
-        .friction_air = 0.991,
+        .friction_air = 0.85,
         // strong friction on the floor to make movement less floaty
-        .friction_floor = 0.75,
+        .friction_floor = 0.85,
         .granularity = granularity,
         // strong gravity to prevent the player from jumping too much
-        .gravity = 0.035 * granularity,
-        .pad_bottom = 0.2,
-        .pad_top = 0.9,
+        .gravity = 0.004 * granularity,
+        .pad_bottom = 0.01,
+        .pad_top = 0.6,
         .pad_left = 0.2,
         .pad_right = 0.8,
         .tile_size = 8
@@ -182,20 +231,23 @@ const Camera = struct {
     }
 };
 
+const Direction = enum {Left, Right};
+
 const Player = struct {
     animation: RuntimeAnimation,
     pos: Vector2f,
     physical_component: Physics.PhysicalObject,
+    look_direction: Direction,
+    jumps: i32,
+    /// The frame in which the attack started. 0 when not attacking
+    attack_start_frame: usize,
     
     pub fn init(frame: usize) Player {
-        return Player {
-            .animation = RuntimeAnimation {
-                .animation = Assets.animation_player_idle,
-                .frame_start = frame,
-            },
-            .physical_component = Physics.PhysicalObject.from(Vector2f.from(0,0), 3),
-            .pos = Vector2f.from(0,0)
-        };
+        var player: Player = undefined;
+        player.reset_soft(frame);
+        player.physical_component = Physics.PhysicalObject.from(Vector2f.from(0,0), 3);
+        player.pos = Vector2f.from(0,0);
+        return player;
     }
 
     pub fn reset_soft(self: *Player, frame: usize) void {
@@ -203,6 +255,9 @@ const Player = struct {
             .animation = Assets.animation_player_idle,
             .frame_start = frame,
         };
+        self.attack_start_frame = 0;
+        self.jumps = 1;
+        self.look_direction = .Right;
     }
 
     pub fn spawn(self: *Player, pos: Vector2i) void {
@@ -220,6 +275,12 @@ const RuntimeAnimation = struct {
         const time_between_animation_frames: usize = @divFloor(self.animation.duration, self.animation.sprites.len);
         const animation_index: usize = @divFloor(normalized, time_between_animation_frames);
         return self.animation.sprites[animation_index];
+    }
+    pub fn from(animation: Assets.AnimationDescriptor, frame: usize) RuntimeAnimation {
+        return RuntimeAnimation {
+            .animation = animation,
+            .frame_start = frame
+        };
     }
 };
 
@@ -253,6 +314,43 @@ const EntitySystem = struct {
     }
 
 };
+
+const Ecs = @import("ecs.zig").Ecs;
+const Entity = @import("ecs.zig").Entity;
+
+const AnimationSystem = Ecs(.{ Visual, KillAtFrame, RuntimeAnimation }, 1000);
+const KillAtFrame = usize;
+const Visual = struct {
+    sprite: tic80.AtlasIndex,
+    flipped: bool,
+    position: Vector2f,
+};
+
+fn render_animation_in_place(pool: *AnimationSystem, anim: RuntimeAnimation, pos: Vector2f, flipped: bool, frame: usize) !Entity {
+    var e = try pool.newEntity();
+    var animation = try pool.setComponent(RuntimeAnimation, e);
+    var kill_frame = try pool.setComponent(KillAtFrame, e);
+    var visual = try pool.setComponent(Visual, e);
+    animation.* = anim;
+    kill_frame.* = frame + anim.animation.duration - 1;
+    visual.* = .{
+        .sprite = anim.animation.sprites[0],
+        .flipped = flipped,
+        .position = pos
+    };
+    return e;
+}
+
+fn update_animations_in_place(pool: *AnimationSystem, frame: usize) !void {
+    var it = AnimationSystem.view(.{ Visual, KillAtFrame, RuntimeAnimation }).iterator();
+    while (it.next(pool)) |entity| {
+        const visual = (try pool.getComponent(Visual, entity)).?;
+        const kill_frame = (try pool.getComponent(KillAtFrame, entity)).?;
+        const anim = (try pool.getComponent(RuntimeAnimation, entity)).?;
+        if (frame > kill_frame.*) try pool.deleteEntity(entity)
+        else visual.*.sprite = anim.calculate_frame(frame);
+    }
+}
 
 pub const Assets = struct {
     
@@ -489,6 +587,17 @@ pub const Assets = struct {
     pub const animation_player_idle = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 35, 51 }, 60);
     pub const animation_player_walk = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 35, 36 }, 10);
     pub const animation_preparing_attack = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 97, 98, 0, 0, 100, 99 }, 15);
+    
+    pub const config = struct {
+        pub const player = struct {
+            pub const attack = struct {
+                pub const cooldown = 10;
+                pub const damage = 10;
+                pub const animation = animation_attack_1;
+                pub const range = 2;
+            };
+        };
+    };
     
     pub const palette = tic80.Palette {
         0x1a1c2c,
