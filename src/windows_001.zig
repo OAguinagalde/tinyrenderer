@@ -5,11 +5,16 @@ const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
 const M44 = math.M44;
 const Buffer2D = @import("buffer.zig").Buffer2D;
+const RGB = @import("pixels.zig").RGB;
+const RGBA = @import("pixels.zig").RGBA;
 const BGRA = @import("pixels.zig").BGRA;
 const tic80 = @import("tic80.zig");
 const TextRenderer = @import("text.zig").TextRenderer(BGRA, 1024, 1024);
 const Platform = @import("windows.zig").Platform;
 const physics = @import("physics.zig");
+const Ecs = @import("ecs.zig").Ecs;
+const Entity = @import("ecs.zig").Entity;
+
 
 const App = struct {
     text_renderer: TextRenderer,
@@ -20,6 +25,9 @@ const App = struct {
     player: Player,
     camera: Camera,
     animations_in_place: AnimationSystem,
+    particles: Particles,
+    rng_engine: std.rand.DefaultPrng,
+    random: std.rand.Random,
 };
 
 var app: App = undefined;
@@ -32,6 +40,9 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
     app.player = Player.init(0);
     app.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
     app.animations_in_place = try AnimationSystem.init(allocator);
+    app.particles = try Particles.init(allocator);
+    app.rng_engine = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
+    app.random = app.rng_engine.random();
     try loadLevel(Assets.level_first, Assets.spawn_start_0, 0);
 }
 
@@ -76,15 +87,20 @@ pub fn update(platform: *Platform) !bool {
     
     if (player_floored) {
         app.player.jumps = 2;
-        if (player_is_walking) {
-            // TODO particles
+        if (player_is_walking and (app.random.float(f32) > 0.8)) {
+            try particle_create(&app.particles, particles_generators.walk(
+                app.player.pos.add(Vector2f.from(0, 1)),
+                1, // 1 + @as(i32, @intFromFloat(app.random.float(f32) * 2)),
+                Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.1)
+            ));
         }
     }
 
     app.camera.move_to(app.player.pos, @floatFromInt(@divExact(platform.w, 4)), @floatFromInt(@divExact(platform.h, 4)));
 
     try update_animations_in_place(&app.animations_in_place, platform.frame);
-    
+    try particles_update(&app.particles);
+
     const view_matrix = M44.lookat_left_handed(app.camera.pos, app.camera.pos.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
     const projection_matrix = M44.orthographic_projection(0, @floatFromInt(@divExact(platform.w,4)), @floatFromInt(@divExact(platform.h,4)), 0, 0, 2);
     const viewport_matrix = M44.viewport_i32_2(0, 0, platform.w, platform.h, 255);
@@ -95,6 +111,14 @@ pub fn update(platform: *Platform) !bool {
         const sprite = runtime_entity.animation.calculate_frame(platform.frame);
         const pos = runtime_entity.pos;
         try app.renderer.add_sprite_from_atlas_index(sprite, Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8)), .{});
+    }
+    var iterator = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
+    while (iterator.next(&app.particles)) |e| {
+        const render_component = (try app.particles.getComponent(ParticleRenderData, e)).?;
+        const position_component = (try app.particles.getComponent(Vector2f, e)).?;
+        const radius = render_component.radius;
+        _ = radius;
+        try app.renderer.add_sprite_from_atlas_index(12, position_component.*, .{});
     }
     app.renderer.render(
         platform.pixel_buffer,
@@ -315,9 +339,6 @@ const EntitySystem = struct {
 
 };
 
-const Ecs = @import("ecs.zig").Ecs;
-const Entity = @import("ecs.zig").Entity;
-
 const AnimationSystem = Ecs(.{ Visual, KillAtFrame, RuntimeAnimation }, 1000);
 const KillAtFrame = usize;
 const Visual = struct {
@@ -351,6 +372,76 @@ fn update_animations_in_place(pool: *AnimationSystem, frame: usize) !void {
         else visual.*.sprite = anim.calculate_frame(frame);
     }
 }
+
+pub const Particles = Ecs(.{ Physics.PhysicalObject, ParticleLife, Vector2f, ParticleRenderData }, 1000);
+const ParticleLife = i32;
+pub const ParticleRenderData = struct {
+    radius: usize,
+    color: RGB,
+};
+pub const ParticleDescriptor = struct {
+    position: Vector2f,
+    color: RGB,
+    weight: f32,
+    speed: Vector2f,
+    radius: usize,
+    /// How many frames the particle will live for
+    life: ParticleLife,
+};
+
+pub fn particle_create(particles: *Particles, descriptor: ParticleDescriptor) !void {
+    const particle = try particles.newEntity();
+    var physical = try particles.setComponent(Physics.PhysicalObject, particle);
+    var life = try particles.setComponent(ParticleLife, particle);
+    var pos = try particles.setComponent(Vector2f, particle);
+    var render_data = try particles.setComponent(ParticleRenderData, particle);
+    physical.* = Physics.PhysicalObject.from(descriptor.position, descriptor.weight);
+    physical.velocity = descriptor.speed;
+    life.* = descriptor.life;
+    pos.* = descriptor.position;
+    render_data.*.color = descriptor.color;
+    render_data.*.radius = descriptor.radius;
+}
+
+pub fn particles_update(particles: *Particles) !void {
+
+    // update particles life
+    {
+        var iterator = Particles.view(.{ ParticleLife }).iterator();
+        while (iterator.next(particles)) |e| {
+            const life_component = (try particles.getComponent(ParticleLife, e)).?;
+            life_component.* -= 1;
+            if (life_component.* < 0) try particles.deleteEntity(e);
+        }
+    }
+
+    // update particles positions and velocities
+    {
+        var iterator = Particles.view(.{ Physics.PhysicalObject, Vector2f }).iterator();
+        while (iterator.next(particles)) |e| {
+            const physics_component = (try particles.getComponent(Physics.PhysicalObject, e)).?;
+            const position_component = (try particles.getComponent(Vector2f, e)).?;
+            _ = Physics.apply(physics_component);
+            position_component.* = Physics.calculate_real_pos(physics_component.physical_pos);
+        }
+    }
+
+}
+
+pub const particles_generators = struct {
+    pub fn walk(pos: Vector2f, radious: usize, speed: Vector2f) ParticleDescriptor {
+        return ParticleDescriptor {
+            .color = @bitCast(@as(i24,13)),
+            .life = 60,
+            .position = pos,
+            .radius = radious,
+            .speed = speed,
+            .weight = 0.04,
+        };
+    }
+};
+
+
 
 pub const Assets = struct {
     
