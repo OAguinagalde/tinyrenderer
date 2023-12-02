@@ -19,11 +19,11 @@ pub fn Buffer2D(comptime T: type) type {
             };
         }
 
-        pub fn set(self: Self, x: usize, y: usize, item: T) void {
+        pub inline fn set(self: Self, x: usize, y: usize, item: T) void {
             self.data[x + self.width * y] = item;
         }
         
-        pub fn get(self: Self, x: usize, y: usize) T {
+        pub inline fn get(self: Self, x: usize, y: usize) T {
             return self.data[x + self.width*y];
         }
         

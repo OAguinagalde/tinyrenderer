@@ -88,6 +88,12 @@ pub const Vector2f = struct {
     pub fn cross_product_magnitude(self: Vector2f, other: Vector2f) f32 {
         return self.cross_product(other).z;
     }
+
+    pub fn perpendicular(self: Vector2f) Vector2f {
+        // technically there is 2 perpendiculars for now I'm working with this
+        return Vector2f.from(self.y, -self.x);
+        // return Vector2f.from(-self.y, self.x);
+    }
 };
 
 pub const Vector3f = struct {
@@ -136,6 +142,14 @@ pub const Vector3f = struct {
     pub fn scale(self: Vector3f, factor: f32) Vector3f {
         return Vector3f { .x = self.x * factor, .y = self.y * factor, .z = self.z * factor };
     }
+
+    pub fn perspective_division(self: Vector3f) Vector2f {
+        return Vector2f {
+            .x = self.x / self.z,
+            .y = self.y / self.z,
+        };
+    }
+
 };
 
 pub const Vector4f = struct {
@@ -168,6 +182,176 @@ pub const Vector4f = struct {
         };
     }
 };
+
+/// column major 3x3 matrix
+/// meaning its stored like in a contiguous array like this:
+///
+///     [9]f32 { m11, m21, m31, m12, m22, m32, m13, m23, m33 }
+///
+/// So to access the matrix
+/// 
+///     m11, m12, m13
+///     m21, m22, m23
+///     m31, m32, m33
+/// 
+/// The index used would be
+///
+///     0    3    6 
+///     1    4    7 
+///     2    5    8
+/// 
+pub const M33 = struct {
+    data: [9]f32,
+
+    pub inline fn multiply(self: M33, other: M33) M33 {
+        var result: M33 = undefined;
+        for (0..3) |row| {
+            for (0..3) |col| {
+                result.data[(row*3)+col] = 0;
+                for (0..3) |element| {
+                    result.data[(row*3)+col] += self.data[(element*3)+col] * other.data[(row*3)+element];
+                }
+            }
+        }
+        return result;
+    }
+
+    pub inline fn apply_to_vec2(self: M33, point: Vector2f) Vector3f {
+        var point_transformed: Vector3f = undefined;
+        point_transformed.x = self.data[0] * point.x + self.data[3] * point.y + self.data[6] * 1;
+        point_transformed.y = self.data[1] * point.x + self.data[4] * point.y + self.data[7] * 1;
+        point_transformed.z = self.data[2] * point.x + self.data[5] * point.y + self.data[8] * 1;
+        return point_transformed;
+    }
+
+
+    pub inline fn identity() M33 {
+        var result: M33 = undefined;
+        result.data[0] = 1;
+        result.data[1] = 0;
+        result.data[2] = 0;
+        result.data[3] = 0;
+        result.data[4] = 1;
+        result.data[5] = 0;
+        result.data[6] = 0;
+        result.data[7] = 0;
+        result.data[8] = 1;
+        return result;
+    }
+
+    pub inline fn translation(t: Vector2f) M33 {
+        var result = M33.identity();
+        result.data[6] = t.x;
+        result.data[7] = t.y;
+        return result;
+    }
+
+    pub inline fn scaling_matrix(s: Vector2f) M33 {
+        var result = M33.identity();
+        result.data[0] = s.x;
+        result.data[4] = s.y;
+        return result;
+    }
+
+    pub inline fn scale(factor: f32) M33 {
+        var result = M33.identity();
+        result.data[0] = factor;
+        result.data[4] = factor;
+        return result;
+    }
+
+    pub fn viewport(xi: i32, yi: i32, wi: i32, hi: i32) M33 {
+        const x: f32 = @floatFromInt(xi);
+        const y: f32 = @floatFromInt(yi);
+        const w: f32 = @floatFromInt(wi);
+        const h: f32 = @floatFromInt(hi);
+        const t = M33.translation(.{.x = x+1, .y = y+1});
+        const s = M33.scaling_matrix(.{.x = map_range_to_range(0, 2, 0, w), .y = map_range_to_range(0, 2, 0, h)});
+        return s.multiply(t);
+    }
+
+    /// constructs an orthographic projection matrix, which
+    /// maps the square [left..right][bottom..top] to the square [-1..1][-1..1]
+    /// and center it so that:
+    ///        
+    ///                                 !         (1    , 1  )
+    ///                 O = origin  ____!____.  < (right, top)
+    ///                             |   !    |
+    ///                         - - - - O - - - - - 
+    ///          (left, bottom)  >  |___!____|
+    ///          (-1  , -1    )         !
+    ///               
+    /// https://www.youtube.com/watch?v=U0_ONQQ5ZNM
+    pub fn orthographic_projection(left: f32, right: f32, top: f32, bottom: f32) M33 {
+        var scale_matrix = M33.identity();
+        if (true) {
+            // This is the same as below but with the math unrolled.
+            // I keep the part below since it is easier to understand what this is doing
+            scale_matrix.data[0] = 2/(right-left);
+            scale_matrix.data[4] = 2/(top-bottom);
+            scale_matrix.data[6] = -(right+left)/(right-left);
+            scale_matrix.data[7] = -(top+bottom)/(top-bottom);
+            return scale_matrix;
+        }
+        scale_matrix.data[0] = map_range_to_range(left, right, -1, 1);
+        scale_matrix.data[4] = map_range_to_range(bottom, top, -1, 1);
+        // translate the world so that (0, 0) is the center of near plane of the square that captures the orthogonal projection
+        const translate_matrix = M33.translation(Vector2f { .x = - ((right+left)/2), .y = - ((top+bottom)/2) });
+        return scale_matrix.multiply(translate_matrix);
+    }
+
+    /// The right direction is in the +X direction.
+    /// The up direction is in the +Y direction.
+    pub fn look_at(camera_location: Vector2f, up: Vector2f) M33 {
+        
+        if (true) {
+            // same as the code below but with the math unrolled
+            const c = camera_location;
+            const y: Vector2f = up.normalized();
+            const x: Vector2f = y.perpendicular();
+            var matrix: M33 = undefined;
+            matrix.data[0] = x.x;
+            matrix.data[3] = x.y;
+            matrix.data[1] = y.x;
+            matrix.data[4] = y.y;
+            matrix.data[2] = 0;
+            matrix.data[5] = 0;
+            matrix.data[8] = 1;
+            matrix.data[6] = (x.x * -c.x) + (x.y * -c.y);
+            matrix.data[7] = (y.x * -c.x) + (y.y * -c.y);
+            return matrix;
+        }
+
+        // just in case, normalize the up direction
+        const normalized_up = up.normalized();
+        
+        // The right direction is in the +X direction.
+        // The up direction is in the +Y direction.
+        const new_right: Vector2f = normalized_up.perpendicular(); // x axis
+        const new_up: Vector2f = normalized_up; // y axis
+
+        // Create a change of basis matrix, in which, the camera position,
+        // the points its looking at and the up vector form the three axes.
+        // > In essence, a change of basis matrix is a transformation that allows us to express the same
+        // > vector or set of coordinates in a different coordinate system or basis, providing a new
+        // > perspective or representation while preserving the underlying geometric relationships.
+        var change_of_basis_matrix = M33.identity();
+        change_of_basis_matrix.data[0] = new_right.x;
+        change_of_basis_matrix.data[3] = new_right.y;
+
+        change_of_basis_matrix.data[1] = new_up.x;
+        change_of_basis_matrix.data[4] = new_up.y;
+
+        // translate the world to the location of the camera and then rotate it
+        // The order of this multiplication is relevant!
+        // 
+        //     rotation_matrix * translation_matrix(-camera_location)
+        // 
+        return change_of_basis_matrix.multiply(M33.translation(camera_location.scale(-1)));
+    }
+
+};
+
 
 /// column major 4x4 matrix
 /// meaning its stored like in a contiguous array like this:

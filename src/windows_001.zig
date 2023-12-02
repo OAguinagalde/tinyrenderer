@@ -4,6 +4,7 @@ const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
 const M44 = math.M44;
+const M33 = math.M33;
 const Buffer2D = @import("buffer.zig").Buffer2D;
 const RGB = @import("pixels.zig").RGB;
 const RGBA = @import("pixels.zig").RGBA;
@@ -19,6 +20,7 @@ const Entity = @import("ecs.zig").Entity;
 const App = struct {
     text_renderer: TextRenderer,
     renderer: tic80.Renderer(BGRA, tic80.Shader(BGRA)),
+    renderer_quads: tic80.QuadRenderer(BGRA, tic80.QuadShader(BGRA)),
     renderer_blending: tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)),
     entities: EntitySystem,
     level_background: Assets.LevelBackgroundDescriptor,
@@ -35,6 +37,7 @@ var app: App = undefined;
 pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
     app.text_renderer = try TextRenderer.init(allocator, pixel_buffer);
     app.renderer = try tic80.Renderer(BGRA, tic80.Shader(BGRA)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    app.renderer_quads = try tic80.QuadRenderer(BGRA, tic80.QuadShader(BGRA)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_blending = try tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.entities = EntitySystem.init(allocator);
     app.player = Player.init(0);
@@ -106,11 +109,16 @@ pub fn update(platform: *Platform) !bool {
     const viewport_matrix = M44.viewport_i32_2(0, 0, platform.w, platform.h, 255);
     const mvp_matrix = projection_matrix.multiply(view_matrix.multiply(M44.translation(Vector3f.from(0, 0, 1))));
     
-    try app.renderer.add_map(Assets.map, app.level_background.tl, app.level_background.br, Vector2f.from(@floatFromInt(app.level_background.tl.x*8), @floatFromInt(correct_y(app.level_background.br.y-1)*8)));
+    const view_matrix_m33 = M33.look_at(Vector2f.from(app.camera.pos.x, app.camera.pos.y), Vector2f.from(0, 1));
+    const projection_matrix_m33 = M33.orthographic_projection(0, @floatFromInt(@divExact(platform.w,4)), @floatFromInt(@divExact(platform.h,4)), 0);
+    const viewport_matrix_m33 = M33.viewport(0, 0, platform.w, platform.h);
+    const mvp_matrix_33 = projection_matrix_m33.multiply(view_matrix_m33.multiply(M33.identity()));
+    
+    try app.renderer_quads.add_map(Assets.map, app.level_background.tl, app.level_background.br, Vector2f.from(@floatFromInt(app.level_background.tl.x*8), @floatFromInt(correct_y(app.level_background.br.y-1)*8)));
     for (app.entities.entities.items) |runtime_entity| {
         const sprite = runtime_entity.animation.calculate_frame(platform.frame);
         const pos = runtime_entity.pos;
-        try app.renderer.add_sprite_from_atlas_index(sprite, Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8)), .{});
+        try app.renderer_quads.add_sprite_from_atlas_index(sprite, Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8)), .{});
     }
     var iterator = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
     while (iterator.next(&app.particles)) |e| {
@@ -118,12 +126,12 @@ pub fn update(platform: *Platform) !bool {
         const position_component = (try app.particles.getComponent(Vector2f, e)).?;
         const radius = render_component.radius;
         _ = radius;
-        try app.renderer.add_sprite_from_atlas_index(12, position_component.*, .{});
+        try app.renderer_quads.add_sprite_from_atlas_index(12, position_component.*, .{});
     }
-    app.renderer.render(
+    app.renderer_quads.render(
         platform.pixel_buffer,
-        mvp_matrix,
-        viewport_matrix
+        mvp_matrix_33,
+        viewport_matrix_m33
     );
 
     try app.renderer_blending.add_sprite_from_atlas_index(app.player.animation.calculate_frame(platform.frame), app.player.pos.add(Vector2f.from(-4,0)), .{.mirror = (app.player.look_direction == .Left)});

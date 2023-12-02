@@ -1,9 +1,11 @@
 const std = @import("std");
 
 const math = @import("math.zig");
+const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
 const Vector4f = math.Vector4f;
 const M44 = math.M44;
+const M33 = math.M33;
 const Plane = math.Plane;
 const Frustum = math.Frustum;
 const Buffer2D = @import("buffer.zig").Buffer2D;
@@ -800,5 +802,214 @@ pub fn GraphicsPipeline(
             std.log.debug(fmt, args);
         }
 
+    };
+}
+
+pub const GraphicsPipelineQuads2DConfiguration = struct {
+    blend_with_background: bool = false,
+    do_triangle_clipping: bool = false,
+    do_scissoring: bool = false,
+    trace: bool = false,
+    
+    /// returns a comptime tpye (an struct, basically) which needs to be filled, and passed as a value to the render pipeline when calling `render`
+    pub fn Requirements(comptime self: GraphicsPipelineQuads2DConfiguration) type {
+        var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField {
+            std.builtin.Type.StructField {
+                .default_value = null,
+                .is_comptime = false,
+                .name = "viewport_matrix",
+                .type = M33,
+                .alignment = @alignOf(M33)
+            },
+        };
+        if (self.do_scissoring) fields = fields ++ [_]std.builtin.Type.StructField {
+                std.builtin.Type.StructField {
+                .default_value = null,
+                .is_comptime = false,
+                .name = "scissor_rect",
+                .type = Vector4f,
+                .alignment = @alignOf(Vector4f)
+            }
+        };
+        var declarations: []const std.builtin.Type.Declaration = &[_]std.builtin.Type.Declaration {};
+        const requirements = std.builtin.Type {
+            .Struct = .{
+                .is_tuple = false,
+                .fields = fields,
+                .layout = .Auto,
+                .decls = declarations,
+            }
+        };
+        return @Type(requirements);
+    }
+};
+
+pub fn GraphicsPipelineQuads2D(
+    comptime final_color_type: type,
+    comptime context_type: type,
+    comptime invariant_type: type,
+    comptime vertex_type: type,
+    comptime pipeline_configuration: GraphicsPipelineQuads2DConfiguration,
+    comptime vertex_shader: fn(context: context_type, vertex_buffer: vertex_type, out_invariant: *invariant_type) callconv(.Inline) Vector3f,
+    comptime fragment_shader: fn(context: context_type, invariants: invariant_type) callconv(.Inline) final_color_type,
+) type {
+    return struct {
+
+        pub fn render(pixel_buffer: Buffer2D(final_color_type), context: context_type, vertex_buffer: []const vertex_type, face_count: usize, requirements: pipeline_configuration.Requirements()) void {
+            
+            var face_index: usize = 0;
+            label_outer: while (face_index < face_count) : (face_index += 1) {
+                
+                var invariants: [4]invariant_type = undefined;
+                var normalized: [4]Vector2f = undefined;
+                var screen_space_position: [4]Vector2f = undefined;
+                var clipped_count: usize = 0;
+
+                inline for(0..4) |i| {
+                    const vertex_data: vertex_type = vertex_buffer[face_index * 4 + i];
+                    normalized[i] = vertex_shader(context, vertex_data, &invariants[i]).perspective_division();
+                    // TODO triangle clipping
+                    if (normalized[i].x > 1 or normalized[i].x < -1 or normalized[i].y > 1 or normalized[i].y < -1) {
+                        if (pipeline_configuration.do_triangle_clipping) {
+                            clipped_count += 1;
+                            if (clipped_count == 4) continue :label_outer;
+                        }
+                        else continue :label_outer;
+                    }
+                    screen_space_position[i] = requirements.viewport_matrix.apply_to_vec2(normalized[i]).perspective_division();
+                }
+
+                if (pipeline_configuration.do_triangle_clipping) {
+                    if (clipped_count == 0) rasterizer(pixel_buffer, context, requirements, screen_space_position[0..4].*, invariants[0..4].*)
+                    else { unreachable; }
+                }
+                else rasterizer(pixel_buffer, context, requirements, screen_space_position[0..4].*, invariants[0..4].*);
+            }
+        }
+    
+        /// assumes that the quad and the invariants are given in the order: bl, br, tr, tl
+        fn rasterizer(pixel_buffer: Buffer2D(final_color_type), context: context_type, requirements: pipeline_configuration.Requirements(), quad: [4]Vector2f, invariants: [4]invariant_type) void {
+            
+            _ = requirements;
+            trace("rasterize...", .{});
+            trace_quad(quad);
+            const bottom: usize = @intFromFloat(@floor(quad[0].y+0.5));
+            const right: usize = @intFromFloat(@ceil(quad[1].x-0.5));
+            const top: usize = @intFromFloat(@ceil(quad[2].y-0.5));
+            const left: usize = @intFromFloat(@floor(quad[3].x+0.5));
+            trace_bb(left, right, top, bottom);
+
+            if (top == 0) return;
+            if (right == 0) return;
+
+            const height_f: f32 = quad[2].y - quad[0].y;
+            const width_f: f32 = quad[1].x - quad[3].x;
+            trace("height: {d:.4} width: {d:.4}", .{height_f, width_f});
+
+            // TODO rasterize quad that are not given in order bl, br, tr, tl
+            // TODO scissoring
+
+            var y = top-1;
+            while (y >= bottom) : (y -= 1) {
+                const percentage_y: f32 = (@as(f32, @floatFromInt(y))-quad[0].y+0.5) / height_f;
+                if (percentage_y > 1 or percentage_y < 0) trace("percentage y {d:.4} quad[0].y {d:.4} y {}", .{percentage_y, quad[0].y, y});
+                var x = left;
+                while (x < right) : (x += 1) {
+                    const percentage_x: f32 = (@as(f32, @floatFromInt(x))-quad[3].x+0.5) / width_f;
+                    if (percentage_x > 1 or percentage_x < 0) trace("percentage x {d:.4} quad[3].x {d:.4} x {}", .{percentage_x, quad[3].x, x});
+
+                    const interpolated_invariants: invariant_type = interpolate(invariant_type, invariants, percentage_x, percentage_y);
+                    const final_color = fragment_shader(context, interpolated_invariants);
+
+                    if (pipeline_configuration.blend_with_background) {
+                        const old_color = pixel_buffer.get(x, y);
+                        pixel_buffer.set(x, y, final_color.blend(old_color));
+                    }
+                    else pixel_buffer.set(x, y, final_color);
+
+                }
+                
+                // NOTE(Oscar) because y is unsigned, and the y-=1 happens even after the last cycle of the while, meaning that
+                // if bottom is 0, y will still do -1 assigning -1 to an unsigned number and it will break in debug builds
+                if (y == bottom) break;
+            }
+        }
+
+        /// `percentage_x` left to right
+        /// `percentage_y` bottom to top
+        inline fn bilinear_interpolation(bl: f32, br: f32, tr: f32, tl: f32, percentage_x: f32, percentage_y: f32) f32 {
+            const horizontal_bottom = (bl * (1 - percentage_x)) + (br * percentage_x);
+            const horizontal_top = (tl * (1 - percentage_x)) + (tr * percentage_x);
+            return (horizontal_bottom * (1 - percentage_y)) + (horizontal_top * percentage_y);
+        }
+        
+        inline fn interpolate(comptime t: type, data: [4]t, x: f32, y: f32) t {
+            
+            var interpolated_data: t = undefined;
+
+            inline for (@typeInfo(t).Struct.fields) |field| {
+                @field(interpolated_data, field.name) = blk: {
+                    
+                    const bl: *const field.type = &@field(data[0], field.name);
+                    const br: *const field.type = &@field(data[1], field.name);
+                    const tr: *const field.type = &@field(data[2], field.name);
+                    const tl: *const field.type = &@field(data[3], field.name);
+
+                    var interpolated_result: field.type = switch (@typeInfo(field.type)) {
+                        .Float => bilinear_interpolation(bl.*, br.*, tr.*, tl.*, x, y),
+                        .Int => @intFromFloat(bilinear_interpolation(@floatFromInt(bl.*), @floatFromInt(br.*), @floatFromInt(tr.*), @floatFromInt(tl.*), x, y)),
+                        .Struct => |s| interpolate_struct: {
+                            
+                            var interpolated_struct_result: field.type = undefined;
+                            inline for (s.fields) |sub_field| {
+                                @field(interpolated_struct_result, sub_field.name) = interpolate_struct_field: {
+                                    const sub_bl: *const sub_field.type = &@field(bl, sub_field.name);
+                                    const sub_br: *const sub_field.type = &@field(br, sub_field.name);
+                                    const sub_tr: *const sub_field.type = &@field(tr, sub_field.name);
+                                    const sub_tl: *const sub_field.type = &@field(tl, sub_field.name);
+                                    break :interpolate_struct_field switch (@typeInfo(sub_field.type)) {
+                                        .Float => bilinear_interpolation(sub_bl.*, sub_br.*, sub_tr.*, sub_tl.*, x, y),
+                                        .Int => @intFromFloat(bilinear_interpolation(@floatFromInt(sub_bl.*), @floatFromInt(sub_br.*), @floatFromInt(sub_tr.*), @floatFromInt(sub_tl.*), x, y)),
+                                        else => @panic("inner struct type " ++ @tagName(sub_field.type) ++ " is neither a Float, Int so it cant be interpolated!")
+                                    };
+                                };
+                            }
+                            break :interpolate_struct interpolated_struct_result;
+
+                        },
+                        else => @panic("type " ++ @tagName(field.type) ++ " is neither a Float, Int or Struct, so it cant be interpolated!")
+                    };
+
+                    break :blk interpolated_result;
+                };
+            }
+
+            return interpolated_data;
+        }
+    
+        inline fn trace_bb(left: usize, right: usize, top: usize, bottom: usize) void {
+            if (!pipeline_configuration.trace) return;
+            trace("bounding box: left {}, right {}, top {}, bottom {}", .{left, right, top, bottom});
+        }
+
+        inline fn trace_quad(quad: [4]Vector2f) void {
+            if (!pipeline_configuration.trace) return;
+            trace("quad[0]: {d:.4}, {d:.4}, ", .{quad[0].x,quad[0].y});
+            trace("quad[1]: {d:.4}, {d:.4}, ", .{quad[1].x,quad[1].y});
+            trace("quad[2]: {d:.4}, {d:.4}, ", .{quad[2].x,quad[2].y});
+            trace("quad[3]: {d:.4}, {d:.4}, ", .{quad[3].x,quad[3].y});
+        }
+
+        inline fn trace_mat4(m: M33) void {
+            if (!pipeline_configuration.trace) return;
+            trace("M33: | {d:.8} {d:.8} {d:.8} |", .{m.data[0], m.data[3], m.data[6],});
+            trace("     | {d:.8} {d:.8} {d:.8} |", .{m.data[1], m.data[4], m.data[7],});
+            trace("     | {d:.8} {d:.8} {d:.8} |", .{m.data[2], m.data[5], m.data[8],});
+        }
+
+        inline fn trace(comptime fmt: []const u8, args: anytype) void {
+            if (!pipeline_configuration.trace) return;
+            std.log.debug(fmt, args);
+        }
     };
 }

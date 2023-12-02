@@ -164,6 +164,7 @@ pub fn main() !void {
         while (running) {
 
             var ms: f32 = undefined;
+            const do_artificial_wait = false;
             while (true) {
                 var current_cpu_counter: win32.LARGE_INTEGER = undefined;
                 _ = win32.QueryPerformanceCounter(&current_cpu_counter);
@@ -173,7 +174,7 @@ pub fn main() !void {
                 ms = 1000.0 * @as(f32, @floatFromInt(cpu_counter_delta)) / @as(f32, @floatFromInt(cpu_frequency_seconds));
                 // TODO figure out a proper timing mechanism lol
                 // https://gafferongames.com/post/fix_your_timestep/
-                if (ms >= 1000/60) {
+                if ((do_artificial_wait and ms >= 1000/60) or !do_artificial_wait) {
                     cpu_counter_now = current_cpu_counter.QuadPart;
                     cpu_counter_since_first = @intCast(cpu_counter_now - cpu_counter_first);
                     break;
