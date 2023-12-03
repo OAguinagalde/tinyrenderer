@@ -807,7 +807,7 @@ pub fn GraphicsPipeline(
 
 pub const GraphicsPipelineQuads2DConfiguration = struct {
     blend_with_background: bool = false,
-    do_triangle_clipping: bool = false,
+    do_quad_clipping: bool = false,
     do_scissoring: bool = false,
     trace: bool = false,
     
@@ -856,67 +856,112 @@ pub fn GraphicsPipelineQuads2D(
     return struct {
 
         pub fn render(pixel_buffer: Buffer2D(final_color_type), context: context_type, vertex_buffer: []const vertex_type, face_count: usize, requirements: pipeline_configuration.Requirements()) void {
-            
             var face_index: usize = 0;
             label_outer: while (face_index < face_count) : (face_index += 1) {
                 
                 var invariants: [4]invariant_type = undefined;
                 var normalized: [4]Vector2f = undefined;
                 var screen_space_position: [4]Vector2f = undefined;
-                var clipped_count: usize = 0;
+                var not_inside: usize = 0;
 
                 inline for(0..4) |i| {
                     const vertex_data: vertex_type = vertex_buffer[face_index * 4 + i];
                     normalized[i] = vertex_shader(context, vertex_data, &invariants[i]).perspective_division();
-                    // TODO triangle clipping
                     if (normalized[i].x > 1 or normalized[i].x < -1 or normalized[i].y > 1 or normalized[i].y < -1) {
-                        if (pipeline_configuration.do_triangle_clipping) {
-                            clipped_count += 1;
-                            if (clipped_count == 4) continue :label_outer;
-                        }
+                        if (pipeline_configuration.do_quad_clipping) not_inside += 1
                         else continue :label_outer;
                     }
                     screen_space_position[i] = requirements.viewport_matrix.apply_to_vec2(normalized[i]).perspective_division();
                 }
 
-                if (pipeline_configuration.do_triangle_clipping) {
-                    if (clipped_count == 0) rasterizer(pixel_buffer, context, requirements, screen_space_position[0..4].*, invariants[0..4].*)
-                    else { unreachable; }
+                if (pipeline_configuration.do_quad_clipping) {
+                    if (not_inside == 0) rasterizer(pixel_buffer, context, requirements, screen_space_position[0..4].*, invariants[0..4].*)
+                    else {
+                        const left = normalized[0].x;
+                        const right = normalized[1].x;
+                        if ((left < -1 and right < -1) or (left > 1 and right > 1)) continue :label_outer;
+                        const bottom = normalized[0].y;
+                        const top = normalized[2].y;
+                        if ((bottom < -1 and top < -1) or (bottom > 1 and top > 1)) continue :label_outer;
+
+                        // else, there is pixels to draw, so calculate the clipped quad
+                        const height_f: f32 = top - bottom;
+                        const width_f: f32 = right - left;
+                        
+                        const new_left = @max(left, -1);
+                        const new_right = @min(right, 1);
+                        const new_bottom = @max(bottom, -1);
+                        const new_top = @min(top, 1);
+
+                        var new_normalized: [4]Vector2f = undefined;
+                        new_normalized[0] = Vector2f.from(new_left, new_bottom);
+                        new_normalized[1] = Vector2f.from(new_right, new_bottom);
+                        new_normalized[2] = Vector2f.from(new_right, new_top);
+                        new_normalized[3] = Vector2f.from(new_left, new_top);
+
+                        var new_invariants: [4]invariant_type = undefined;
+                        new_invariants[0] = interpolate(invariant_type, invariants, (new_normalized[0].x-left) / width_f, (new_normalized[0].y-bottom) / height_f);
+                        new_invariants[1] = interpolate(invariant_type, invariants, (new_normalized[1].x-left) / width_f, (new_normalized[1].y-bottom) / height_f);
+                        new_invariants[2] = interpolate(invariant_type, invariants, (new_normalized[2].x-left) / width_f, (new_normalized[2].y-bottom) / height_f);
+                        new_invariants[3] = interpolate(invariant_type, invariants, (new_normalized[3].x-left) / width_f, (new_normalized[3].y-bottom) / height_f);
+
+                        var new_screen_space_position: [4]Vector2f = undefined;
+                        new_screen_space_position[0] = requirements.viewport_matrix.apply_to_vec2(new_normalized[0]).perspective_division();
+                        new_screen_space_position[1] = requirements.viewport_matrix.apply_to_vec2(new_normalized[1]).perspective_division();
+                        new_screen_space_position[2] = requirements.viewport_matrix.apply_to_vec2(new_normalized[2]).perspective_division();
+                        new_screen_space_position[3] = requirements.viewport_matrix.apply_to_vec2(new_normalized[3]).perspective_division();
+
+                        rasterizer(pixel_buffer, context, requirements, new_screen_space_position[0..4].*, new_invariants[0..4].*);
+                    }
                 }
                 else rasterizer(pixel_buffer, context, requirements, screen_space_position[0..4].*, invariants[0..4].*);
             }
         }
-    
+
+        // TODO rasterize quad that are not given in order bl, br, tr, tl
         /// assumes that the quad and the invariants are given in the order: bl, br, tr, tl
         fn rasterizer(pixel_buffer: Buffer2D(final_color_type), context: context_type, requirements: pipeline_configuration.Requirements(), quad: [4]Vector2f, invariants: [4]invariant_type) void {
             
-            _ = requirements;
-            trace("rasterize...", .{});
+            trace("rasterize quad:", .{});
             trace_quad(quad);
-            const bottom: usize = @intFromFloat(@floor(quad[0].y+0.5));
-            const right: usize = @intFromFloat(@ceil(quad[1].x-0.5));
-            const top: usize = @intFromFloat(@ceil(quad[2].y-0.5));
-            const left: usize = @intFromFloat(@floor(quad[3].x+0.5));
-            trace_bb(left, right, top, bottom);
-
-            if (top == 0) return;
-            if (right == 0) return;
 
             const height_f: f32 = quad[2].y - quad[0].y;
             const width_f: f32 = quad[1].x - quad[3].x;
             trace("height: {d:.4} width: {d:.4}", .{height_f, width_f});
 
-            // TODO rasterize quad that are not given in order bl, br, tr, tl
-            // TODO scissoring
+            const bb: BoundingBox = blk: {
+                var bottom: usize = @intFromFloat(@floor(quad[0].y+0.5));
+                var right: usize = @intFromFloat(@ceil(quad[1].x-0.5));
+                var top: usize = @intFromFloat(@ceil(quad[2].y-0.5));
+                var left: usize = @intFromFloat(@floor(quad[3].x+0.5));
+                if (pipeline_configuration.do_scissoring) {
+                    // TODO this can be factored out and used as constant through a single render pass of the pipeline
+                    const scissor_bottom: usize = @intFromFloat(@floor(requirements.scissor_rect.y+0.5));
+                    const scissor_right: usize = @intFromFloat(@ceil(requirements.scissor_rect.z-0.5));
+                    const scissor_top: usize = @intFromFloat(@ceil(requirements.scissor_rect.w-0.5));
+                    const scissor_left: usize = @intFromFloat(@floor(requirements.scissor_rect.x+0.5));
+                    
+                    bottom = @max(bottom, scissor_bottom);
+                    right = @min(right, scissor_right);
+                    top = @min(top, scissor_top);
+                    left = @max(left, scissor_left);
+                }
+                break :blk BoundingBox { .bottom = bottom, .top = top, .left = left, .right = right };
+            };
+            trace_bb(bb.left, bb.right, bb.top, bb.bottom);
 
-            var y = top-1;
-            while (y >= bottom) : (y -= 1) {
+            if (bb.top == 0) return;
+            if (bb.right == 0) return;
+
+            var y = bb.top-1;
+            while (y >= bb.bottom) : (y -= 1) {
                 const percentage_y: f32 = (@as(f32, @floatFromInt(y))-quad[0].y+0.5) / height_f;
-                if (percentage_y > 1 or percentage_y < 0) trace("percentage y {d:.4} quad[0].y {d:.4} y {}", .{percentage_y, quad[0].y, y});
-                var x = left;
-                while (x < right) : (x += 1) {
+                std.debug.assert(percentage_y <= 1 and percentage_y >= 0);
+
+                var x = bb.left;
+                while (x < bb.right) : (x += 1) {
                     const percentage_x: f32 = (@as(f32, @floatFromInt(x))-quad[3].x+0.5) / width_f;
-                    if (percentage_x > 1 or percentage_x < 0) trace("percentage x {d:.4} quad[3].x {d:.4} x {}", .{percentage_x, quad[3].x, x});
+                    std.debug.assert(percentage_x <= 1 and percentage_x >= 0);
 
                     const interpolated_invariants: invariant_type = interpolate(invariant_type, invariants, percentage_x, percentage_y);
                     const final_color = fragment_shader(context, interpolated_invariants);
@@ -931,9 +976,16 @@ pub fn GraphicsPipelineQuads2D(
                 
                 // NOTE(Oscar) because y is unsigned, and the y-=1 happens even after the last cycle of the while, meaning that
                 // if bottom is 0, y will still do -1 assigning -1 to an unsigned number and it will break in debug builds
-                if (y == bottom) break;
+                if (y == bb.bottom) break;
             }
         }
+
+        const BoundingBox = struct {
+            bottom: usize,
+            right: usize,
+            top: usize,
+            left: usize,
+        };
 
         /// `percentage_x` left to right
         /// `percentage_y` bottom to top

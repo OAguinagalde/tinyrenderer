@@ -164,7 +164,7 @@ pub fn main() !void {
         while (running) {
 
             var ms: f32 = undefined;
-            const do_artificial_wait = false;
+            const do_artificial_wait = true;
             while (true) {
                 var current_cpu_counter: win32.LARGE_INTEGER = undefined;
                 _ = win32.QueryPerformanceCounter(&current_cpu_counter);

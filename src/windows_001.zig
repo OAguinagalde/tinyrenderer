@@ -1,5 +1,6 @@
 const std = @import("std");
 const math = @import("math.zig");
+const graphics = @import("graphics.zig");
 const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
@@ -22,6 +23,7 @@ const App = struct {
     renderer: tic80.Renderer(BGRA, tic80.Shader(BGRA)),
     renderer_quads: tic80.QuadRenderer(BGRA, tic80.QuadShader(BGRA)),
     renderer_blending: tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)),
+    renderer_shapes: ShapeRenderer(BGRA, RGB.from(255,255,255)),
     entities: EntitySystem,
     level_background: Assets.LevelBackgroundDescriptor,
     player: Player,
@@ -39,6 +41,7 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
     app.renderer = try tic80.Renderer(BGRA, tic80.Shader(BGRA)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_quads = try tic80.QuadRenderer(BGRA, tic80.QuadShader(BGRA)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_blending = try tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    app.renderer_shapes = try ShapeRenderer(BGRA, RGB.from(255,255,255)).init(allocator);
     app.entities = EntitySystem.init(allocator);
     app.player = Player.init(0);
     app.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
@@ -93,8 +96,9 @@ pub fn update(platform: *Platform) !bool {
         if (player_is_walking and (app.random.float(f32) > 0.8)) {
             try particle_create(&app.particles, particles_generators.walk(
                 app.player.pos.add(Vector2f.from(0, 1)),
-                1, // 1 + @as(i32, @intFromFloat(app.random.float(f32) * 2)),
-                Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.1)
+                0.5 + app.random.float(f32) * 3,
+                Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.1),
+                app.random.int(u8),
             ));
         }
     }
@@ -120,19 +124,24 @@ pub fn update(platform: *Platform) !bool {
         const pos = runtime_entity.pos;
         try app.renderer_quads.add_sprite_from_atlas_index(sprite, Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8)), .{});
     }
-    var iterator = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
-    while (iterator.next(&app.particles)) |e| {
-        const render_component = (try app.particles.getComponent(ParticleRenderData, e)).?;
-        const position_component = (try app.particles.getComponent(Vector2f, e)).?;
-        const radius = render_component.radius;
-        _ = radius;
-        try app.renderer_quads.add_sprite_from_atlas_index(12, position_component.*, .{});
-    }
     app.renderer_quads.render(
         platform.pixel_buffer,
         mvp_matrix_33,
         viewport_matrix_m33
     );
+    var iterator = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
+    while (iterator.next(&app.particles)) |e| {
+        const render_component = (try app.particles.getComponent(ParticleRenderData, e)).?;
+        const position_component = (try app.particles.getComponent(Vector2f, e)).?;
+        const radius = render_component.radius;
+        try app.renderer_shapes.add_quad(position_component.*, Vector2f.from(radius, radius), render_component.color);
+    }
+    app.renderer_shapes.render(
+        platform.pixel_buffer,
+        mvp_matrix_33,
+        viewport_matrix_m33
+    );
+
 
     try app.renderer_blending.add_sprite_from_atlas_index(app.player.animation.calculate_frame(platform.frame), app.player.pos.add(Vector2f.from(-4,0)), .{.mirror = (app.player.look_direction == .Left)});
     
@@ -384,17 +393,18 @@ fn update_animations_in_place(pool: *AnimationSystem, frame: usize) !void {
 pub const Particles = Ecs(.{ Physics.PhysicalObject, ParticleLife, Vector2f, ParticleRenderData }, 1000);
 const ParticleLife = i32;
 pub const ParticleRenderData = struct {
-    radius: usize,
-    color: RGB,
+    radius: f32,
+    color: RGBA,
 };
 pub const ParticleDescriptor = struct {
     position: Vector2f,
     color: RGB,
     weight: f32,
     speed: Vector2f,
-    radius: usize,
+    radius: f32,
     /// How many frames the particle will live for
     life: ParticleLife,
+    alpha: u8,
 };
 
 pub fn particle_create(particles: *Particles, descriptor: ParticleDescriptor) !void {
@@ -407,7 +417,8 @@ pub fn particle_create(particles: *Particles, descriptor: ParticleDescriptor) !v
     physical.velocity = descriptor.speed;
     life.* = descriptor.life;
     pos.* = descriptor.position;
-    render_data.*.color = descriptor.color;
+    render_data.*.color = RGBA.from(RGB, descriptor.color);
+    render_data.*.color.a = descriptor.alpha;
     render_data.*.radius = descriptor.radius;
 }
 
@@ -437,18 +448,102 @@ pub fn particles_update(particles: *Particles) !void {
 }
 
 pub const particles_generators = struct {
-    pub fn walk(pos: Vector2f, radious: usize, speed: Vector2f) ParticleDescriptor {
+    pub fn walk(pos: Vector2f, radious: f32, speed: Vector2f, alpha: u8) ParticleDescriptor {
         return ParticleDescriptor {
-            .color = @bitCast(@as(i24,13)),
+            .color = @bitCast(Assets.palette[13]),
             .life = 60,
             .position = pos,
             .radius = radious,
             .speed = speed,
-            .weight = 0.04,
+            .weight = 0.14,
+            .alpha = alpha,
         };
     }
 };
 
+pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type {
+    return struct {
+
+        const shader = struct {
+
+            pub const Context = struct {
+                mvp_matrix: M33,
+            };
+
+            pub const Invariant = struct {
+                tint: RGBA,
+            };
+
+            pub const Vertex = struct {
+                pos: Vector2f,
+                tint: RGBA,
+            };
+
+            pub const pipeline_configuration = graphics.GraphicsPipelineQuads2DConfiguration {
+                .blend_with_background = true,
+                .do_quad_clipping = true,
+                .do_scissoring = false,
+                .trace = false
+            };
+
+            pub const Pipeline = graphics.GraphicsPipelineQuads2D(
+                output_pixel_type,
+                Context,
+                Invariant,
+                Vertex,
+                pipeline_configuration,
+                struct {
+                    inline fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector3f {
+                        out_invariant.tint = vertex.tint;
+                        return context.mvp_matrix.apply_to_vec2(vertex.pos);
+                    }
+                }.vertex_shader,
+                struct {
+                    inline fn fragment_shader(context: Context, invariants: Invariant) output_pixel_type {
+                        _ = context;
+                        const out_color = comptime output_pixel_type.from(RGB, color);
+                        const tint = output_pixel_type.from(RGBA, invariants.tint);
+                        return out_color.tint(tint);
+                    }
+                }.fragment_shader,
+            );
+        };
+        
+        const Self = @This();
+
+        allocator: std.mem.Allocator,
+        vertex_buffer: std.ArrayList(shader.Vertex),
+
+        pub fn init(allocator: std.mem.Allocator) !Self {
+            var self: Self = undefined;
+            self.allocator = allocator;
+            self.vertex_buffer = std.ArrayList(shader.Vertex).init(allocator);
+            return self;
+        }
+
+        pub fn add_quad(self: *Self, pos: Vector2f, size: Vector2f, tint: RGBA) !void {
+            const vertices = [4] shader.Vertex {
+                .{ .pos = .{ .x = pos.x,          .y = pos.y          }, .tint = tint },
+                .{ .pos = .{ .x = pos.x + size.x, .y = pos.y          }, .tint = tint },
+                .{ .pos = .{ .x = pos.x + size.x, .y = pos.y + size.y }, .tint = tint },
+                .{ .pos = .{ .x = pos.x,          .y = pos.y + size.y }, .tint = tint },
+            };
+            try self.vertex_buffer.appendSlice(&vertices);
+        }
+
+        pub fn render(self: *Self, pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
+            const context = shader.Context {
+                .mvp_matrix = mvp_matrix,
+            };
+            shader.Pipeline.render(pixel_buffer, context, self.vertex_buffer.items, @divExact(self.vertex_buffer.items.len, 4), .{ .viewport_matrix = viewport_matrix, });
+            self.vertex_buffer.clearRetainingCapacity();
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.vertex_buffer.clearAndFree();
+        }
+    };
+}
 
 
 pub const Assets = struct {

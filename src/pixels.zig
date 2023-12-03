@@ -87,7 +87,13 @@ pub const RGB = extern struct {
     r: u8 align(1),
     g: u8 align(1),
     b: u8 align(1),
+    
     comptime { std.debug.assert(@sizeOf(@This()) == 3); }
+    
+    pub inline fn from(r: u8, g: u8, b: u8) RGB {
+        return RGB { .r = r, .g = g, .b = b, };
+    }
+    
     pub fn scale(self: RGB, factor: f32) RGB {
         return RGB {
             .r = @intFromFloat(@max(0, @min(255, @as(f32, @floatFromInt(self.r)) * factor))),
@@ -159,6 +165,15 @@ pub const BGRA = extern struct {
             .a = @intFromFloat((@as(f32, @floatFromInt(c1.a))/255*a1 + @as(f32, @floatFromInt(c2.a))/255*(1-a1))*255),
         };
         return result;
+    }
+
+    pub fn tint(color: BGRA, other: BGRA) BGRA {
+        return BGRA.make(
+            @intFromFloat((@as(f32, @floatFromInt(color.r)) * @as(f32, @floatFromInt(other.r)))/256),
+            @intFromFloat((@as(f32, @floatFromInt(color.g)) * @as(f32, @floatFromInt(other.g)))/256),
+            @intFromFloat((@as(f32, @floatFromInt(color.b)) * @as(f32, @floatFromInt(other.b)))/256),
+            @intFromFloat((@as(f32, @floatFromInt(color.a)) * @as(f32, @floatFromInt(other.a)))/256),
+        );
     }
 
     pub fn from(comptime T: type, color: T) BGRA {
