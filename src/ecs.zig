@@ -138,7 +138,7 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
                 if (entity_data.components.mask != 0) {
                     entity_data.*.version += 1;
                     entity_data.*.components = set_without_components;
-                    self.deletedEntities.appendAssumeCapacity(i);
+                    self.deletedEntities.appendAssumeCapacity(@intCast(i));
                 }
             }
         }

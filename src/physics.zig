@@ -250,7 +250,7 @@ pub fn PhysicalWorld(comptime config: PhysicsConfig, comptime is_collision: fn(V
             }
             else {
                 vel.x *= config.friction_air;
-                vel.y *= config.friction_air;
+                // vel.y *= config.friction_air;
             }
 
             if (std.math.approxEqAbs(f32, vel.x, 0, std.math.floatEps(f32))) { vel.x = 0; }
