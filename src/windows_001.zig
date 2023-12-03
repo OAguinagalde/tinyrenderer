@@ -74,17 +74,28 @@ pub fn update(platform: *Platform) !bool {
         app.player.look_direction = .Right;
         player_is_walking = true;
     }
+    const player_direction_offset: f32 = switch (app.player.look_direction) { .Right => 1, .Left => -1 };
     if (!platform.keys_old['W'] and platform.keys['W'] and app.player.jumps > 0) {
         app.player.physical_component.velocity.y = 0.16;
         app.player.jumps -= 1;
         // TODO sfx
-        // TODO particles
+        for (0..3) |_| try particle_create(&app.particles, particles_generators.walk(
+            app.player.pos.add(Vector2f.from(0, 1.5)),
+            1 + app.random.float(f32) * 2,
+            Vector2f.from((app.random.float(f32) * 2) - 1, -app.random.float(f32)).scale(0.55),
+            100,
+        ));
     }
     if (!platform.keys_old['F'] and platform.keys['F'] and app.player.attack_start_frame == 0) {
-        _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, platform.frame), app.player.pos, false, platform.frame);
+        _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, platform.frame), app.player.pos.add(Vector2f.from(player_direction_offset*7,0)), switch (app.player.look_direction) { .Right => false, .Left => true }, platform.frame);
         app.player.attack_start_frame = platform.frame;
         // TODO sfx
-        // TODO particles
+        for (0..3) |_| try particle_create(&app.particles, particles_generators.walk(
+            app.player.pos.add(Vector2f.from(player_direction_offset*5, 1)),
+            2,
+            Vector2f.from((0.5 + (app.random.float(f32) * 0.3)) * player_direction_offset, (app.random.float(f32) * 0.6) - 0.2).scale(0.74),
+            60,
+        ));
         // TODO hitbox
     }
 
@@ -96,9 +107,9 @@ pub fn update(platform: *Platform) !bool {
         if (player_is_walking and (app.random.float(f32) > 0.8)) {
             try particle_create(&app.particles, particles_generators.walk(
                 app.player.pos.add(Vector2f.from(0, 1)),
-                0.5 + app.random.float(f32) * 3,
+                2 + app.random.float(f32) * 3,
                 Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.1),
-                app.random.int(u8),
+                40,
             ));
         }
     }
@@ -141,22 +152,17 @@ pub fn update(platform: *Platform) !bool {
         mvp_matrix_33,
         viewport_matrix_m33
     );
-
-
     try app.renderer_blending.add_sprite_from_atlas_index(app.player.animation.calculate_frame(platform.frame), app.player.pos.add(Vector2f.from(-4,0)), .{.mirror = (app.player.look_direction == .Left)});
-    
     var it = AnimationSystem.view(.{ Visual }).iterator();
     while (it.next(&app.animations_in_place)) |entity| {
         const visual = (try app.animations_in_place.getComponent(Visual, entity)).?;
-        try app.renderer_blending.add_sprite_from_atlas_index(visual.sprite, visual.position, .{ .mirror = visual.flipped });
+        try app.renderer_blending.add_sprite_from_atlas_index(visual.sprite, visual.position.add(Vector2f.from(-4,0)), .{ .mirror = visual.flipped });
     }
-    
     app.renderer_blending.render(
         platform.pixel_buffer,
         mvp_matrix,
         viewport_matrix
     );
-
 
     try render_debug_interface(platform);
     return true;
