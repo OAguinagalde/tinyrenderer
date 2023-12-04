@@ -148,23 +148,15 @@ pub fn update(platform: *Platform) !bool {
     const viewport_matrix_m33 = M33.viewport(0, 0, platform.w, platform.h);
     const mvp_matrix_33 = projection_matrix_m33.multiply(view_matrix_m33.multiply(M33.identity()));
     
+    // render map
     try app.renderer_quads.add_map(Assets.map, app.level_background.tl, app.level_background.br, Vector2f.from(@floatFromInt(app.level_background.tl.x*8), @floatFromInt(correct_y(app.level_background.br.y-1)*8)));
-    {
-        var it = EntitySystem.EntityStorage.view(.{EntitySystem.EntityPosition, RuntimeAnimation}).iterator();
-        while (it.next(&app.entities.entities)) |e| {
-            const anim_component = (try app.entities.entities.getComponent(RuntimeAnimation, e)).?;
-            const pos_component = (try app.entities.entities.getComponent(EntitySystem.EntityPosition, e)).?;
-            const dir_component = (try app.entities.entities.getComponent(Direction, e)).?;
-            const sprite = anim_component.calculate_frame(platform.frame);
-            const pos = pos_component.* ;
-            try app.renderer_quads.add_sprite_from_atlas_index(sprite, pos.add(Vector2f.from(-4, 0)), .{.mirror = switch(dir_component.*){.Left=>true,.Right=>false} });
-        }
-    }
     app.renderer_quads.render(
         platform.pixel_buffer,
         mvp_matrix_33,
         viewport_matrix_m33
     );
+    
+    // render static texts
     for (app.texts) |text| {
         const text_tile = Vector2i.from(text.pos.x, correct_y(text.pos.y));
         try app.text_renderer.print(text_tile.scale(8).to_vec2f(), "{s}", .{text.text}, RGBA.make(255,255,255,255));
@@ -174,28 +166,51 @@ pub fn update(platform: *Platform) !bool {
         mvp_matrix_33,
         viewport_matrix_m33
     );
-    var iterator = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
-    while (iterator.next(&app.particles)) |e| {
-        const render_component = (try app.particles.getComponent(ParticleRenderData, e)).?;
-        const position_component = (try app.particles.getComponent(Vector2f, e)).?;
-        const radius = render_component.radius;
-        try app.renderer_shapes.add_quad(position_component.*, Vector2f.from(radius, radius), render_component.color);
+    
+    // render entities
+    {
+        var it = EntitySystem.EntityStorage.view(.{EntitySystem.EntityPosition, RuntimeAnimation}).iterator();
+        while (it.next(&app.entities.entities)) |e| {
+            const anim_component = (try app.entities.entities.getComponent(RuntimeAnimation, e)).?;
+            const pos_component = (try app.entities.entities.getComponent(EntitySystem.EntityPosition, e)).?;
+            const dir_component = (try app.entities.entities.getComponent(Direction, e)).?;
+            const sprite = anim_component.calculate_frame(platform.frame);
+            const pos = pos_component.* ;
+            try app.renderer_blending.add_sprite_from_atlas_index(sprite, pos.add(Vector2f.from(-4, 0)), .{.mirror = switch(dir_component.*){.Left=>true,.Right=>false} });
+        }
     }
-    app.renderer_shapes.render(
-        platform.pixel_buffer,
-        mvp_matrix_33,
-        viewport_matrix_m33
-    );
-    try app.renderer_blending.add_sprite_from_atlas_index(app.player.animation.calculate_frame(platform.frame), app.player.pos.add(Vector2f.from(-4,0)), .{.mirror = (app.player.look_direction == .Left)});
-    var it = AnimationSystem.view(.{ Visual }).iterator();
-    while (it.next(&app.animations_in_place)) |entity| {
-        const visual = (try app.animations_in_place.getComponent(Visual, entity)).?;
-        try app.renderer_blending.add_sprite_from_atlas_index(visual.sprite, visual.position.add(Vector2f.from(-4,0)), .{ .mirror = visual.flipped });
+    // render player
+    {
+        try app.renderer_blending.add_sprite_from_atlas_index(app.player.animation.calculate_frame(platform.frame), app.player.pos.add(Vector2f.from(-4,0)), .{.mirror = (app.player.look_direction == .Left)});
+    }
+    // render in-place animation
+    {
+        var it = AnimationSystem.view(.{ Visual }).iterator();
+        while (it.next(&app.animations_in_place)) |entity| {
+            const visual = (try app.animations_in_place.getComponent(Visual, entity)).?;
+            try app.renderer_blending.add_sprite_from_atlas_index(visual.sprite, visual.position.add(Vector2f.from(-4,0)), .{ .mirror = visual.flipped });
+        }
     }
     app.renderer_blending.render(
         platform.pixel_buffer,
         mvp_matrix,
         viewport_matrix
+    );
+    
+    // render aprticles
+    {
+        var it = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
+        while (it.next(&app.particles)) |e| {
+            const render_component = (try app.particles.getComponent(ParticleRenderData, e)).?;
+            const position_component = (try app.particles.getComponent(Vector2f, e)).?;
+            const radius = render_component.radius;
+            try app.renderer_shapes.add_quad(position_component.*, Vector2f.from(radius, radius), render_component.color);
+        }
+    }
+    app.renderer_shapes.render(
+        platform.pixel_buffer,
+        mvp_matrix_33,
+        viewport_matrix_m33
     );
 
     const color = RGBA.make(255,255,255,255);

@@ -281,7 +281,7 @@ pub fn QuadShader(comptime output_pixel_type: type) type {
 
         pub const pipeline_configuration = GraphicsPipelineQuads2DConfiguration {
             .blend_with_background = false,
-            .do_quad_clipping = false,
+            .do_quad_clipping = true,
             .do_scissoring = false,
             .trace = false
         };
