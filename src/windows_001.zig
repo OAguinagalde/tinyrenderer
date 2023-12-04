@@ -59,7 +59,6 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
 }
 
 pub fn update(platform: *Platform) !bool {
-    
     platform.pixel_buffer.clear(BGRA.make(100, 149, 237,255));
     
     if (platform.keys['Q']) try load_level(Assets.spawn_start_0, platform.frame);
@@ -197,7 +196,7 @@ pub fn update(platform: *Platform) !bool {
         viewport_matrix
     );
     
-    // render aprticles
+    // render particles
     {
         var it = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
         while (it.next(&app.particles)) |e| {
@@ -809,7 +808,7 @@ pub const Assets = struct {
 
     pub const level_two_directions = LevelDescriptor.from(
         &level_bg_two_directions,
-        &[_] *const DoorDescriptor { &door_level_two_directions_0, &door_level_two_directions_1 },
+        &[_] *const DoorDescriptor { &door_level_two_directions_0, &door_level_two_directions_1, &door_level_two_directions_2 },
         &[_] *const StaticTextDescriptor { },
         &[_] *const EntitySpawnDescriptor { &entity_spawn_enemy_slime_0, &entity_spawn_enemy_slime_1, &entity_spawn_enemy_slime_2 },
     );
@@ -963,6 +962,7 @@ pub const Assets = struct {
     pub const door_level_slime_1 = DoorDescriptor.from(Vector2i.from(50, 132), &spawn_level_two_directions_0);
     pub const door_level_two_directions_0 = DoorDescriptor.from(Vector2i.from(60, 132), &spawn_level_slime_1);
     pub const door_level_two_directions_1 = DoorDescriptor.from(Vector2i.from(89, 133), &spawn_level_poison_corridor_0);
+    pub const door_level_two_directions_2 = DoorDescriptor.from(Vector2i.from(83, 129), &spawn_level_first_floor_0);
     pub const door_level_poison_corridor_0 = DoorDescriptor.from(Vector2i.from(90, 133), &spawn_level_two_directions_1);
     pub const door_level_poison_corridor_1 = DoorDescriptor.from(Vector2i.from(119, 133), &spawn_level_entrance_to_something_0);
     pub const door_level_entrance_to_something_0 = DoorDescriptor.from(Vector2i.from(120, 133), &spawn_level_poison_corridor_1);
