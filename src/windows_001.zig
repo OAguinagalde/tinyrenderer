@@ -11,15 +11,14 @@ const RGB = @import("pixels.zig").RGB;
 const RGBA = @import("pixels.zig").RGBA;
 const BGRA = @import("pixels.zig").BGRA;
 const tic80 = @import("tic80.zig");
-const TextRenderer = @import("text.zig").TextRenderer(BGRA, 1024, 1024);
 const Platform = @import("windows.zig").Platform;
 const physics = @import("physics.zig");
 const Ecs = @import("ecs.zig").Ecs;
 const Entity = @import("ecs.zig").Entity;
 
-
 const App = struct {
-    text_renderer: TextRenderer,
+    debug_text_renderer: TextRenderer(BGRA, 1024, 2),
+    text_renderer: TextRenderer(BGRA, 1024, 0.8),
     renderer: tic80.Renderer(BGRA, tic80.Shader(BGRA)),
     renderer_quads: tic80.QuadRenderer(BGRA, tic80.QuadShader(BGRA)),
     renderer_blending: tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)),
@@ -33,12 +32,15 @@ const App = struct {
     rng_engine: std.rand.DefaultPrng,
     random: std.rand.Random,
     doors: []const *const Assets.DoorDescriptor,
+    texts: []const *const Assets.StaticTextDescriptor,
 };
 
 var app: App = undefined;
 
 pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
-    app.text_renderer = try TextRenderer.init(allocator, pixel_buffer);
+    _ = pixel_buffer;
+    app.debug_text_renderer = try TextRenderer(BGRA, 1024, 2).init(allocator);
+    app.text_renderer = try TextRenderer(BGRA, 1024, 0.8).init(allocator);
     app.renderer = try tic80.Renderer(BGRA, tic80.Shader(BGRA)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_quads = try tic80.QuadRenderer(BGRA, tic80.QuadShader(BGRA)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_blending = try tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
@@ -50,7 +52,8 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
     app.particles = try Particles.init(allocator);
     app.rng_engine = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
     app.random = app.rng_engine.random();
-    app.doors = undefined; // doors is set on load level
+    app.doors = undefined; // doors are set on load level
+    app.texts = undefined; // texts are set on load level
     try load_level(Assets.spawn_start_0, 0);
 }
 
@@ -81,10 +84,10 @@ pub fn update(platform: *Platform) !bool {
         app.player.physical_component.velocity.y = 0.16;
         app.player.jumps -= 1;
         // TODO sfx
-        for (0..3) |_| try particle_create(&app.particles, particles_generators.walk(
+        for (0..5) |_| try particle_create(&app.particles, particles_generators.walk(
             app.player.pos.add(Vector2f.from(0, 1.5)),
-            1 + app.random.float(f32) * 2,
-            Vector2f.from((app.random.float(f32) * 2) - 1, -app.random.float(f32)).scale(0.55),
+            2 + app.random.float(f32) * 2,
+            Vector2f.from(((app.random.float(f32) * 2) - 1)*0.2, -0.05),
             100,
         ));
     }
@@ -153,6 +156,15 @@ pub fn update(platform: *Platform) !bool {
         mvp_matrix_33,
         viewport_matrix_m33
     );
+    for (app.texts) |text| {
+        const text_tile = Vector2i.from(text.pos.x, correct_y(text.pos.y));
+        try app.text_renderer.print(text_tile.scale(8).to_vec2f(), "{s}", .{text.text}, RGBA.make(255,255,255,255));
+    }
+    app.text_renderer.render_all(
+        platform.pixel_buffer,
+        mvp_matrix_33,
+        viewport_matrix_m33
+    );
     var iterator = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
     while (iterator.next(&app.particles)) |e| {
         const render_component = (try app.particles.getComponent(ParticleRenderData, e)).?;
@@ -182,20 +194,22 @@ pub fn update(platform: *Platform) !bool {
 }
 
 pub fn render_debug_interface(platform: *Platform) !void {
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*1) - 4 }, "ms {d: <9.2}", .{platform.ms});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*2) - 4 }, "fps {d:0.4}", .{platform.ms / 1000*60});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*3) - 4 }, "frame {}", .{platform.frame});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*4) - 4 }, "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*5) - 4 }, "mouse {} {}", .{platform.mouse.x, platform.mouse.y});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*6) - 4 }, "dimensions {} {}", .{platform.w, platform.h});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*7) - 4 }, "physical pos {d:.4} {d:.4}", .{app.player.physical_component.physical_pos.x, app.player.physical_component.physical_pos.y});
+    const color = RGBA.make(255,255,255,255);
     const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(app.player.physical_component.physical_pos);
     const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*8) - 4 }, "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*9) - 4 }, "to real tile {} {}", .{real_tile.x, real_tile.y});
-    app.text_renderer.render_all(
-        M44.orthographic_projection(0, @floatFromInt(platform.w), @floatFromInt(platform.h), 0, 0, 10),
-        M44.viewport_i32_2(0, 0, platform.w, platform.h, 255)
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*1) - 4).to_vec2f(), "ms {d: <9.2}", .{platform.ms}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*2) - 4).to_vec2f(), "fps {d:0.4}", .{platform.ms / 1000*60}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*3) - 4).to_vec2f(), "frame {}", .{platform.frame}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*4) - 4).to_vec2f(), "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*5) - 4).to_vec2f(), "mouse {} {}", .{platform.mouse.x, platform.mouse.y}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*6) - 4).to_vec2f(), "dimensions {} {}", .{platform.w, platform.h}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*7) - 4).to_vec2f(), "physical pos {d:.4} {d:.4}", .{app.player.physical_component.physical_pos.x, app.player.physical_component.physical_pos.y}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*8) - 4).to_vec2f(), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*9) - 4).to_vec2f(), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
+    app.debug_text_renderer.render_all(
+        platform.pixel_buffer,
+        M33.orthographic_projection(0, @floatFromInt(platform.w), @floatFromInt(platform.h), 0),
+        M33.viewport(0, 0, platform.w, platform.h)
     );
 }
 
@@ -207,7 +221,7 @@ pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
     const level = Assets.Levels.get(spawn.level);
     app.level_background = level.background.*;
     app.doors = level.doors;
-    // app.static_texts = level.doors;
+    app.texts = level.static_texts;
     
     for (level.entity_spawns) |entity_spawn| {
         try app.entities.spawn(entity_spawn.entity.*, entity_spawn.pos, frame);
@@ -568,6 +582,111 @@ pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type
     };
 }
 
+pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: usize, comptime size: comptime_float) type {
+    return struct {
+
+        const texture = @import("text.zig").font.texture;
+        
+        const Shader = struct {
+
+            pub const Context = struct {
+                mvp_matrix: M33,
+            };
+
+            pub const Invariant = struct {
+                tint: RGBA,
+                uv: Vector2f,
+            };
+
+            pub const Vertex = struct {
+                pos: Vector2f,
+                uv: Vector2f,
+                tint: RGBA,
+            };
+
+            pub const pipeline_configuration = graphics.GraphicsPipelineQuads2DConfiguration {
+                .blend_with_background = true,
+                .do_quad_clipping = true,
+                .do_scissoring = false,
+                .trace = false
+            };
+
+            pub const Pipeline = graphics.GraphicsPipelineQuads2D(
+                out_pixel_type,
+                Context,
+                Invariant,
+                Vertex,
+                pipeline_configuration,
+                struct {
+                    inline fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector3f {
+                        out_invariant.tint = vertex.tint;
+                        out_invariant.uv = vertex.uv;
+                        return context.mvp_matrix.apply_to_vec2(vertex.pos);
+                    }
+                }.vertex_shader,
+                struct {
+                    inline fn fragment_shader(context: Context, invariants: Invariant) out_pixel_type {
+                        _ = context;
+                        const sample = texture.point_sample(false, invariants.uv);
+                        const sample_adapted = out_pixel_type.from(RGBA, sample); 
+                        const tint = out_pixel_type.from(RGBA, invariants.tint);
+                        return sample_adapted.tint(tint);
+                    }
+                }.fragment_shader,
+            );
+        };
+
+        vertex_buffer: std.ArrayList(Shader.Vertex),
+        
+        const Self = @This();
+
+        pub fn init(allocator: std.mem.Allocator) !Self {
+            return .{
+                .vertex_buffer = std.ArrayList(Shader.Vertex).init(allocator)
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.vertex_buffer.clearAndFree();
+        }
+
+        pub fn print(self: *Self, pos: Vector2f, comptime fmt: []const u8, args: anytype, tint: RGBA) !void {
+            const char_width: f32 = 4;
+            const char_height: f32 = 8;
+            var buff: [max_size_per_print]u8 = undefined;
+            const str = try std.fmt.bufPrint(&buff, fmt, args);
+            for (str, 0..) |c, i| {
+                const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width * size;
+                const y: f32 = pos.y;
+                
+                const u_1: f32 = @floatFromInt((c%16) * 8);
+                const v_1: f32 = @floatFromInt((c/16) * 8);
+                const u_2: f32 = u_1 + char_width;
+                const v_2: f32 = v_1 + char_height;
+
+                const vertices = [4] Shader.Vertex {
+                    .{ .pos = .{ .x = x,                     .y = y                      }, .uv = .{ .x = u_1, .y = v_2 }, .tint = tint },
+                    .{ .pos = .{ .x = x + char_width * size, .y = y                      }, .uv = .{ .x = u_2, .y = v_2 }, .tint = tint },
+                    .{ .pos = .{ .x = x + char_width * size, .y = y + char_height * size }, .uv = .{ .x = u_2, .y = v_1 }, .tint = tint },
+                    .{ .pos = .{ .x = x,                     .y = y + char_height * size }, .uv = .{ .x = u_1, .y = v_1 }, .tint = tint }
+                };
+                
+                try self.vertex_buffer.appendSlice(&vertices);                
+            }
+        }
+
+        pub fn render_all(self: *Self, pixel_buffer: Buffer2D(out_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
+            Shader.Pipeline.render(
+                pixel_buffer,
+                .{ .mvp_matrix = mvp_matrix, },
+                self.vertex_buffer.items,
+                self.vertex_buffer.items.len/4,
+                .{ .viewport_matrix = viewport_matrix, }
+            );
+            self.vertex_buffer.clearRetainingCapacity();
+        }
+    };
+}
 
 pub const Assets = struct {
     
@@ -758,9 +877,9 @@ pub const Assets = struct {
         }
     };
 
-    pub const static_text_tutorial_0 = StaticTextDescriptor.from(Vector2i.from(2, 128), Vector2i.from(24, 1), "Press M to toggle music!");
-    pub const static_text_tutorial_1 = StaticTextDescriptor.from(Vector2i.from(2, 129), Vector2i.from(24, 1), "Press CRTL+R to Restart!");
-    pub const static_text_tutorial_2 = StaticTextDescriptor.from(Vector2i.from(31, 130), Vector2i.from(18, 1), "Press F to attack!");
+    pub const static_text_tutorial_0 = StaticTextDescriptor.from(Vector2i.from(3, correct_y(10)), Vector2i.from(24, 1), "press [m] to toggle music");
+    pub const static_text_tutorial_1 = StaticTextDescriptor.from(Vector2i.from(3, correct_y(9)), Vector2i.from(24, 1), "press [r] to restart");
+    pub const static_text_tutorial_2 = StaticTextDescriptor.from(Vector2i.from(35, correct_y(8)), Vector2i.from(18, 1), "press [f] to attack");
 
     pub const EntitySpawnDescriptor = struct {
         /// indexes into a `tic80.Map` 
