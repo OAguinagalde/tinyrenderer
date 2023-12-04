@@ -1,6 +1,9 @@
 const std = @import("std");
 const math = @import("math.zig");
 const graphics = @import("graphics.zig");
+const tic80 = @import("tic80.zig");
+const physics = @import("physics.zig");
+
 const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
@@ -10,9 +13,7 @@ const Buffer2D = @import("buffer.zig").Buffer2D;
 const RGB = @import("pixels.zig").RGB;
 const RGBA = @import("pixels.zig").RGBA;
 const BGRA = @import("pixels.zig").BGRA;
-const tic80 = @import("tic80.zig");
 const Platform = @import("windows.zig").Platform;
-const physics = @import("physics.zig");
 const Ecs = @import("ecs.zig").Ecs;
 const Entity = @import("ecs.zig").Entity;
 
@@ -45,15 +46,15 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
     app.renderer_quads = try tic80.QuadRenderer(BGRA, tic80.QuadShader(BGRA)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_blending = try tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_shapes = try ShapeRenderer(BGRA, RGB.from(255,255,255)).init(allocator);
-    app.entities = EntitySystem.init(allocator);
+    app.entities = try EntitySystem.init(allocator);
     app.player = Player.init(0);
     app.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
     app.animations_in_place = try AnimationSystem.init(allocator);
     app.particles = try Particles.init(allocator);
     app.rng_engine = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
     app.random = app.rng_engine.random();
-    app.doors = undefined; // doors are set on load level
-    app.texts = undefined; // texts are set on load level
+    app.doors = undefined; // doors are set on load_level
+    app.texts = undefined; // texts are set on load_level
     try load_level(Assets.spawn_start_0, 0);
 }
 
@@ -130,6 +131,8 @@ pub fn update(platform: *Platform) !bool {
         }
     }
 
+    try app.entities.physics_update(app.player.pos);
+
     app.camera.move_to(app.player.pos, @floatFromInt(@divExact(platform.w, 4)), @floatFromInt(@divExact(platform.h, 4)));
 
     try update_animations_in_place(&app.animations_in_place, platform.frame);
@@ -146,10 +149,16 @@ pub fn update(platform: *Platform) !bool {
     const mvp_matrix_33 = projection_matrix_m33.multiply(view_matrix_m33.multiply(M33.identity()));
     
     try app.renderer_quads.add_map(Assets.map, app.level_background.tl, app.level_background.br, Vector2f.from(@floatFromInt(app.level_background.tl.x*8), @floatFromInt(correct_y(app.level_background.br.y-1)*8)));
-    for (app.entities.entities.items) |runtime_entity| {
-        const sprite = runtime_entity.animation.calculate_frame(platform.frame);
-        const pos = runtime_entity.pos;
-        try app.renderer_quads.add_sprite_from_atlas_index(sprite, Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8)), .{});
+    {
+        var it = EntitySystem.EntityStorage.view(.{EntitySystem.EntityPosition, RuntimeAnimation}).iterator();
+        while (it.next(&app.entities.entities)) |e| {
+            const anim_component = (try app.entities.entities.getComponent(RuntimeAnimation, e)).?;
+            const pos_component = (try app.entities.entities.getComponent(EntitySystem.EntityPosition, e)).?;
+            const dir_component = (try app.entities.entities.getComponent(Direction, e)).?;
+            const sprite = anim_component.calculate_frame(platform.frame);
+            const pos = pos_component.* ;
+            try app.renderer_quads.add_sprite_from_atlas_index(sprite, pos.add(Vector2f.from(-4, 0)), .{.mirror = switch(dir_component.*){.Left=>true,.Right=>false} });
+        }
     }
     app.renderer_quads.render(
         platform.pixel_buffer,
@@ -189,11 +198,6 @@ pub fn update(platform: *Platform) !bool {
         viewport_matrix
     );
 
-    try render_debug_interface(platform);
-    return true;
-}
-
-pub fn render_debug_interface(platform: *Platform) !void {
     const color = RGBA.make(255,255,255,255);
     const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(app.player.physical_component.physical_pos);
     const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
@@ -211,6 +215,8 @@ pub fn render_debug_interface(platform: *Platform) !void {
         M33.orthographic_projection(0, @floatFromInt(platform.w), @floatFromInt(platform.h), 0),
         M33.viewport(0, 0, platform.w, platform.h)
     );
+
+    return true;
 }
 
 pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
@@ -224,16 +230,20 @@ pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
     app.texts = level.static_texts;
     
     for (level.entity_spawns) |entity_spawn| {
-        try app.entities.spawn(entity_spawn.entity.*, entity_spawn.pos, frame);
+        try app.entities.spawn(entity_spawn.entity, tile_to_grounded_position(entity_spawn.pos), frame);
     }
     
     app.player.spawn(spawn.pos);
-    app.camera.set_bounds(level.background.tl, app.level_background.br);
+    app.camera.set_bounds(app.level_background.tl, app.level_background.br);
 }
 
-const granularity = 1;
-const Physics = physics.PhysicalWorld(
-    physics.PhysicsConfig {
+fn tile_to_grounded_position(tile: Vector2i) Vector2f {
+    return Vector2f.from(@floatFromInt(tile.x*8+4), (@floatFromInt(correct_y(tile.y)*8)));
+}
+
+const Physics = blk: {
+    const granularity = 1;
+    const config = physics.PhysicsConfig {
         // barely no air friction, but enough for it to be there
         .friction_air = 0.85,
         // strong friction on the floor to make movement less floaty
@@ -246,13 +256,13 @@ const Physics = physics.PhysicalWorld(
         .pad_left = 0.2,
         .pad_right = 0.8,
         .tile_size = 8
-    },
-    collision_checker
-);
+    };
+    break :blk physics.PhysicalWorld(config, collision_checker);
+};
+
 inline fn collision_checker(tile: Vector2i) bool {
     if (tile.x < 0 or tile.y < 0) return true;
     const tile_index = Assets.map [@as(usize, @intCast(correct_y(tile.y)))] [@as(usize, @intCast(tile.x))];
-    // NOTE(Oscar) will return 0xa0 but should be 0x0a, but the endianness seems to be different in tic?
     const col = tile_index%16;
     const row = @divFloor(tile_index, 16);
     return Assets.map_flags[row + col*16] == 0x01;
@@ -362,39 +372,69 @@ const RuntimeAnimation = struct {
     }
 };
 
-const RuntimeEntity = struct {
-    animation: RuntimeAnimation,
-    pos: Vector2i,
-};
-
 const EntitySystem = struct {
+
+    const EntityPosition = Vector2f;
+    const EntityStorage = Ecs( .{ *const Assets.EntityDescriptor, Physics.PhysicalObject, EntityPosition, RuntimeAnimation, Direction }, 15);
     
-    entities: std.ArrayList(RuntimeEntity),
+    entities: EntityStorage,
     
-    pub fn init(allocator: std.mem.Allocator) EntitySystem {
+    pub fn init(allocator: std.mem.Allocator) !EntitySystem {
         return EntitySystem {
-            .entities = std.ArrayList(RuntimeEntity).init(allocator)
+            .entities = try EntityStorage.init(allocator)
         };
     }
     
     pub fn clear(self: *EntitySystem) void {
-        self.entities.clearRetainingCapacity();
+        self.entities.deleteAll();
     }
 
-    pub fn spawn(self: *EntitySystem, entity: Assets.EntityDescriptor, pos: Vector2i, frame_number: usize) !void {
-        try self.entities.append(RuntimeEntity {
-            .animation = RuntimeAnimation {
-                .animation = entity.default_animation.*,
-                .frame_start = frame_number,
-            },
-            .pos = pos
-        });
+    pub fn spawn(self: *EntitySystem, entity: *const Assets.EntityDescriptor, pos: Vector2f, frame_number: usize) !void {
+        const e = try self.entities.newEntity();
+        const phys_component = try self.entities.setComponent(Physics.PhysicalObject, e);
+        const pos_component = try self.entities.setComponent(EntityPosition, e);
+        const dir_component = try self.entities.setComponent(Direction, e);
+        const anim_component = try self.entities.setComponent(RuntimeAnimation, e);
+        const descriptor_component = try self.entities.setComponent(*const Assets.EntityDescriptor, e);
+        descriptor_component.* = entity;
+        phys_component.* = Physics.PhysicalObject.from(pos, entity.weight);
+        anim_component.* = RuntimeAnimation {
+            .animation = entity.default_animation.*,
+            .frame_start = frame_number,
+        };
+        pos_component.* = pos;
+        dir_component.* = .Right;
+    }
+
+    pub fn physics_update(self: *EntitySystem, player_pos: Vector2f) !void {
+        var it = EntityStorage.view(.{Physics.PhysicalObject, EntityPosition}).iterator();
+        while (it.next(&self.entities)) |e| {
+            const phys_component = (try self.entities.getComponent(Physics.PhysicalObject, e)).?;
+            const pos_component = (try self.entities.getComponent(EntityPosition, e)).?;
+            const desc_component = (try self.entities.getComponent(*const Assets.EntityDescriptor, e)).?;
+            const dir_component = (try self.entities.getComponent(Direction, e)).?;
+            
+            const entity_to_player = player_pos.substract(pos_component.*);
+            const dist = entity_to_player.magnitude();
+            if (dist < desc_component.*.*.chase_range) {
+                // do chase
+                const is_right = entity_to_player.x>0;
+                dir_component.* = if (is_right) .Right else .Left;
+                phys_component.velocity.x = (desc_component.*.speed * (if (is_right) @as(f32, 1) else @as(f32, -1)));
+            }
+
+            const is_floored = Physics.apply(phys_component);
+            pos_component.* = Physics.calculate_real_pos(phys_component.physical_pos);
+            _ = is_floored;
+        }
     }
 
 };
 
 const AnimationSystem = Ecs(.{ Visual, KillAtFrame, RuntimeAnimation }, 1000);
+
 const KillAtFrame = usize;
+
 const Visual = struct {
     sprite: tic80.AtlasIndex,
     flipped: bool,
@@ -428,11 +468,14 @@ fn update_animations_in_place(pool: *AnimationSystem, frame: usize) !void {
 }
 
 pub const Particles = Ecs(.{ Physics.PhysicalObject, ParticleLife, Vector2f, ParticleRenderData }, 1000);
+
 const ParticleLife = i32;
+
 pub const ParticleRenderData = struct {
     radius: f32,
     color: RGBA,
 };
+
 pub const ParticleDescriptor = struct {
     position: Vector2f,
     color: RGB,
@@ -688,6 +731,11 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
     };
 }
 
+/// in tic's maps, the Y points downwards. This functions "corrects" any y coordinate when referencing a tile in a map
+inline fn correct_y(thing: anytype) @TypeOf(thing) {
+    return  135 - thing;
+}
+
 pub const Assets = struct {
     
     pub const Levels = enum {
@@ -905,16 +953,65 @@ pub const Assets = struct {
 
     pub const EntityDescriptor = struct {
         default_animation: *const AnimationDescriptor,
-        pub inline fn from(default_animation: *const AnimationDescriptor) EntityDescriptor {
-            return EntityDescriptor  { .default_animation = default_animation };
-        }
+        weight: f32,
+        hp: i32,
+        speed: f32,
+        chase_range: f32,
+        attack_dmg: i32,
+        attack_cooldown: usize,
+        attack_range: f32,
     };
     
-    pub const entity_slime = EntityDescriptor.from(&animation_slime);
-    pub const entity_knight_1 = EntityDescriptor.from(&animation_knight_1);
-    pub const entity_knight_2 = EntityDescriptor.from(&animation_knight_2);
-    pub const entity_archer = EntityDescriptor.from(&animation_archer);
-    pub const entity_slime_king = EntityDescriptor.from(&animation_slime);
+    pub const entity_slime = EntityDescriptor {
+        .default_animation = &animation_slime,
+        .weight = 2,
+        .hp = 30,
+        .speed = 0.02,
+        .chase_range = 5*8,
+        .attack_dmg = 15,
+        .attack_cooldown = 60,
+        .attack_range = 1,
+    };
+    pub const entity_knight_1 = EntityDescriptor {
+        .default_animation = &animation_knight_1,
+        .weight = 5,
+        .hp = 70,
+        .speed = 0.03,
+        .chase_range = 7*8,
+        .attack_dmg = 30,
+        .attack_cooldown = 60*2,
+        .attack_range = 2,
+    };
+    pub const entity_knight_2 = EntityDescriptor {
+        .default_animation = &animation_knight_2,
+        .weight = 5,
+        .hp = 70,
+        .speed = 0.03,
+        .chase_range = 7*8,
+        .attack_dmg = 30,
+        .attack_cooldown = 60*2,
+        .attack_range = 2,
+    };
+    pub const entity_archer = EntityDescriptor {
+        .default_animation = &animation_archer,
+        .weight = 3,
+        .hp = 60,
+        .speed = 0.1,
+        .chase_range = 10*8,
+        .attack_dmg = 30,
+        .attack_cooldown = 60*2,
+        .attack_range = 7,
+    };
+    pub const entity_slime_king = EntityDescriptor {
+        .default_animation = &animation_slime,
+        .weight = 10,
+        .hp = 200,
+        .speed = 0.015,
+        .chase_range = 30*8,
+        .attack_dmg = 40,
+        .attack_cooldown = 60*3,
+        .attack_range = 3,
+    };
 
     pub const AnimationDescriptor = struct {
         sprites: []const tic80.AtlasIndex,
@@ -1211,7 +1308,3 @@ pub const Assets = struct {
     // consists of: animation, location, and creation frame
 
 };
-
-inline fn correct_y(thing: anytype) @TypeOf(thing) {
-    return  135 - thing;
-}
