@@ -741,13 +741,24 @@ pub const Assets = struct {
     pub const Levels = enum {
         level_first,
         level_slime,
+        level_two_directions,
+        level_poison_corridor,
+        level_entrance_to_something,
+        level_first_floor,
         level_the_hueco,
-    
+        level_dash,
+        level_last_level,
         pub fn get(level: Levels) *const LevelDescriptor {
             return switch (level) {
                 .level_first => &level_first,
                 .level_slime => &level_slime,
+                .level_two_directions => &level_two_directions,
+                .level_poison_corridor => &level_poison_corridor,
+                .level_entrance_to_something => &level_entrance_to_something,
+                .level_first_floor => &level_first_floor,
                 .level_the_hueco => &level_the_hueco,
+                .level_dash => &level_dash,
+                .level_last_level => &level_last_level,
             };
         }
     };
@@ -778,7 +789,35 @@ pub const Assets = struct {
         &level_bg_slime,
         &[_] *const DoorDescriptor { &door_level_slime_0, &door_level_slime_1 },
         &[_] *const StaticTextDescriptor { &static_text_tutorial_2 },
-        &[_] *const EntitySpawnDescriptor { &entity_spawn_enemy_slime_3 },
+        &[_] *const EntitySpawnDescriptor { &entity_spawn_enemy_slime_3, &entity_spawn_enemy_slime_4 },
+    );
+
+    pub const level_two_directions = LevelDescriptor.from(
+        &level_bg_two_directions,
+        &[_] *const DoorDescriptor { &door_level_two_directions_0, &door_level_two_directions_1 },
+        &[_] *const StaticTextDescriptor { },
+        &[_] *const EntitySpawnDescriptor { &entity_spawn_enemy_slime_0, &entity_spawn_enemy_slime_1, &entity_spawn_enemy_slime_2 },
+    );
+
+    pub const level_poison_corridor = LevelDescriptor.from(
+        &level_bg_poison_corridor,
+        &[_] *const DoorDescriptor { &door_level_poison_corridor_0, &door_level_poison_corridor_1 },
+        &[_] *const StaticTextDescriptor { },
+        &[_] *const EntitySpawnDescriptor { },
+    );
+
+    pub const level_entrance_to_something = LevelDescriptor.from(
+        &level_bg_entrance_to_something,
+        &[_] *const DoorDescriptor { &door_level_entrance_to_something_0 },
+        &[_] *const StaticTextDescriptor { },
+        &[_] *const EntitySpawnDescriptor { &entity_spawn_enemy_slime_king_0 },
+    );
+
+    pub const level_first_floor = LevelDescriptor.from(
+        &level_bg_first_floor,
+        &[_] *const DoorDescriptor { &door_level_first_floor_0 },
+        &[_] *const StaticTextDescriptor { },
+        &[_] *const EntitySpawnDescriptor { &entity_spawn_enemy_knight_0, &entity_spawn_enemy_knight_1 },
     );
 
     pub const level_the_hueco = LevelDescriptor.from(
@@ -798,6 +837,20 @@ pub const Assets = struct {
             &door_level_the_hueco_2_9,
             &door_level_the_hueco_3
         },
+        &[_] *const StaticTextDescriptor { },
+        &[_] *const EntitySpawnDescriptor { },
+    );
+
+    pub const level_dash = LevelDescriptor.from(
+        &level_bg_dash,
+        &[_] *const DoorDescriptor { &door_level_dash },
+        &[_] *const StaticTextDescriptor { },
+        &[_] *const EntitySpawnDescriptor { },
+    );
+
+    pub const level_last_level = LevelDescriptor.from(
+        &level_bg_last_level,
+        &[_] *const DoorDescriptor { },
         &[_] *const StaticTextDescriptor { },
         &[_] *const EntitySpawnDescriptor { },
     );
@@ -865,21 +918,21 @@ pub const Assets = struct {
     };
 
     pub const spawn_start_0 = SpawnDescriptor.from(Vector2i.from(4, 134), .level_first);
-    pub const spawn_up_the_rope_0 = SpawnDescriptor.from(Vector2i.from(4, 134), .level_first);
-    pub const spawn_level_slime_0 = SpawnDescriptor.from(Vector2i.from(31, 132), .level_slime);
     pub const spawn_level_first_0 = SpawnDescriptor.from(Vector2i.from(17, 133), .level_first);
-    pub const spawn_level_two_directions_0 = SpawnDescriptor.from(Vector2i.from(61, 132), .level_first);
-    pub const spawn_level_slime_1 = SpawnDescriptor.from(Vector2i.from(49, 132), .level_first);
-    pub const spawn_level_poison_corridor_0 = SpawnDescriptor.from(Vector2i.from(91, 133), .level_first);
-    pub const spawn_level_two_directions_1 = SpawnDescriptor.from(Vector2i.from(88, 133), .level_first);
-    pub const spawn_level_entrance_to_something_0 = SpawnDescriptor.from(Vector2i.from(121, 133), .level_first);
-    pub const spawn_level_poison_corridor_1 = SpawnDescriptor.from(Vector2i.from(118, 133), .level_first);
-    pub const spawn_level_the_hueco_0 = SpawnDescriptor.from(Vector2i.from(91, 116), .level_first);
-    pub const spawn_level_first_floor_0 = SpawnDescriptor.from(Vector2i.from(81, 116), .level_first);
-    pub const spawn_level_last_level_0 = SpawnDescriptor.from(Vector2i.from(2, 25), .level_first);
-    pub const spawn_level_poison_corridor_2 = SpawnDescriptor.from(Vector2i.from(96, 126), .level_first);
-    pub const spawn_level_dash_0 = SpawnDescriptor.from(Vector2i.from(88, 100), .level_first);
-    pub const spawn_level_the_hueco_1 = SpawnDescriptor.from(Vector2i.from(91, 100), .level_first);
+    pub const spawn_level_slime_0 = SpawnDescriptor.from(Vector2i.from(31, 132), .level_slime);
+    pub const spawn_level_slime_1 = SpawnDescriptor.from(Vector2i.from(49, 132), .level_slime);
+    pub const spawn_level_two_directions_0 = SpawnDescriptor.from(Vector2i.from(61, 132), .level_two_directions);
+    pub const spawn_level_two_directions_1 = SpawnDescriptor.from(Vector2i.from(88, 133), .level_two_directions);
+    pub const spawn_level_poison_corridor_0 = SpawnDescriptor.from(Vector2i.from(91, 133), .level_poison_corridor);
+    pub const spawn_level_poison_corridor_1 = SpawnDescriptor.from(Vector2i.from(118, 133), .level_poison_corridor);
+    pub const spawn_level_poison_corridor_2 = SpawnDescriptor.from(Vector2i.from(96, 126), .level_poison_corridor);
+    pub const spawn_level_entrance_to_something_0 = SpawnDescriptor.from(Vector2i.from(121, 133), .level_entrance_to_something);
+    pub const spawn_up_the_rope_0 = SpawnDescriptor.from(Vector2i.from(4, 134), .level_first_floor);
+    pub const spawn_level_first_floor_0 = SpawnDescriptor.from(Vector2i.from(81, 116), .level_first_floor);
+    pub const spawn_level_the_hueco_0 = SpawnDescriptor.from(Vector2i.from(91, 116), .level_the_hueco);
+    pub const spawn_level_the_hueco_1 = SpawnDescriptor.from(Vector2i.from(91, 100), .level_the_hueco);
+    pub const spawn_level_dash_0 = SpawnDescriptor.from(Vector2i.from(88, 100), .level_dash);
+    pub const spawn_level_last_level_0 = SpawnDescriptor.from(Vector2i.from(2, 25), .level_last_level);
 
     pub const DoorDescriptor = struct {
         /// indexes into a `tic80.Map` 
