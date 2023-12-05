@@ -42,14 +42,14 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
                     };
                     return &magic.storage;
                 }
-            } else unreachable;
+            } else @panic("The type " ++ @typeName(T) ++ " is not present in the tuple `types` provided");
         }
 
         pub fn getComponentId(comptime T: type) usize {
             inline for (@typeInfo(@TypeOf(types)).Struct.fields, 0..) |field, i| {
                 const t = @field(types, field.name);
                 if (T == t) return i;
-            } else unreachable;
+            } else @panic("The type " ++ @typeName(T) ++ " is not present in the tuple `types` provided");
         }
 
         entities: std.ArrayList(EntityData),
