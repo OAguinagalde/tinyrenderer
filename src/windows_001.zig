@@ -4,6 +4,7 @@ const graphics = @import("graphics.zig");
 const tic80 = @import("tic80.zig");
 const physics = @import("physics.zig");
 
+const BoundingBox = math.BoundingBox;
 const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
@@ -35,6 +36,8 @@ const App = struct {
     random: std.rand.Random,
     doors: []const *const Assets.DoorDescriptor,
     texts: []const *const Assets.StaticTextDescriptor,
+    entities_damage_dealers: HitboxSystem,
+    player_damage_dealers: HitboxSystem,
 };
 
 var app: App = undefined;
@@ -54,6 +57,8 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
     app.particles = try Particles.init(allocator);
     app.rng_engine = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
     app.random = app.rng_engine.random();
+    app.entities_damage_dealers = HitboxSystem.init(allocator);
+    app.player_damage_dealers = HitboxSystem.init(allocator);
     app.doors = undefined; // doors are set on load_level
     app.texts = undefined; // texts are set on load_level
     try load_level(Assets.spawn_start_0, 0);
@@ -102,7 +107,12 @@ pub fn update(platform: *Platform) !bool {
             Vector2f.from((0.5 + (app.random.float(f32) * 0.3)) * player_direction_offset, (app.random.float(f32) * 0.6) - 0.2).scale(0.74),
             60,
         ));
-        // TODO hitbox
+        const damage = Assets.config.player.attack.damage;
+        const hitbox = Assets.config.player.attack.hitbox_relative_to_position.scale(Vector2f.from(player_direction_offset, 1)).offset(app.player.pos);
+        const behaviour: Assets.HitboxType = .once_per_target;
+        const duration = Assets.config.player.attack.animation.duration;
+        const knockback = Vector2f.from(Assets.config.player.attack.knockback_strength * player_direction_offset, 0);
+        try app.entities_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, platform.frame);
     }
 
     const player_floored = Physics.apply(&app.player.physical_component);
@@ -204,6 +214,12 @@ pub fn update(platform: *Platform) !bool {
             const position_component = (try app.particles.getComponent(Vector2f, e)).?;
             const radius = render_component.radius;
             try app.renderer_shapes.add_quad(position_component.*, Vector2f.from(radius, radius), render_component.color);
+        }
+        for (app.player_damage_dealers.hitboxes.items) |hb| {
+            try app.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(255,0,0,100));
+        }
+        for (app.entities_damage_dealers.hitboxes.items) |hb| {
+            try app.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(0,255,0,100));
         }
     }
     app.renderer_shapes.render(
@@ -466,7 +482,7 @@ const EntitySystem = struct {
                     const slime_component = (try self.entities.getComponent(Assets.EntitySlimeRuntime, e)).?;
                     const charge_duration = 60;
                     const launch_speed = 0.6;
-
+                    var set_slime_body_as_hitbox = false;
                     const is_attacking = slime_component.attack_start_frame != 0;
                     if (!is_attacking) {
                         if (in_attack_range) {
@@ -497,7 +513,9 @@ const EntitySystem = struct {
                             // launch towards the player
                             phys_component.velocity.x = (launch_speed * switch(slime_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0});
                             phys_component.velocity.y = 0.07;
-                            // TODO set hitbox
+                            
+                            set_slime_body_as_hitbox = true;
+                            
                             // TODO animation "damaging hitbox"
                             // TODO sfx "launch"
                         }
@@ -508,12 +526,22 @@ const EntitySystem = struct {
                         }
                         else {
                             // TODO set hitbox
+                            set_slime_body_as_hitbox = true;
                         }
                     }
 
                     const is_floored = Physics.apply(phys_component);
                     pos_component.* = Physics.calculate_real_pos(phys_component.physical_pos);
                     _ = is_floored;
+
+                    if (set_slime_body_as_hitbox) {
+                        const damage = entity_desc.attack_dmg;
+                        const hitbox = BoundingBox(f32).from(4, 0, -3, 3).offset(pos_component.*);
+                        const behaviour: Assets.HitboxType = .once_per_frame;
+                        const duration = 1;
+                        const knockback = phys_component.velocity;
+                        try app.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
+                    }
                 },
                 .knight_1 => {
                     const knight_component = (try self.entities.getComponent(Assets.EntityKnight1Runtime, e)).?;
@@ -924,6 +952,41 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
         }
     };
 }
+
+const HitboxSystem = struct {
+    
+    pub const HitboxData = struct {
+        bb: BoundingBox(f32),
+        dmg: i32,
+        knockback: Vector2f,
+        behaviour: Assets.HitboxType,
+        duration: usize,
+        frame: usize,
+        
+        pub inline fn from(bb: BoundingBox(f32), dmg: i32, knockback: Vector2f, behaviour: Assets.HitboxType, duration: usize, frame: usize) HitboxData {
+            return HitboxData {
+                .bb = bb,
+                .dmg = dmg,
+                .knockback = knockback,
+                .behaviour = behaviour,
+                .duration = duration,
+                .frame = frame,
+            };
+        }
+    };
+    
+    hitboxes: std.ArrayList(HitboxData),
+    
+    pub fn init(allocator: std.mem.Allocator) HitboxSystem {
+        return .{
+            .hitboxes = std.ArrayList(HitboxData).init(allocator),
+        };
+    }
+
+    pub fn add(self: *HitboxSystem, bb: BoundingBox(f32), dmg: i32, knockback: Vector2f, behaviour: Assets.HitboxType, duration: usize, frame: usize) !void {
+        try self.hitboxes.append(HitboxData.from(bb, dmg, knockback, behaviour, duration, frame));
+    }
+};
 
 /// in tic's maps, the Y points downwards. This functions "corrects" any y coordinate when referencing a tile in a map
 inline fn correct_y(thing: anytype) @TypeOf(thing) {
@@ -1349,8 +1412,17 @@ pub const Assets = struct {
                 pub const damage = 10;
                 pub const animation = animation_attack_1;
                 pub const range = 2;
+                pub const hitbox_relative_to_position = BoundingBox(f32).from(6, 1, 3, 9);
+                pub const knockback_strength = 0.22;
             };
         };
+    };
+
+    const HitboxType = enum {
+        /// once the hitbox hits an enemy, it cannot hit the same enemy again for the duration of the hitbox
+        once_per_target,
+        /// once hit per frame, as many times as it hits
+        once_per_frame,
     };
     
     pub const palette = tic80.Palette {
