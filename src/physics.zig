@@ -117,6 +117,9 @@ pub fn PhysicalWorld(comptime config: PhysicsConfig, comptime is_collision: fn(V
             var pos = PhysicalPosDecomposed.from(o.physical_pos);
             var vel: Vector2f = o.velocity;
             
+            // Apply gravity
+            vel.y -= (config.gravity * o.weight);
+
             // Horizontal movement
             if (!std.math.approxEqAbs(f32, vel.x, 0, std.math.floatEps(f32))) {
 
@@ -244,7 +247,6 @@ pub fn PhysicalWorld(comptime config: PhysicsConfig, comptime is_collision: fn(V
             }
 
             // Apply forces and frictions
-            vel.y -= (config.gravity * o.weight);
             if (floor) {
                 vel.x *= config.friction_floor;
             }
