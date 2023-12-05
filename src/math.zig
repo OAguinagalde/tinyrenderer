@@ -875,6 +875,67 @@ fn map_range_to_range_normalized(n: f32, from: f32, to: f32, map_from: f32, map_
     return ((n - from) * factor) + map_from;
 }
 
-test {
-    _ = M44;
+pub fn BoundingBox(comptime T: type) type {
+    return struct {
+
+        const Self = @This();
+        const Pair = struct {
+            x: T, y: T,
+            pub inline fn from(x: T, y: T) Pair {
+                return .{ .x = x, .y = y };
+            }
+        };
+
+        top: T,
+        bottom: T,
+        left: T,
+        right: T,
+
+        pub inline fn from(top: T, bottom: T, left: T, right: T) Self {
+            return .{
+                .top = top,
+                .bottom = bottom,
+                .left = left,
+                .right = right,
+            };
+        }
+
+        /// `point` can be anything that has fields `x: T` and `y: T`
+        pub fn contains(self: Self, point: anytype) bool {
+            return point.x >= self.left and point.x <= self.right and point.y >= self.bottom and point.y <= self.top;
+        }
+
+        pub fn overlaps(self: Self, other: Self) bool {
+            return self.contains(Pair.from(other.top, other.left))
+                or self.contains(Pair.from(other.top, other.right))
+                or self.contains(Pair.from(other.bottom, other.left))
+                or self.contains(Pair.from(other.bottom, other.right));
+        }
+
+        /// `factor` can be anything that has fields `x: T` and `y: T`
+        /// scales `top` and `bottom` by `factor.y` and `left` and `right` by `factor.x`
+        pub fn scale(self: Self, factor: anytype) Self {
+            var new = Self.from(
+                self.top * factor.y,
+                self.bottom * factor.y,
+                self.left * factor.x,
+                self.right * factor.x,
+            );
+            // make sure left is still left and top is still top
+            if (factor.x < 0) std.mem.swap(T, &new.left, &new.right);
+            if (factor.y < 0) std.mem.swap(T, &new.top, &new.bottom);
+            return new;
+        }
+
+        /// `os` can be anything that has fields `x: T` and `y: T`
+        pub fn offset(self: Self, os: anytype) Self {
+            return Self.from(
+                self.top + os.y,
+                self.bottom + os.y,
+                self.left + os.x,
+                self.right + os.x,
+            );
+        }
+        
+    };
 }
