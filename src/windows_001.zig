@@ -22,6 +22,7 @@ const App = struct {
     text_renderer: TextRenderer(BGRA, 1024, 0.8),
     renderer: tic80.Renderer(BGRA, tic80.Shader(BGRA)),
     renderer_quads: tic80.QuadRenderer(BGRA, tic80.QuadShader(BGRA)),
+    // TODO the blending renderer still uses the 3d pipeline, change to the 2d quad pipeline instead
     renderer_blending: tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)),
     renderer_shapes: ShapeRenderer(BGRA, RGB.from(255,255,255)),
     entities: EntitySystem,
@@ -62,7 +63,7 @@ pub fn update(platform: *Platform) !bool {
     platform.pixel_buffer.clear(BGRA.make(100, 149, 237,255));
     
     if (platform.keys['Q']) try load_level(Assets.spawn_start_0, platform.frame);
-    if (platform.keys['E']) try load_level(Assets.spawn_level_slime_0, platform.frame);
+    if (platform.keys['E']) try load_level(Assets.spawn_up_the_rope_0, platform.frame);
     
     if (app.player.attack_start_frame > 0 and platform.frame - app.player.attack_start_frame >= Assets.config.player.attack.cooldown) {
         app.player.attack_start_frame = 0;
@@ -126,11 +127,10 @@ pub fn update(platform: *Platform) !bool {
         if (player_tile.x == door_tile.x and player_tile.y == door_tile.y) {
             try load_level(door.destination.*, platform.frame);
             return true;
-            // TODO load screen?
         }
     }
 
-    try app.entities.physics_update(app.player.pos);
+    try app.entities.entities_update(app.player.pos, platform.frame);
 
     app.camera.move_to(app.player.pos, @floatFromInt(@divExact(platform.w, 4)), @floatFromInt(@divExact(platform.h, 4)));
 
@@ -215,15 +215,16 @@ pub fn update(platform: *Platform) !bool {
     const color = RGBA.make(255,255,255,255);
     const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(app.player.physical_component.physical_pos);
     const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*1) - 4).to_vec2f(), "ms {d: <9.2}", .{platform.ms}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*2) - 4).to_vec2f(), "fps {d:0.4}", .{platform.ms / 1000*60}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*3) - 4).to_vec2f(), "frame {}", .{platform.frame}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*4) - 4).to_vec2f(), "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*5) - 4).to_vec2f(), "mouse {} {}", .{platform.mouse.x, platform.mouse.y}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*6) - 4).to_vec2f(), "dimensions {} {}", .{platform.w, platform.h}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*7) - 4).to_vec2f(), "physical pos {d:.4} {d:.4}", .{app.player.physical_component.physical_pos.x, app.player.physical_component.physical_pos.y}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*8) - 4).to_vec2f(), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*9) - 4).to_vec2f(), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*1) -  6).to_vec2f(), "ms {d: <9.2}", .{platform.ms}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*2) -  6).to_vec2f(), "fps {d:0.4}", .{platform.ms / 1000*60}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*3) -  6).to_vec2f(), "frame {}", .{platform.frame}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*4) -  6).to_vec2f(), "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*5) -  6).to_vec2f(), "mouse {} {}", .{platform.mouse.x, platform.mouse.y}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*6) -  6).to_vec2f(), "dimensions {} {}", .{platform.w, platform.h}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*7) -  6).to_vec2f(), "physical pos {d:.4} {d:.4}", .{app.player.physical_component.physical_pos.x, app.player.physical_component.physical_pos.y}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*8) -  6).to_vec2f(), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*9) -  6).to_vec2f(), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
+    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*10) - 6).to_vec2f(), "vel {d:.5} {d:.5}", .{app.player.physical_component.velocity.x, app.player.physical_component.velocity.y}, color);
     app.debug_text_renderer.render_all(
         platform.pixel_buffer,
         M33.orthographic_projection(0, @floatFromInt(platform.w), @floatFromInt(platform.h), 0),
@@ -376,6 +377,7 @@ const RuntimeAnimation = struct {
         const normalized: usize = total_frames % self.animation.duration;
         const time_between_animation_frames: usize = @divFloor(self.animation.duration, self.animation.sprites.len);
         const animation_index: usize = @divFloor(normalized, time_between_animation_frames);
+        // TODO there is bug in which `animation_index` == `animation.sprites.len`
         return self.animation.sprites[animation_index];
     }
     pub fn from(animation: Assets.AnimationDescriptor, frame: usize) RuntimeAnimation {
@@ -389,7 +391,7 @@ const RuntimeAnimation = struct {
 const EntitySystem = struct {
 
     const EntityPosition = Vector2f;
-    const EntityStorage = Ecs( .{ *const Assets.EntityDescriptor, Physics.PhysicalObject, EntityPosition, RuntimeAnimation, Direction }, 15);
+    const EntityStorage = Ecs( .{ Assets.EntityType, Physics.PhysicalObject, EntityPosition, RuntimeAnimation, Direction, Assets.EntitySlimeRuntime, Assets.EntityKnight1Runtime, Assets.EntityKnight2Runtime }, 15);
     
     entities: EntityStorage,
     
@@ -403,43 +405,221 @@ const EntitySystem = struct {
         self.entities.deleteAll();
     }
 
-    pub fn spawn(self: *EntitySystem, entity: *const Assets.EntityDescriptor, pos: Vector2f, frame_number: usize) !void {
+    pub fn spawn(self: *EntitySystem, entity_type: Assets.EntityType, pos: Vector2f, frame_number: usize) !void {
+        const entity_desc = Assets.EntityDescriptor.from(entity_type);
         const e = try self.entities.newEntity();
         const phys_component = try self.entities.setComponent(Physics.PhysicalObject, e);
         const pos_component = try self.entities.setComponent(EntityPosition, e);
         const dir_component = try self.entities.setComponent(Direction, e);
         const anim_component = try self.entities.setComponent(RuntimeAnimation, e);
-        const descriptor_component = try self.entities.setComponent(*const Assets.EntityDescriptor, e);
-        descriptor_component.* = entity;
-        phys_component.* = Physics.PhysicalObject.from(pos, entity.weight);
+        const type_component = try self.entities.setComponent(Assets.EntityType, e);
+        switch (entity_type) {
+            .slime => {
+                const runtime_component = try self.entities.setComponent(Assets.EntitySlimeRuntime, e);
+                runtime_component.* = Assets.EntitySlimeRuntime.init();
+            },
+            .knight_1 => {
+                const runtime_component = try self.entities.setComponent(Assets.EntityKnight1Runtime, e);
+                runtime_component.* = Assets.EntityKnight1Runtime.init();
+            },
+            .knight_2 => {
+                const runtime_component = try self.entities.setComponent(Assets.EntityKnight2Runtime, e);
+                runtime_component.* = Assets.EntityKnight2Runtime.init();
+            },
+            .archer => {
+                const runtime_component = try self.entities.setComponent(Assets.EntityArcherRuntime, e);
+                runtime_component.* = Assets.EntityArcherRuntime.init();
+            },
+            .slime_king => {
+                const runtime_component = try self.entities.setComponent(Assets.EntitySlimeKingRuntime, e);
+                runtime_component.* = Assets.EntitySlimeKingRuntime.init();
+            },
+        }
+        type_component.* = entity_type;
+        phys_component.* = Physics.PhysicalObject.from(pos, entity_desc.weight);
         anim_component.* = RuntimeAnimation {
-            .animation = entity.default_animation.*,
+            .animation = entity_desc.default_animation.*,
             .frame_start = frame_number,
         };
         pos_component.* = pos;
         dir_component.* = .Right;
     }
 
-    pub fn physics_update(self: *EntitySystem, player_pos: Vector2f) !void {
+    pub fn entities_update(self: *EntitySystem, player_pos: Vector2f, frame: usize) !void {
         var it = EntityStorage.view(.{Physics.PhysicalObject, EntityPosition}).iterator();
         while (it.next(&self.entities)) |e| {
             const phys_component = (try self.entities.getComponent(Physics.PhysicalObject, e)).?;
             const pos_component = (try self.entities.getComponent(EntityPosition, e)).?;
-            const desc_component = (try self.entities.getComponent(*const Assets.EntityDescriptor, e)).?;
             const dir_component = (try self.entities.getComponent(Direction, e)).?;
-            
-            const entity_to_player = player_pos.substract(pos_component.*);
-            const dist = entity_to_player.magnitude();
-            if (dist < desc_component.*.*.chase_range) {
-                // do chase
-                const is_right = entity_to_player.x>0;
-                dir_component.* = if (is_right) .Right else .Left;
-                phys_component.velocity.x = (desc_component.*.speed * (if (is_right) @as(f32, 1) else @as(f32, -1)));
-            }
+            const type_component = (try self.entities.getComponent(Assets.EntityType, e)).?;
+            const entity_desc = Assets.EntityDescriptor.from(type_component.*);
 
-            const is_floored = Physics.apply(phys_component);
-            pos_component.* = Physics.calculate_real_pos(phys_component.physical_pos);
-            _ = is_floored;
+            const entity_to_player = player_pos.substract(pos_component.*);
+            const dist_to_player = entity_to_player.magnitude();
+            const is_right = entity_to_player.x>0;
+            const dir_f32: f32 = if (is_right) 1 else -1;
+            const in_attack_range = dist_to_player <= entity_desc.attack_range;
+            const in_chase_range = dist_to_player <= entity_desc.chase_range;
+
+            switch (type_component.*) {
+                .slime => {
+                    const slime_component = (try self.entities.getComponent(Assets.EntitySlimeRuntime, e)).?;
+                    const charge_duration = 60;
+                    const launch_speed = 0.6;
+
+                    const is_attacking = slime_component.attack_start_frame != 0;
+                    if (!is_attacking) {
+                        if (in_attack_range) {
+                            // the slime will be "charging" the launch from frame until frame+charge_duration
+                            slime_component.attack_start_frame = frame;
+                            slime_component.attack_direction = if (is_right) .Right else .Left;
+                            dir_component.* = if (is_right) .Right else .Left;
+                            // TODO animation "charging"
+                            // TODO sfx "charging"
+                        }
+                        else if (in_chase_range) {
+                            phys_component.velocity.x = (entity_desc.speed * dir_f32);
+                            dir_component.* = if (is_right) .Right else .Left;
+                            // TODO climb wall
+                        }
+                        else {
+                            // TODO animation "iddle"
+                        }
+                    }
+                    else {
+                        const frames_since_attack_start = frame - slime_component.attack_start_frame;
+
+                        // either charging, attacking (when its launching agains player), recovering
+                        if (frames_since_attack_start < charge_duration) {
+                            // do nothing, keep charging
+                        }
+                        else if (frames_since_attack_start == charge_duration) {
+                            // launch towards the player
+                            phys_component.velocity.x = (launch_speed * switch(slime_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0});
+                            phys_component.velocity.y = 0.07;
+                            // TODO set hitbox
+                            // TODO animation "damaging hitbox"
+                            // TODO sfx "launch"
+                        }
+                        else if (phys_component.velocity.x == 0 and phys_component.velocity.y == 0) {
+                            // back to normal
+                            slime_component.attack_start_frame = 0;
+                            // TODO animation "normal"
+                        }
+                        else {
+                            // TODO set hitbox
+                        }
+                    }
+
+                    const is_floored = Physics.apply(phys_component);
+                    pos_component.* = Physics.calculate_real_pos(phys_component.physical_pos);
+                    _ = is_floored;
+                },
+                .knight_1 => {
+                    const knight_component = (try self.entities.getComponent(Assets.EntityKnight1Runtime, e)).?;
+                    
+                    const charge_duration = 35;
+                    const chain_charge_duration = 35;
+                    const cooldown_duration_1 = 60;
+                    const cooldown_duration_2 = 150;
+
+                    if (knight_component.state == .idle) {
+                        if (in_attack_range) {
+                            // start attack
+                            knight_component.state = .charging;
+                            knight_component.state_change_frame = frame;
+                            knight_component.attack_direction = if (is_right) .Right else .Left;
+                            dir_component.* = if (is_right) .Right else .Left;
+                            const attack_dir_f32 = switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0};
+                            _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.animation_preparing_attack, frame), pos_component.add(Vector2f.from(attack_dir_f32*3,0)), false, frame);
+                            // TODO knight animation "charging"?
+                            // TODO sfx "charging"
+                        }
+                        else if (in_chase_range) {
+                            phys_component.velocity.x = (entity_desc.speed * dir_f32);
+                            dir_component.* = if (is_right) .Right else .Left;
+                            // TODO jump or if cant, then taunt
+                        }
+                        else {
+                            // TODO animation "idle"
+                        }
+                    }
+
+                    const attack_dir_f32 = switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0};
+                    
+                    if (knight_component.state == .charging) {
+                        const frames_since_charge_start = frame - knight_component.state_change_frame;
+                        if (frames_since_charge_start == charge_duration) {
+                            // charge complete, so swing blade in front
+                            // TODO Hitbox in front
+                            const mirror_animation = switch(knight_component.attack_direction){.Right=> false, .Left=> true};
+                            _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.animation_attack_1, frame), pos_component.add(Vector2f.from(attack_dir_f32*7,0)), mirror_animation, frame);
+                            // TODO sfx "swing"
+                            phys_component.velocity.x = (entity_desc.speed * switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0});
+                            knight_component.state = .attack_1_cooldown;
+                            knight_component.state_change_frame = frame;
+                        }
+                    }
+
+                    if (knight_component.state == .attack_1_cooldown) {
+                        const frames_since_attack = frame - knight_component.state_change_frame;
+                        if (frames_since_attack < cooldown_duration_1) {
+                            if (in_attack_range and (is_right == (knight_component.attack_direction == .Right))) {
+                                // if player still in front, chain attack
+                                // TODO sfx "about to chain attack"
+                                _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.animation_preparing_attack, frame), pos_component.add(Vector2f.from(attack_dir_f32*3,0)), false, frame);
+                                knight_component.state = .chaining;
+                                knight_component.state_change_frame = frame;
+                            }
+                        }
+                        else if (frames_since_attack == cooldown_duration_1) {
+                            // cooled down from first attack
+                            knight_component.state = .idle;
+                            knight_component.state_change_frame = 0;
+                        }
+                    }
+
+                    if (knight_component.state == .chaining) {
+                        const frames_since_chaining_started = frame - knight_component.state_change_frame;
+                        if (frames_since_chaining_started == chain_charge_duration) {
+                            // TODO attack in front
+                            // TODO play animation "swing blade"
+                            // TODO sfx "swing"
+                            // TODO move a bit to front (momentum)
+                            const mirror_animation = switch(knight_component.attack_direction){.Right=> false, .Left=> true};
+                            _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.animation_attack_1, frame), pos_component.add(Vector2f.from(attack_dir_f32*7,0)), mirror_animation, frame);
+                            // TODO sfx "swing"
+                            phys_component.velocity.x = (entity_desc.speed * switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0});
+                            knight_component.state = .attack_2_cooldown;
+                            knight_component.state_change_frame = frame;
+                        }
+                    }
+
+                    if (knight_component.state == .attack_2_cooldown) {
+                        const frames_since_attack = frame - knight_component.state_change_frame;
+                        if (frames_since_attack == cooldown_duration_2) {
+                            // cooled down from attack 2, back to idle
+                            knight_component.state = .idle;
+                            knight_component.state_change_frame = 0;
+                        }
+                    }
+
+                    const is_floored = Physics.apply(phys_component);
+                    pos_component.* = Physics.calculate_real_pos(phys_component.physical_pos);
+                    _ = is_floored;
+                },
+                .knight_2 => {
+                    const knight_component = (try self.entities.getComponent(Assets.EntityKnight2Runtime, e)).?;
+                    _ = knight_component;
+                    if (in_chase_range) {
+                        phys_component.velocity.x = (entity_desc.speed * dir_f32);
+                    }
+                    const is_floored = Physics.apply(phys_component);
+                    pos_component.* = Physics.calculate_real_pos(phys_component.physical_pos);
+                    _ = is_floored;
+                },
+                else => unreachable
+            }
         }
     }
 
@@ -781,8 +961,8 @@ pub const Assets = struct {
         background: *const LevelBackgroundDescriptor,
         doors: []const *const DoorDescriptor,
         static_texts: []const *const StaticTextDescriptor,
-        entity_spawns: []const *const EntitySpawnDescriptor,
-        fn from(background: *const LevelBackgroundDescriptor, doors: []const *const DoorDescriptor, static_texts: []const *const StaticTextDescriptor, entity_spawns: []const *const EntitySpawnDescriptor) LevelDescriptor {
+        entity_spawns: []const EntitySpawnDescriptor,
+        fn from(background: *const LevelBackgroundDescriptor, doors: []const *const DoorDescriptor, static_texts: []const *const StaticTextDescriptor, entity_spawns: []const EntitySpawnDescriptor) LevelDescriptor {
             return LevelDescriptor {
                 .background = background,
                 .doors = doors,
@@ -796,42 +976,42 @@ pub const Assets = struct {
         &level_bg_first,
         &[_] *const DoorDescriptor { &door_level_first_0 },
         &[_] *const StaticTextDescriptor { &static_text_tutorial_0, &static_text_tutorial_1 },
-        &[_] *const EntitySpawnDescriptor { },
+        &[_] EntitySpawnDescriptor { },
     );
 
     pub const level_slime = LevelDescriptor.from(
         &level_bg_slime,
         &[_] *const DoorDescriptor { &door_level_slime_0, &door_level_slime_1 },
         &[_] *const StaticTextDescriptor { &static_text_tutorial_2 },
-        &[_] *const EntitySpawnDescriptor { &entity_spawn_enemy_slime_3, &entity_spawn_enemy_slime_4 },
+        &[_] EntitySpawnDescriptor { entity_spawn_enemy_slime_3, entity_spawn_enemy_slime_4 },
     );
 
     pub const level_two_directions = LevelDescriptor.from(
         &level_bg_two_directions,
         &[_] *const DoorDescriptor { &door_level_two_directions_0, &door_level_two_directions_1, &door_level_two_directions_2 },
         &[_] *const StaticTextDescriptor { },
-        &[_] *const EntitySpawnDescriptor { &entity_spawn_enemy_slime_0, &entity_spawn_enemy_slime_1, &entity_spawn_enemy_slime_2 },
+        &[_] EntitySpawnDescriptor { entity_spawn_enemy_slime_0, entity_spawn_enemy_slime_1, entity_spawn_enemy_slime_2 },
     );
 
     pub const level_poison_corridor = LevelDescriptor.from(
         &level_bg_poison_corridor,
         &[_] *const DoorDescriptor { &door_level_poison_corridor_0, &door_level_poison_corridor_1 },
         &[_] *const StaticTextDescriptor { },
-        &[_] *const EntitySpawnDescriptor { },
+        &[_] EntitySpawnDescriptor { },
     );
 
     pub const level_entrance_to_something = LevelDescriptor.from(
         &level_bg_entrance_to_something,
         &[_] *const DoorDescriptor { &door_level_entrance_to_something_0 },
         &[_] *const StaticTextDescriptor { },
-        &[_] *const EntitySpawnDescriptor { &entity_spawn_enemy_slime_king_0 },
+        &[_] EntitySpawnDescriptor { entity_spawn_enemy_slime_king_0 },
     );
 
     pub const level_first_floor = LevelDescriptor.from(
         &level_bg_first_floor,
         &[_] *const DoorDescriptor { &door_level_first_floor_0 },
         &[_] *const StaticTextDescriptor { },
-        &[_] *const EntitySpawnDescriptor { &entity_spawn_enemy_knight_0, &entity_spawn_enemy_knight_1 },
+        &[_] EntitySpawnDescriptor { entity_spawn_enemy_knight_0, entity_spawn_enemy_knight_1 },
     );
 
     pub const level_the_hueco = LevelDescriptor.from(
@@ -852,21 +1032,21 @@ pub const Assets = struct {
             &door_level_the_hueco_3
         },
         &[_] *const StaticTextDescriptor { },
-        &[_] *const EntitySpawnDescriptor { },
+        &[_] EntitySpawnDescriptor { },
     );
 
     pub const level_dash = LevelDescriptor.from(
         &level_bg_dash,
         &[_] *const DoorDescriptor { &door_level_dash },
         &[_] *const StaticTextDescriptor { },
-        &[_] *const EntitySpawnDescriptor { },
+        &[_] EntitySpawnDescriptor { },
     );
 
     pub const level_last_level = LevelDescriptor.from(
         &level_bg_last_level,
         &[_] *const DoorDescriptor { },
         &[_] *const StaticTextDescriptor { },
-        &[_] *const EntitySpawnDescriptor { },
+        &[_] EntitySpawnDescriptor { },
     );
 
     pub const LevelBackgroundDescriptor = struct {
@@ -941,7 +1121,7 @@ pub const Assets = struct {
     pub const spawn_level_poison_corridor_1 = SpawnDescriptor.from(Vector2i.from(118, 133), .level_poison_corridor);
     pub const spawn_level_poison_corridor_2 = SpawnDescriptor.from(Vector2i.from(96, 126), .level_poison_corridor);
     pub const spawn_level_entrance_to_something_0 = SpawnDescriptor.from(Vector2i.from(121, 133), .level_entrance_to_something);
-    pub const spawn_up_the_rope_0 = SpawnDescriptor.from(Vector2i.from(4, 134), .level_first_floor);
+    pub const spawn_up_the_rope_0 = SpawnDescriptor.from(Vector2i.from(65, 116), .level_first_floor);
     pub const spawn_level_first_floor_0 = SpawnDescriptor.from(Vector2i.from(81, 116), .level_first_floor);
     pub const spawn_level_the_hueco_0 = SpawnDescriptor.from(Vector2i.from(91, 116), .level_the_hueco);
     pub const spawn_level_the_hueco_1 = SpawnDescriptor.from(Vector2i.from(91, 100), .level_the_hueco);
@@ -962,7 +1142,7 @@ pub const Assets = struct {
     pub const door_level_slime_1 = DoorDescriptor.from(Vector2i.from(50, 132), &spawn_level_two_directions_0);
     pub const door_level_two_directions_0 = DoorDescriptor.from(Vector2i.from(60, 132), &spawn_level_slime_1);
     pub const door_level_two_directions_1 = DoorDescriptor.from(Vector2i.from(89, 133), &spawn_level_poison_corridor_0);
-    pub const door_level_two_directions_2 = DoorDescriptor.from(Vector2i.from(83, 129), &spawn_level_first_floor_0);
+    pub const door_level_two_directions_2 = DoorDescriptor.from(Vector2i.from(83, 129), &spawn_up_the_rope_0);
     pub const door_level_poison_corridor_0 = DoorDescriptor.from(Vector2i.from(90, 133), &spawn_level_two_directions_1);
     pub const door_level_poison_corridor_1 = DoorDescriptor.from(Vector2i.from(119, 133), &spawn_level_entrance_to_something_0);
     pub const door_level_entrance_to_something_0 = DoorDescriptor.from(Vector2i.from(120, 133), &spawn_level_poison_corridor_1);
@@ -1000,24 +1180,74 @@ pub const Assets = struct {
     pub const EntitySpawnDescriptor = struct {
         /// indexes into a `tic80.Map` 
         pos: Vector2i,
-        entity: *const EntityDescriptor,
-        pub inline fn from(pos: Vector2i, entity: *const EntityDescriptor) EntitySpawnDescriptor {
+        entity: EntityType,
+        pub inline fn from(pos: Vector2i, entity: EntityType) EntitySpawnDescriptor {
             return EntitySpawnDescriptor  { .pos = pos, .entity = entity };
         }
     };
     
-    pub const entity_spawn_enemy_slime_king_0 = EntitySpawnDescriptor.from(Vector2i.from(131, 131), &entity_slime_king);
-    pub const entity_spawn_enemy_knight_0 = EntitySpawnDescriptor.from(Vector2i.from(71, 116), &entity_knight_1);
-    pub const entity_spawn_enemy_knight_1 = EntitySpawnDescriptor.from(Vector2i.from(77, 116), &entity_knight_2);
-    pub const entity_spawn_enemy_slime_0 = EntitySpawnDescriptor.from(Vector2i.from(68, 132), &entity_slime);
-    pub const entity_spawn_enemy_slime_1 = EntitySpawnDescriptor.from(Vector2i.from(72, 132), &entity_slime);
-    pub const entity_spawn_enemy_slime_2 = EntitySpawnDescriptor.from(Vector2i.from(81, 129), &entity_slime);
-    pub const entity_spawn_enemy_slime_3 = EntitySpawnDescriptor.from(Vector2i.from(36, 132), &entity_slime);
-    pub const entity_spawn_enemy_slime_4 = EntitySpawnDescriptor.from(Vector2i.from(48, 132), &entity_slime);
-    pub const entity_spawn_enemy_knight_2 = EntitySpawnDescriptor.from(Vector2i.from(7, 25), &entity_knight_1);
-    pub const entity_spawn_enemy_knight_3 = EntitySpawnDescriptor.from(Vector2i.from(13, 23), &entity_knight_2);
-    pub const entity_spawn_enemy_knight_4 = EntitySpawnDescriptor.from(Vector2i.from(15, 20), &entity_knight_1);
-    pub const entity_spawn_enemy_knight_5 = EntitySpawnDescriptor.from(Vector2i.from(21, 25), &entity_knight_2);
+    pub const entity_spawn_enemy_slime_king_0 = EntitySpawnDescriptor.from(Vector2i.from(131, 131), .slime_king);
+    pub const entity_spawn_enemy_knight_0 = EntitySpawnDescriptor.from(Vector2i.from(71, 116), .knight_1);
+    pub const entity_spawn_enemy_knight_1 = EntitySpawnDescriptor.from(Vector2i.from(77, 116), .knight_2);
+    pub const entity_spawn_enemy_slime_0 = EntitySpawnDescriptor.from(Vector2i.from(68, 132), .slime);
+    pub const entity_spawn_enemy_slime_1 = EntitySpawnDescriptor.from(Vector2i.from(72, 132), .slime);
+    pub const entity_spawn_enemy_slime_2 = EntitySpawnDescriptor.from(Vector2i.from(81, 129), .slime);
+    pub const entity_spawn_enemy_slime_3 = EntitySpawnDescriptor.from(Vector2i.from(36, 132), .slime);
+    pub const entity_spawn_enemy_slime_4 = EntitySpawnDescriptor.from(Vector2i.from(48, 132), .slime);
+    pub const entity_spawn_enemy_knight_2 = EntitySpawnDescriptor.from(Vector2i.from(7, 25), .knight_1);
+    pub const entity_spawn_enemy_knight_3 = EntitySpawnDescriptor.from(Vector2i.from(13, 23), .knight_2);
+    pub const entity_spawn_enemy_knight_4 = EntitySpawnDescriptor.from(Vector2i.from(15, 20), .knight_1);
+    pub const entity_spawn_enemy_knight_5 = EntitySpawnDescriptor.from(Vector2i.from(21, 25), .knight_2);
+
+    const EntityType = enum {
+        slime,
+        knight_1,
+        knight_2,
+        archer,
+        slime_king,
+    };
+
+    const EntitySlimeRuntime = struct {
+        attack_start_frame: usize,
+        attack_direction: Direction,
+        pub fn init() EntitySlimeRuntime {
+            return .{
+                .attack_start_frame = 0,
+                .attack_direction = .Right,
+            };
+        }
+    };
+
+    const EntityArcherRuntime = struct {
+        pub fn init() EntityArcherRuntime { return .{}; }
+    };
+
+    const EntitySlimeKingRuntime = struct {
+        pub fn init() EntitySlimeKingRuntime { return .{}; }
+    };
+    
+    const EntityKnight1Runtime = struct {
+        
+        state_change_frame: usize,
+        state: State,
+        attack_direction: Direction,
+
+        const State = enum {
+            idle, charging, attack_1_cooldown, chaining, attack_2_cooldown 
+        };
+
+        pub fn init() EntityKnight1Runtime {
+            return .{
+                .state_change_frame = 0,
+                .state = .idle,
+                .attack_direction = .Right,
+            };
+        }
+    };
+
+    const EntityKnight2Runtime = struct {
+        pub fn init() EntityKnight2Runtime { return .{}; }
+    };
 
     pub const EntityDescriptor = struct {
         default_animation: *const AnimationDescriptor,
@@ -1028,6 +1258,16 @@ pub const Assets = struct {
         attack_dmg: i32,
         attack_cooldown: usize,
         attack_range: f32,
+        
+        pub fn from(t: EntityType) EntityDescriptor {
+            return switch (t) {
+                .slime => entity_slime,
+                .knight_1 => entity_knight_1,
+                .knight_2 => entity_knight_2,
+                .archer => entity_archer,
+                .slime_king => entity_slime_king,
+            };
+        }
     };
     
     pub const entity_slime = EntityDescriptor {
@@ -1038,7 +1278,7 @@ pub const Assets = struct {
         .chase_range = 5*8,
         .attack_dmg = 15,
         .attack_cooldown = 60,
-        .attack_range = 1,
+        .attack_range = 1*8,
     };
     pub const entity_knight_1 = EntityDescriptor {
         .default_animation = &animation_knight_1,
@@ -1048,7 +1288,7 @@ pub const Assets = struct {
         .chase_range = 7*8,
         .attack_dmg = 30,
         .attack_cooldown = 60*2,
-        .attack_range = 2,
+        .attack_range = 2*8,
     };
     pub const entity_knight_2 = EntityDescriptor {
         .default_animation = &animation_knight_2,
@@ -1058,7 +1298,7 @@ pub const Assets = struct {
         .chase_range = 7*8,
         .attack_dmg = 30,
         .attack_cooldown = 60*2,
-        .attack_range = 2,
+        .attack_range = 2*8,
     };
     pub const entity_archer = EntityDescriptor {
         .default_animation = &animation_archer,
@@ -1068,7 +1308,7 @@ pub const Assets = struct {
         .chase_range = 10*8,
         .attack_dmg = 30,
         .attack_cooldown = 60*2,
-        .attack_range = 7,
+        .attack_range = 7*8,
     };
     pub const entity_slime_king = EntityDescriptor {
         .default_animation = &animation_slime,
@@ -1078,7 +1318,7 @@ pub const Assets = struct {
         .chase_range = 30*8,
         .attack_dmg = 40,
         .attack_cooldown = 60*3,
-        .attack_range = 3,
+        .attack_range = 3*8,
     };
 
     pub const AnimationDescriptor = struct {
@@ -1100,7 +1340,7 @@ pub const Assets = struct {
     pub const animation_archer = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 160, 161 }, 120);
     pub const animation_player_idle = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 35, 51 }, 60);
     pub const animation_player_walk = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 35, 36 }, 10);
-    pub const animation_preparing_attack = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 97, 98, 0, 0, 100, 99 }, 15);
+    pub const animation_preparing_attack = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 97, 98, 0, 0, 100, 99 }, 18);
     
     pub const config = struct {
         pub const player = struct {
