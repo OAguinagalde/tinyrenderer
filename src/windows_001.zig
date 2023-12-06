@@ -57,14 +57,15 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
     app.particles = try Particles.init(allocator);
     app.rng_engine = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
     app.random = app.rng_engine.random();
-    app.entities_damage_dealers = HitboxSystem.init(allocator);
-    app.player_damage_dealers = HitboxSystem.init(allocator);
+    app.entities_damage_dealers = try HitboxSystem.init(allocator);
+    app.player_damage_dealers = try HitboxSystem.init(allocator);
     app.doors = undefined; // doors are set on load_level
     app.texts = undefined; // texts are set on load_level
     try load_level(Assets.spawn_start_0, 0);
 }
 
 pub fn update(platform: *Platform) !bool {
+
     platform.pixel_buffer.clear(BGRA.make(100, 149, 237,255));
     
     if (platform.keys['Q']) try load_level(Assets.spawn_start_0, platform.frame);
@@ -117,6 +118,7 @@ pub fn update(platform: *Platform) !bool {
 
     const player_floored = Physics.apply(&app.player.physical_component);
     app.player.pos = Physics.calculate_real_pos(app.player.physical_component.physical_pos);
+    app.player.hurtbox = Assets.entity_knight_1.hurtbox.offset(app.player.pos);
 
     if (player_floored) {
         app.player.jumps = 2;
@@ -141,6 +143,29 @@ pub fn update(platform: *Platform) !bool {
     }
 
     try app.entities.entities_update(app.player.pos, platform.frame);
+    
+    for (app.player_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
+        const frames_up = platform.frame - hitbox.frame;
+        var do_remove = false;
+        // the entity is being hit by `hitbox`
+        if (hitbox.bb.overlaps(app.player.hurtbox)) {
+            std.log.debug("hit player for {} damage!", .{hitbox.dmg});
+            switch (hitbox.behaviour) {
+                // TODO implement different hitbox behaviours
+                .once_per_frame, .once_per_target => {
+                    app.player.hp -= hitbox.dmg;
+                    app.player.physical_component.velocity = app.player.physical_component.velocity.add(hitbox.knockback);
+                    do_remove = true;
+                    continue;
+                    // TODO particles
+                    // TODO sfx
+                },
+            }
+        }
+
+        if (do_remove or frames_up >= hitbox.duration) _ = app.player_damage_dealers.hitboxes.release_by_index(i);
+
+    }
 
     app.camera.move_to(app.player.pos, @floatFromInt(@divExact(platform.w, 4)), @floatFromInt(@divExact(platform.h, 4)));
 
@@ -215,12 +240,14 @@ pub fn update(platform: *Platform) !bool {
             const radius = render_component.radius;
             try app.renderer_shapes.add_quad(position_component.*, Vector2f.from(radius, radius), render_component.color);
         }
-        for (app.player_damage_dealers.hitboxes.items) |hb| {
+        for (app.player_damage_dealers.hitboxes.slice()) |hb| {
             try app.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(255,0,0,100));
         }
-        for (app.entities_damage_dealers.hitboxes.items) |hb| {
+        for (app.entities_damage_dealers.hitboxes.slice()) |hb| {
             try app.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(0,255,0,100));
         }
+        const hb = app.player.hurtbox;
+        try app.renderer_shapes.add_quad(Vector2f.from(hb.left, hb.bottom), Vector2f.from(hb.right - hb.left, hb.top - hb.bottom), RGBA.make(0,0,255,100));
     }
     app.renderer_shapes.render(
         platform.pixel_buffer,
@@ -356,12 +383,17 @@ const Player = struct {
     jumps: i32,
     /// The frame in which the attack started. 0 when not attacking
     attack_start_frame: usize,
+    hurtbox: BoundingBox(f32),
+    hp: i32,
     
     pub fn init(frame: usize) Player {
         var player: Player = undefined;
         player.reset_soft(frame);
         player.physical_component = Physics.PhysicalObject.from(Vector2f.from(0,0), 3);
         player.pos = Vector2f.from(0,0);
+        // TODO set other config stuff
+        // player.hp = Assets.config.player.hp;
+        player.hp = 100;
         return player;
     }
 
@@ -378,6 +410,7 @@ const Player = struct {
     pub fn spawn(self: *Player, pos: Vector2i) void {
         self.pos = Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8));
         self.physical_component = Physics.PhysicalObject.from(self.pos, 3);
+        self.hurtbox = Assets.entity_knight_1.hurtbox.offset(self.pos);
     }
 
     pub fn get_current_tile(self: *const Player) Vector2i {
@@ -407,7 +440,7 @@ const RuntimeAnimation = struct {
 const EntitySystem = struct {
 
     const EntityPosition = Vector2f;
-    const EntityStorage = Ecs( .{ Assets.EntityType, Physics.PhysicalObject, EntityPosition, RuntimeAnimation, Direction, Assets.EntitySlimeRuntime, Assets.EntityKnight1Runtime, Assets.EntityKnight2Runtime }, 15);
+    const EntityStorage = Ecs( .{ i32, Assets.EntityType, Physics.PhysicalObject, EntityPosition, RuntimeAnimation, Direction, Assets.EntitySlimeRuntime, Assets.EntityKnight1Runtime, Assets.EntityKnight2Runtime, BoundingBox(f32) }, 15);
     
     entities: EntityStorage,
     
@@ -429,6 +462,8 @@ const EntitySystem = struct {
         const dir_component = try self.entities.setComponent(Direction, e);
         const anim_component = try self.entities.setComponent(RuntimeAnimation, e);
         const type_component = try self.entities.setComponent(Assets.EntityType, e);
+        const hurtbox_component = try self.entities.setComponent(BoundingBox(f32), e);
+        const hp_component = try self.entities.setComponent(i32, e);
         switch (entity_type) {
             .slime => {
                 const runtime_component = try self.entities.setComponent(Assets.EntitySlimeRuntime, e);
@@ -459,17 +494,46 @@ const EntitySystem = struct {
         };
         pos_component.* = pos;
         dir_component.* = .Right;
+        hurtbox_component.* = entity_desc.hurtbox.offset(pos_component.*);
+        hp_component.* = entity_desc.hp;
     }
 
     pub fn entities_update(self: *EntitySystem, player_pos: Vector2f, frame: usize) !void {
-        var it = EntityStorage.view(.{Physics.PhysicalObject, EntityPosition}).iterator();
+        
+        var it = EntityStorage.view(.{i32, Physics.PhysicalObject, EntityPosition, Direction, Assets.EntityType, BoundingBox(f32)}).iterator();
         while (it.next(&self.entities)) |e| {
             const phys_component = (try self.entities.getComponent(Physics.PhysicalObject, e)).?;
             const pos_component = (try self.entities.getComponent(EntityPosition, e)).?;
             const dir_component = (try self.entities.getComponent(Direction, e)).?;
             const type_component = (try self.entities.getComponent(Assets.EntityType, e)).?;
+            const hb_component = (try self.entities.getComponent(BoundingBox(f32), e)).?;
+            const hp_component = (try self.entities.getComponent(i32, e)).?;
             const entity_desc = Assets.EntityDescriptor.from(type_component.*);
 
+            // find whether the entity is being damaged
+            for (app.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
+                // the entity is being hit by `hitbox`
+                if (hitbox.bb.overlaps(hb_component.*)) {
+                    std.log.debug("hit entity for {} damage!", .{hitbox.dmg});
+                    switch (hitbox.behaviour) {
+                        // TODO implement different hitbox behaviours
+                        .once_per_frame, .once_per_target => {
+                            hp_component.* -= hitbox.dmg;
+                            phys_component.velocity = phys_component.velocity.add(hitbox.knockback);
+                            _ = app.entities_damage_dealers.hitboxes.release_by_index(i);
+                            // TODO particles
+                            // TODO sfx
+                        },
+                    }
+                }
+
+            }
+
+            if (hp_component.* <= 0) {
+                try self.entities.deleteEntity(e);
+                continue;
+            }
+            
             const entity_to_player = player_pos.substract(pos_component.*);
             const dist_to_player = entity_to_player.magnitude();
             const is_right = entity_to_player.x>0;
@@ -519,7 +583,7 @@ const EntitySystem = struct {
                             // TODO animation "damaging hitbox"
                             // TODO sfx "launch"
                         }
-                        else if (phys_component.velocity.x == 0 and phys_component.velocity.y == 0) {
+                        else if (@abs(phys_component.velocity.x) <= 0.1 and @abs(phys_component.velocity.y) <= 0.1) {
                             // back to normal
                             slime_component.attack_start_frame = 0;
                             // TODO animation "normal"
@@ -532,10 +596,11 @@ const EntitySystem = struct {
 
                     const is_floored = Physics.apply(phys_component);
                     pos_component.* = Physics.calculate_real_pos(phys_component.physical_pos);
+                    hb_component.* = entity_desc.hurtbox.offset(pos_component.*);
                     _ = is_floored;
 
                     if (set_slime_body_as_hitbox) {
-                        const damage = entity_desc.attack_dmg;
+                        const damage: i32 = @intFromFloat(@as(f32, @floatFromInt(entity_desc.attack_dmg)) * std.math.clamp(@abs(phys_component.velocity.x)/launch_speed, 0, 1));
                         const hitbox = BoundingBox(f32).from(4, 0, -3, 3).offset(pos_component.*);
                         const behaviour: Assets.HitboxType = .once_per_frame;
                         const duration = 1;
@@ -648,10 +713,81 @@ const EntitySystem = struct {
                 },
                 else => unreachable
             }
+
+
+        }
+    
+        for (app.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
+            const frames_up = frame - hitbox.frame;
+            if (frames_up >= hitbox.duration) _ = app.entities_damage_dealers.hitboxes.release_by_index(i);
         }
     }
 
 };
+
+pub fn Pool(comptime T: type) type {
+    return struct {
+
+        const Self = @This();
+        
+        marked_deleted: std.ArrayList(usize),
+        data: std.ArrayList(T),
+        index: usize,
+        total: usize,
+
+        pub fn init_capacity(allocator: std.mem.Allocator, num: usize) std.mem.Allocator.Error!Self {
+            var self = Self {
+                .marked_deleted = try std.ArrayList(usize).initCapacity(allocator, num),
+                .data = try std.ArrayList(T).initCapacity(allocator, num),
+                .index = 0,
+                .total = num
+            };
+            return self;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.marked_deleted.deinit();
+            self.data.deinit();
+        }
+
+        pub fn acquire(self: *Self) ?*T {
+            if (self.index >= self.total) {
+                if (self.marked_deleted.items.len == 0) return null
+                else {
+                    // if the pool is full try to return a resource that has been marked as deleted
+                    // this is slow but its also not really supposed to happen I guess
+                    const index_to_reuse = self.marked_deleted.pop();
+                    return &self.data.items[index_to_reuse];
+                }
+            }
+            const i = self.index;
+            self.index += 1;
+            if (i == self.data.items.len) return self.data.addOneAssumeCapacity()
+            else return &self.data.items[i];
+        }
+
+        pub fn release_by_index(self: *Self, i: usize) void {
+            if (self.index <= i) unreachable;
+            self.marked_deleted.appendAssumeCapacity(i);
+        }
+
+        fn maintenance(self: *Self) void {
+            if (self.marked_deleted.items.len == 0) return;
+            self.index -= self.marked_deleted.items.len;
+            while (self.marked_deleted.popOrNull()) |deleted_index| {
+                _ = self.data.swapRemove(deleted_index);
+            }
+            self.marked_deleted.clearRetainingCapacity();
+        }
+
+        pub fn slice(self: *Self) []T {
+            self.maintenance();
+            return self.data.items[0..self.index];
+        }
+
+    };
+}
+
 
 const AnimationSystem = Ecs(.{ Visual, KillAtFrame, RuntimeAnimation }, 1000);
 
@@ -975,16 +1111,17 @@ const HitboxSystem = struct {
         }
     };
     
-    hitboxes: std.ArrayList(HitboxData),
+    hitboxes: Pool(HitboxData),
     
-    pub fn init(allocator: std.mem.Allocator) HitboxSystem {
+    pub fn init(allocator: std.mem.Allocator) !HitboxSystem {
         return .{
-            .hitboxes = std.ArrayList(HitboxData).init(allocator),
+            .hitboxes = try Pool(HitboxData).init_capacity(allocator, 100),
         };
     }
 
     pub fn add(self: *HitboxSystem, bb: BoundingBox(f32), dmg: i32, knockback: Vector2f, behaviour: Assets.HitboxType, duration: usize, frame: usize) !void {
-        try self.hitboxes.append(HitboxData.from(bb, dmg, knockback, behaviour, duration, frame));
+        if (self.hitboxes.acquire()) |hb| hb.* = (HitboxData.from(bb, dmg, knockback, behaviour, duration, frame))
+        else return error.NotEnoughCapacity;
     }
 };
 
@@ -1321,6 +1458,7 @@ pub const Assets = struct {
         attack_dmg: i32,
         attack_cooldown: usize,
         attack_range: f32,
+        hurtbox: BoundingBox(f32),
         
         pub fn from(t: EntityType) EntityDescriptor {
             return switch (t) {
@@ -1342,6 +1480,7 @@ pub const Assets = struct {
         .attack_dmg = 15,
         .attack_cooldown = 60,
         .attack_range = 1*8,
+        .hurtbox = BoundingBox(f32).from(4, 0, -3, 3),
     };
     pub const entity_knight_1 = EntityDescriptor {
         .default_animation = &animation_knight_1,
@@ -1352,6 +1491,7 @@ pub const Assets = struct {
         .attack_dmg = 30,
         .attack_cooldown = 60*2,
         .attack_range = 2*8,
+        .hurtbox = BoundingBox(f32).from(6, 0, -3, 3),
     };
     pub const entity_knight_2 = EntityDescriptor {
         .default_animation = &animation_knight_2,
@@ -1362,6 +1502,7 @@ pub const Assets = struct {
         .attack_dmg = 30,
         .attack_cooldown = 60*2,
         .attack_range = 2*8,
+        .hurtbox = BoundingBox(f32).from(6, 1, 3, 9),
     };
     pub const entity_archer = EntityDescriptor {
         .default_animation = &animation_archer,
@@ -1372,6 +1513,7 @@ pub const Assets = struct {
         .attack_dmg = 30,
         .attack_cooldown = 60*2,
         .attack_range = 7*8,
+        .hurtbox = BoundingBox(f32).from(5, 3, -3, 3),
     };
     pub const entity_slime_king = EntityDescriptor {
         .default_animation = &animation_slime,
@@ -1382,6 +1524,7 @@ pub const Assets = struct {
         .attack_dmg = 40,
         .attack_cooldown = 60*3,
         .attack_range = 3*8,
+        .hurtbox = BoundingBox(f32).from(4*2, 0*2, -3*2, 3*2),
     };
 
     pub const AnimationDescriptor = struct {

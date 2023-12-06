@@ -906,10 +906,10 @@ pub fn BoundingBox(comptime T: type) type {
         }
 
         pub fn overlaps(self: Self, other: Self) bool {
-            return self.contains(Pair.from(other.top, other.left))
-                or self.contains(Pair.from(other.top, other.right))
-                or self.contains(Pair.from(other.bottom, other.left))
-                or self.contains(Pair.from(other.bottom, other.right));
+            return self.contains(Pair.from(other.left, other.top))
+                or self.contains(Pair.from(other.right, other.top))
+                or self.contains(Pair.from(other.left, other.bottom))
+                or self.contains(Pair.from(other.right, other.bottom));
         }
 
         /// `factor` can be anything that has fields `x: T` and `y: T`
