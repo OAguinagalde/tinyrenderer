@@ -125,6 +125,15 @@ pub const RGB = extern struct {
         };
         return result;
     }
+
+    pub fn from_other(comptime T: type, color: T) RGB {
+        return switch (T) {
+            BGR => RGB { .r = color.r, .g = color.g, .b = color.b },
+            BGRA, RGBA => RGB { .r = color.r, .g = color.g, .b = color.b },
+            RGB => color,
+            else => @compileError("Conversion from " ++ @typeName(T) ++ " -> " ++ @typeName(RGBA) ++ " not implemented!"),
+        };
+    }
 };
 
 pub const BGR = extern struct {

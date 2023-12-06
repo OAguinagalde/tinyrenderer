@@ -892,6 +892,8 @@ pub fn BoundingBox(comptime T: type) type {
         right: T,
 
         pub inline fn from(top: T, bottom: T, left: T, right: T) Self {
+            std.debug.assert(top >= bottom);
+            std.debug.assert(right >= left);
             return .{
                 .top = top,
                 .bottom = bottom,
@@ -915,12 +917,12 @@ pub fn BoundingBox(comptime T: type) type {
         /// `factor` can be anything that has fields `x: T` and `y: T`
         /// scales `top` and `bottom` by `factor.y` and `left` and `right` by `factor.x`
         pub fn scale(self: Self, factor: anytype) Self {
-            var new = Self.from(
-                self.top * factor.y,
-                self.bottom * factor.y,
-                self.left * factor.x,
-                self.right * factor.x,
-            );
+            var new: Self = .{
+                .top = self.top * factor.y,
+                .bottom = self.bottom * factor.y,
+                .left = self.left * factor.x,
+                .right = self.right * factor.x,
+            };
             // make sure left is still left and top is still top
             if (factor.x < 0) std.mem.swap(T, &new.left, &new.right);
             if (factor.y < 0) std.mem.swap(T, &new.top, &new.bottom);

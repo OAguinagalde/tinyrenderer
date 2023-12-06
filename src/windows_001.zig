@@ -33,6 +33,14 @@ pub const dimension_scale = 4;
 pub const desired_width = 240;
 pub const desired_height = 136;
 
+// TODO damage numbers
+// TODO exclamation mark when slimes start attacking
+// TODO transparent overlay on poison pool
+// TODO trigger areas
+// TODO torch flame particles
+// TODO particle emitters on torches and poisonous waters etc
+// TODO tools
+
 const App = struct {
     debug_text_renderer: TextRenderer(PlatformOutPixelType, 1024, 1),
     text_renderer: TextRenderer(PlatformOutPixelType, 1024, 1),
@@ -110,10 +118,10 @@ pub fn update(platform: *Platform) !bool {
     }
     const player_direction_offset: f32 = switch (app.player.look_direction) { .Right => 1, .Left => -1 };
     if (!platform.keys_old['W'] and platform.keys['W'] and app.player.jumps > 0) {
-        app.player.physical_component.velocity.y = 0.16;
+        app.player.physical_component.velocity.y = 0.17;
         app.player.jumps -= 1;
         // TODO sfx
-        for (0..5) |_| try particle_create(&app.particles, particles_generators.walk(
+        for (0..5) |_| try particle_create(&app.particles, particles_generators.other(
             app.player.pos.add(Vector2f.from(0, 1.5)),
             2 + app.random.float(f32) * 2,
             Vector2f.from(((app.random.float(f32) * 2) - 1)*0.2, -0.05),
@@ -121,10 +129,11 @@ pub fn update(platform: *Platform) !bool {
         ));
     }
     if (!platform.keys_old['F'] and platform.keys['F'] and app.player.attack_start_frame == 0) {
-        _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, platform.frame), app.player.pos.add(Vector2f.from(player_direction_offset*7,0)), switch (app.player.look_direction) { .Right => false, .Left => true }, platform.frame);
+        _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, platform.frame), app.player.pos.add(Vector2f.from(player_direction_offset*8,0)), switch (app.player.look_direction) { .Right => false, .Left => true }, platform.frame);
         app.player.attack_start_frame = platform.frame;
+        app.player.physical_component.velocity.x += 0.06 * player_direction_offset;
         // TODO sfx
-        for (0..3) |_| try particle_create(&app.particles, particles_generators.walk(
+        for (0..3) |_| try particle_create(&app.particles, particles_generators.other(
             app.player.pos.add(Vector2f.from(player_direction_offset*5, 1)),
             2,
             Vector2f.from((0.5 + (app.random.float(f32) * 0.3)) * player_direction_offset, (app.random.float(f32) * 0.6) - 0.2).scale(0.74),
@@ -138,6 +147,8 @@ pub fn update(platform: *Platform) !bool {
         try app.entities_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, platform.frame);
     }
 
+    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(8*34.5, 8*4.5)));
+
     const player_floored = Physics.apply(&app.player.physical_component);
     app.player.pos = Physics.calculate_real_pos(app.player.physical_component.physical_pos);
     app.player.hurtbox = Assets.entity_knight_1.hurtbox.offset(app.player.pos);
@@ -145,12 +156,7 @@ pub fn update(platform: *Platform) !bool {
     if (player_floored) {
         app.player.jumps = 2;
         if (player_is_walking and (app.random.float(f32) > 0.8)) {
-            try particle_create(&app.particles, particles_generators.walk(
-                app.player.pos.add(Vector2f.from(0, 1)),
-                2 + app.random.float(f32) * 3,
-                Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.1),
-                40,
-            ));
+            try particle_create(&app.particles, particles_generators.walk(app.player.pos.add(Vector2f.from(0, 1))));
         }
     }
 
@@ -171,15 +177,14 @@ pub fn update(platform: *Platform) !bool {
         var do_remove = false;
         // the entity is being hit by `hitbox`
         if (hitbox.bb.overlaps(app.player.hurtbox)) {
-            // std.log.debug("hit player for {} damage!", .{hitbox.dmg});
             switch (hitbox.behaviour) {
                 // TODO implement different hitbox behaviours
                 .once_per_frame, .once_per_target => {
                     app.player.hp -= hitbox.dmg;
                     app.player.physical_component.velocity = app.player.physical_component.velocity.add(hitbox.knockback);
+                    for (0..5) |_| try particle_create(&app.particles, particles_generators.bleed(app.player.pos));
                     do_remove = true;
                     continue;
-                    // TODO particles
                     // TODO sfx
                 },
             }
@@ -348,6 +353,8 @@ const Physics = blk: {
 
 inline fn collision_checker(tile: Vector2i) bool {
     if (tile.x < 0 or tile.y < 0) return true;
+    const level_bb = BoundingBox(i32).from(correct_y(app.level_background.tl.y), correct_y(app.level_background.br.y)-1, app.level_background.tl.x, app.level_background.br.x-1);
+    if (!level_bb.contains(tile)) return true;
     const tile_index = Assets.map [@as(usize, @intCast(correct_y(tile.y)))] [@as(usize, @intCast(tile.x))];
     const col = tile_index%16;
     const row = @divFloor(tile_index, 16);
@@ -468,7 +475,7 @@ const RuntimeAnimation = struct {
 const EntitySystem = struct {
 
     const EntityPosition = Vector2f;
-    const EntityStorage = Ecs( .{ i32, Assets.EntityType, Physics.PhysicalObject, EntityPosition, RuntimeAnimation, Direction, Assets.EntitySlimeRuntime, Assets.EntityKnight1Runtime, Assets.EntityKnight2Runtime, BoundingBox(f32) }, 15);
+    const EntityStorage = Ecs( .{ i32, Assets.EntityType, Physics.PhysicalObject, EntityPosition, RuntimeAnimation, Direction, Assets.EntitySlimeRuntime, Assets.EntityKnight1Runtime, Assets.EntityKnight2Runtime, Assets.EntitySlimeKingRuntime, BoundingBox(f32) }, 15);
     
     entities: EntityStorage,
     
@@ -542,14 +549,16 @@ const EntitySystem = struct {
             for (app.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
                 // the entity is being hit by `hitbox`
                 if (hitbox.bb.overlaps(hb_component.*)) {
-                    // std.log.debug("hit entity for {} damage!", .{hitbox.dmg});
                     switch (hitbox.behaviour) {
                         // TODO implement different hitbox behaviours
                         .once_per_frame, .once_per_target => {
                             hp_component.* -= hitbox.dmg;
                             phys_component.velocity = phys_component.velocity.add(hitbox.knockback);
                             _ = app.entities_damage_dealers.hitboxes.release_by_index(i);
-                            // TODO particles
+                            switch (type_component.*) {
+                                .slime, .slime_king  => for (0..5) |_| try particle_create(&app.particles, particles_generators.slime_damaged(pos_component.*)),
+                                else => for (0..5) |_| try particle_create(&app.particles, particles_generators.bleed(pos_component.*))
+                            }
                             // TODO sfx
                         },
                     }
@@ -672,7 +681,14 @@ const EntitySystem = struct {
                         const frames_since_charge_start = frame - knight_component.state_change_frame;
                         if (frames_since_charge_start == charge_duration) {
                             // charge complete, so swing blade in front
-                            // TODO Hitbox in front
+                            
+                            const damage: i32 = entity_desc.attack_dmg;
+                            const hitbox = BoundingBox(f32).from(6, 1, 3, 8).scale(Vector2f.from(attack_dir_f32, 1)).offset(pos_component.*);
+                            const behaviour: Assets.HitboxType = .once_per_frame;
+                            const duration = Assets.animation_attack_1.duration;
+                            const knockback = Vector2f.from(attack_dir_f32, 0);
+                            try app.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
+
                             const mirror_animation = switch(knight_component.attack_direction){.Right=> false, .Left=> true};
                             _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.animation_attack_1, frame), pos_component.add(Vector2f.from(attack_dir_f32*7,0)), mirror_animation, frame);
                             // TODO sfx "swing"
@@ -703,13 +719,17 @@ const EntitySystem = struct {
                     if (knight_component.state == .chaining) {
                         const frames_since_chaining_started = frame - knight_component.state_change_frame;
                         if (frames_since_chaining_started == chain_charge_duration) {
-                            // TODO attack in front
-                            // TODO play animation "swing blade"
                             // TODO sfx "swing"
-                            // TODO move a bit to front (momentum)
+                            
+                            const damage: i32 = entity_desc.attack_dmg*2;
+                            const hitbox = BoundingBox(f32).from(7, 1, 3, 10).scale(Vector2f.from(attack_dir_f32, 1)).offset(pos_component.*);
+                            const behaviour: Assets.HitboxType = .once_per_frame;
+                            const duration = Assets.animation_attack_1.duration;
+                            const knockback = Vector2f.from(attack_dir_f32*1.20, 0);
+                            try app.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
+
                             const mirror_animation = switch(knight_component.attack_direction){.Right=> false, .Left=> true};
                             _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.animation_attack_1, frame), pos_component.add(Vector2f.from(attack_dir_f32*7,0)), mirror_animation, frame);
-                            // TODO sfx "swing"
                             phys_component.velocity.x = (entity_desc.speed * switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0});
                             knight_component.state = .attack_2_cooldown;
                             knight_component.state_change_frame = frame;
@@ -727,10 +747,21 @@ const EntitySystem = struct {
 
                     const is_floored = Physics.apply(phys_component);
                     pos_component.* = Physics.calculate_real_pos(phys_component.physical_pos);
+                    hb_component.* = entity_desc.hurtbox.offset(pos_component.*);
                     _ = is_floored;
                 },
                 .knight_2 => {
                     const knight_component = (try self.entities.getComponent(Assets.EntityKnight2Runtime, e)).?;
+                    _ = knight_component;
+                    if (in_chase_range) {
+                        phys_component.velocity.x = (entity_desc.speed * dir_f32);
+                    }
+                    const is_floored = Physics.apply(phys_component);
+                    pos_component.* = Physics.calculate_real_pos(phys_component.physical_pos);
+                    _ = is_floored;
+                },
+                .slime_king => {
+                    const knight_component = (try self.entities.getComponent(Assets.EntitySlimeKingRuntime, e)).?;
                     _ = knight_component;
                     if (in_chase_range) {
                         phys_component.velocity.x = (entity_desc.speed * dir_f32);
@@ -914,14 +945,58 @@ pub fn particles_update(particles: *Particles) !void {
 }
 
 pub const particles_generators = struct {
-    pub fn walk(pos: Vector2f, radious: f32, speed: Vector2f, alpha: u8) ParticleDescriptor {
+    pub fn bleed(pos: Vector2f) ParticleDescriptor {
         return ParticleDescriptor {
-            .color = @bitCast(Assets.palette[13]),
-            .life = 60,
+            .color = RGB.from_other(BGR, @bitCast(Assets.palette[2])),
+            .life = 1000,
+            .position = pos,
+            .radius = 1 + app.random.float(f32),
+            .speed = Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.5),
+            .weight = 5,
+            .alpha = 160,
+        };
+    }
+    pub fn slime_damaged(pos: Vector2f) ParticleDescriptor {
+        return ParticleDescriptor {
+            .color = RGB.from_other(BGR, @bitCast(Assets.palette[6])),
+            .life = 1000,
+            .position = pos,
+            .radius = 1 + app.random.float(f32)*3,
+            .speed = Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.4),
+            .weight = 6,
+            .alpha = 160,
+        };
+    }
+    pub fn walk(pos: Vector2f) ParticleDescriptor {
+        return ParticleDescriptor {
+            .color = RGB.from_other(BGR, @bitCast(Assets.palette[15])),
+            .life = 30,
+            .position = pos,
+            .radius = 1 + app.random.float(f32) * 3,
+            .speed = Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.05),
+            .weight = 0.2,
+            .alpha = 120,
+        };
+    }
+    pub fn fire(pos: Vector2f) ParticleDescriptor {
+        return ParticleDescriptor {
+            .color = RGB.from_other(BGR, @bitCast(Assets.palette[if (app.random.boolean()) 3 else 4])),
+            .life = 40,
+            .position = pos,
+            .radius = 1 + app.random.float(f32) * 2,
+            .speed = Vector2f.from((app.random.float(f32) * 2) - 1, app.random.float(f32) - 0.5).scale(0.05),
+            .weight = -0.2,
+            .alpha = 120,
+        };
+    }
+    pub fn other(pos: Vector2f, radious: f32, speed: Vector2f, alpha: u8) ParticleDescriptor {
+        return ParticleDescriptor {
+            .color = RGB.from_other(BGR, @bitCast(Assets.palette[15])),
+            .life = 30,
             .position = pos,
             .radius = radious,
             .speed = speed,
-            .weight = 0.14,
+            .weight = 0.2,
             .alpha = alpha,
         };
     }
@@ -1583,7 +1658,7 @@ pub const Assets = struct {
                 pub const damage = 10;
                 pub const animation = animation_attack_1;
                 pub const range = 2;
-                pub const hitbox_relative_to_position = BoundingBox(f32).from(6, 1, 3, 9);
+                pub const hitbox_relative_to_position = BoundingBox(f32).from(6, 1, 5, 11);
                 pub const knockback_strength = 0.22;
             };
         };
