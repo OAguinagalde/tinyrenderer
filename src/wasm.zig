@@ -20,9 +20,12 @@ pub export fn wasm_get_canvas_pixels() [*]u8 {
     return @ptrCast(state.pixel_buffer.data.ptr);
 }
 
+pub export fn wasm_get_canvas_scaling() u32 {
+    return app.dimension_scale;
+}
 pub export fn wasm_get_canvas_size(out_w: *u32, out_h: *u32) void {
-    out_w.* = state.pixel_buffer.width;
-    out_h.* = state.pixel_buffer.height;
+    out_w.* = app.desired_width;
+    out_h.* = app.desired_height;
 }
 
 pub export fn wasm_send_event(len: usize, a: usize, b: usize) void {
@@ -177,7 +180,7 @@ fn init() void {
 
     state.tasks = TaskManager.init(state.allocator);
     state.keys = [1]bool{false} ** 256;
-    state.pixel_buffer = Buffer2D(RGBA).from(state.allocator.alloc(RGBA, 420*340) catch |e| panic(e), 420);
+    state.pixel_buffer = Buffer2D(RGBA).from(state.allocator.alloc(RGBA, app.desired_height * app.desired_width) catch |e| panic(e), app.desired_width);
     state.w = @intCast(state.pixel_buffer.width);
     state.h = @intCast(state.pixel_buffer.height);
     state.mouse = undefined;

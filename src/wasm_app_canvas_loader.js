@@ -47,6 +47,7 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     // These are the functions provided byt the module
     const wasm_get_canvas_pixels = result.instance.exports.wasm_get_canvas_pixels;
     const wasm_get_canvas_size = result.instance.exports.wasm_get_canvas_size;
+    const wasm_get_canvas_scaling = result.instance.exports.wasm_get_canvas_scaling;
     const wasm_tick = result.instance.exports.wasm_tick;
     const wasm_init = result.instance.exports.wasm_init;
     const wasm_send_event = result.instance.exports.wasm_send_event;
@@ -78,6 +79,7 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     });
     
     wasm_get_canvas_size(interface_buffer_ptr, interface_buffer_ptr+4);
+    const scale_value = wasm_get_canvas_scaling();
     const canvasSize = {
         w: wasmMemoryViewer.getUint32(interface_buffer_ptr, true),
         h: wasmMemoryViewer.getUint32(interface_buffer_ptr+4, true)
@@ -88,13 +90,14 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     const canvas = document.getElementById(canvas_id);
     canvas.width = canvasSize.w;
     canvas.height = canvasSize.h;
+    canvas.style.transform = "translate("+(50*(scale_value-1))+"%,"+(50*(scale_value-1))+"%) scale("+scale_value+","+(-scale_value)+")";
     // the actual pixels of the canvas 
     const canvas_context = canvas.getContext("2d");
     const canvas_pixel_data = canvas_context.createImageData(canvas.width, canvas.height);
     canvas_context.clearRect(0, 0, canvas.width, canvas.height);
     const canvas_pixel_size = 4;
 
-    const tick_interval = 1/60;
+    const tick_interval_seconds = 1/60;
     setInterval(
         () => {
             wasm_set_mouse(mousePos.x, mousePos.y);
@@ -110,7 +113,7 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
             canvas_pixel_data.data.set(module_pixel_data);
             canvas_context.putImageData(canvas_pixel_data, 0, 0);
         },
-        tick_interval
+        tick_interval_seconds * 1000
     );
 });
 

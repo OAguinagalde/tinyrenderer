@@ -1476,7 +1476,7 @@ pub const Assets = struct {
         }
     };
 
-    pub const static_text_tutorial_0 = StaticTextDescriptor.from(Vector2i.from(3, correct_y(3)), Vector2i.from(25, 1), "[m] to toggle music");
+    pub const static_text_tutorial_0 = StaticTextDescriptor.from(Vector2i.from(3, correct_y(3)), Vector2i.from(25, 1), "[g] to toggle debug");
     pub const static_text_tutorial_1 = StaticTextDescriptor.from(Vector2i.from(3, correct_y(2)), Vector2i.from(25, 1), "[r] to restart");
     pub const static_text_tutorial_2 = StaticTextDescriptor.from(Vector2i.from(35, correct_y(8)), Vector2i.from(19, 1), "[f] to attack");
 
