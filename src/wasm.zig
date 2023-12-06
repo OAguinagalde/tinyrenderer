@@ -124,6 +124,7 @@ const State = struct {
     
     mouse: Vector2i,
     keys: [256]bool,
+    keys_old: [256]bool,
     pixel_buffer: Buffer2D(RGBA),
     frame_index: usize,
     tasks: ?TaskManager,
@@ -191,6 +192,7 @@ pub const Platform = struct {
     h: i32,
     mouse: Vector2i,
     mouse_d: Vector2i,
+    keys_old: [256]bool,
     keys: [256]bool,
     pixel_buffer: Buffer2D(RGBA),
     fps: usize,
@@ -201,24 +203,27 @@ pub const Platform = struct {
 
 fn tick() void {
     
-    // wait for every task registered at init() to finish
+    // wait for every task resgistered at init() to finish
     if (state.tasks) |tm| {
         if (!tm.finished()) return;
         state.tasks.?.deinit();
         state.tasks = null;
     }
 
+    for (static_buffer_for_runtime_use[0..256], 0..) |byte, i| state.keys[i] = byte == 1;
+    const mouse_d = Vector2i { .x = mousex - state.mouse.x, .y = mousey - state.mouse.y };
     state.mouse = Vector2i { .x = mousex, .y = mousey };
 
     var platform = Platform {
         .pixel_buffer = state.pixel_buffer,
+        .keys_old = state.keys_old,
         .keys = state.keys,
         .allocator = state.allocator,
         .w = state.w,
         .h = state.h,
         .frame = state.frame_index,
         .mouse = state.mouse,
-        .mouse_d  = undefined,
+        .mouse_d = mouse_d,
         .fps = undefined,
         .ms = undefined,
     };
@@ -227,6 +232,7 @@ fn tick() void {
     if (!keep_running) {
         // Too bad, there is no stopping!!!
     }
+    state.keys_old = state.keys;
     state.frame_index += 1;
 }
 
@@ -270,6 +276,5 @@ pub fn read_file(file: []const u8, callback: *const ReadFileCallback, context_va
     fetch(file.ptr, file.len);
 }
 
-
 // This is the actual application that is being run, which exposes update and init functions
-const app = @import("app_000.zig");
+const app = @import("windows_001.zig");

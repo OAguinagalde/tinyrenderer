@@ -1,8 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const math = @import("math.zig");
 const graphics = @import("graphics.zig");
 const tic80 = @import("tic80.zig");
 const physics = @import("physics.zig");
+const windows = @import("windows.zig");
+const wasm = @import("wasm.zig");
 
 const BoundingBox = math.BoundingBox;
 const Vector2i = math.Vector2i;
@@ -14,18 +17,24 @@ const Buffer2D = @import("buffer.zig").Buffer2D;
 const RGB = @import("pixels.zig").RGB;
 const RGBA = @import("pixels.zig").RGBA;
 const BGRA = @import("pixels.zig").BGRA;
-const Platform = @import("windows.zig").Platform;
 const Ecs = @import("ecs.zig").Ecs;
 const Entity = @import("ecs.zig").Entity;
 
+const Platform = if (builtin.os.tag == .windows) windows.Platform else wasm.Platform;
+const PlatformOutPixelType = if (builtin.os.tag == .windows) BGRA else RGBA;
+const timestamp = if (builtin.os.tag == .windows) std.time.timestamp else wasm_timestamp;
+fn wasm_timestamp() i64 {
+    return @intCast(wasm.milli_since_epoch());
+}
+
 const App = struct {
-    debug_text_renderer: TextRenderer(BGRA, 1024, 2),
-    text_renderer: TextRenderer(BGRA, 1024, 0.8),
-    renderer: tic80.Renderer(BGRA, tic80.Shader(BGRA)),
-    renderer_quads: tic80.QuadRenderer(BGRA, tic80.QuadShader(BGRA)),
+    debug_text_renderer: TextRenderer(PlatformOutPixelType, 1024, 2),
+    text_renderer: TextRenderer(PlatformOutPixelType, 1024, 0.8),
+    renderer: tic80.Renderer(PlatformOutPixelType, tic80.Shader(PlatformOutPixelType)),
+    renderer_quads: tic80.QuadRenderer(PlatformOutPixelType, tic80.QuadShader(PlatformOutPixelType)),
     // TODO the blending renderer still uses the 3d pipeline, change to the 2d quad pipeline instead
-    renderer_blending: tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)),
-    renderer_shapes: ShapeRenderer(BGRA, RGB.from(255,255,255)),
+    renderer_blending: tic80.Renderer(PlatformOutPixelType, tic80.ShaderWithBlendAndKeyColor(PlatformOutPixelType, 0)),
+    renderer_shapes: ShapeRenderer(PlatformOutPixelType, RGB.from(255,255,255)),
     entities: EntitySystem,
     level_background: Assets.LevelBackgroundDescriptor,
     player: Player,
@@ -42,20 +51,20 @@ const App = struct {
 
 var app: App = undefined;
 
-pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
+pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(PlatformOutPixelType)) !void {
     _ = pixel_buffer;
-    app.debug_text_renderer = try TextRenderer(BGRA, 1024, 2).init(allocator);
-    app.text_renderer = try TextRenderer(BGRA, 1024, 0.8).init(allocator);
-    app.renderer = try tic80.Renderer(BGRA, tic80.Shader(BGRA)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    app.renderer_quads = try tic80.QuadRenderer(BGRA, tic80.QuadShader(BGRA)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    app.renderer_blending = try tic80.Renderer(BGRA, tic80.ShaderWithBlendAndKeyColor(BGRA, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    app.renderer_shapes = try ShapeRenderer(BGRA, RGB.from(255,255,255)).init(allocator);
+    app.debug_text_renderer = try TextRenderer(PlatformOutPixelType, 1024, 2).init(allocator);
+    app.text_renderer = try TextRenderer(PlatformOutPixelType, 1024, 0.8).init(allocator);
+    app.renderer = try tic80.Renderer(PlatformOutPixelType, tic80.Shader(PlatformOutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    app.renderer_quads = try tic80.QuadRenderer(PlatformOutPixelType, tic80.QuadShader(PlatformOutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    app.renderer_blending = try tic80.Renderer(PlatformOutPixelType, tic80.ShaderWithBlendAndKeyColor(PlatformOutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    app.renderer_shapes = try ShapeRenderer(PlatformOutPixelType, RGB.from(255,255,255)).init(allocator);
     app.entities = try EntitySystem.init(allocator);
     app.player = Player.init(0);
     app.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
     app.animations_in_place = try AnimationSystem.init(allocator);
     app.particles = try Particles.init(allocator);
-    app.rng_engine = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
+    app.rng_engine = std.rand.DefaultPrng.init(@bitCast(timestamp()));
     app.random = app.rng_engine.random();
     app.entities_damage_dealers = try HitboxSystem.init(allocator);
     app.player_damage_dealers = try HitboxSystem.init(allocator);
@@ -66,7 +75,7 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
 
 pub fn update(platform: *Platform) !bool {
 
-    platform.pixel_buffer.clear(BGRA.make(100, 149, 237,255));
+    platform.pixel_buffer.clear(PlatformOutPixelType.make(100, 149, 237,255));
     
     if (platform.keys['Q']) try load_level(Assets.spawn_start_0, platform.frame);
     if (platform.keys['E']) try load_level(Assets.spawn_up_the_rope_0, platform.frame);
@@ -149,7 +158,7 @@ pub fn update(platform: *Platform) !bool {
         var do_remove = false;
         // the entity is being hit by `hitbox`
         if (hitbox.bb.overlaps(app.player.hurtbox)) {
-            std.log.debug("hit player for {} damage!", .{hitbox.dmg});
+            // std.log.debug("hit player for {} damage!", .{hitbox.dmg});
             switch (hitbox.behaviour) {
                 // TODO implement different hitbox behaviours
                 .once_per_frame, .once_per_target => {
@@ -514,7 +523,7 @@ const EntitySystem = struct {
             for (app.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
                 // the entity is being hit by `hitbox`
                 if (hitbox.bb.overlaps(hb_component.*)) {
-                    std.log.debug("hit entity for {} damage!", .{hitbox.dmg});
+                    // std.log.debug("hit entity for {} damage!", .{hitbox.dmg});
                     switch (hitbox.behaviour) {
                         // TODO implement different hitbox behaviours
                         .once_per_frame, .once_per_target => {

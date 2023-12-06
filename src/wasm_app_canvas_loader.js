@@ -98,6 +98,7 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     setInterval(
         () => {
             wasm_set_mouse(mousePos.x, mousePos.y);
+            new Uint8Array(memory.buffer).set(new Uint8Array(keys), interface_buffer_ptr);
             wasm_tick();
             
             const pixel_data_offset = wasm_get_canvas_pixels();
@@ -114,6 +115,22 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
 });
 
 let mousePos = { x: undefined, y: undefined };
-window.addEventListener('mousemove', (event) => {
-    mousePos = { x: event.clientX, y: event.clientY };
+window.addEventListener('mousemove', (e) => {
+    mousePos = { x: e.clientX, y: e.clientY };
+});
+
+let keys = Array(256).fill(false);
+window.addEventListener("keydown", (e)=> {
+    const char = e.key.charCodeAt(0) - 32;
+    const is_valid_key = char >= 0 && char < 256;
+    if (!is_valid_key) return;
+    console.log(char + "down");
+    keys[char] = true;
+});
+window.addEventListener("keyup", (e)=> {
+    const char = e.key.charCodeAt(0) - 32;
+    const is_valid_key = char >= 0 && char < 256;
+    if (!is_valid_key) return;
+    console.log(char + "up");
+    keys[char] = false;
 });

@@ -75,11 +75,19 @@ pub const RGBA = extern struct {
     }
     pub fn from(comptime T: type, color: T) RGBA {
         return switch (T) {
+            BGR, RGB => RGBA { .r = color.r, .g = color.g, .b = color.b, .a = 255 },
             BGRA => RGBA { .r = color.r, .g = color.g, .b = color.b, .a = color.a },
-            RGB => RGBA { .r = color.r, .g = color.g, .b = color.b, .a = 255 },
             RGBA => color,
-            else => @compileError("Conversion from " ++ T ++ " -> " ++ RGBA ++ " not implemented!"),
+            else => @compileError("Conversion from " ++ @typeName(T) ++ " -> " ++ @typeName(RGBA) ++ " not implemented!"),
         };
+    }
+    pub fn tint(color: RGBA, other: RGBA) RGBA {
+        return RGBA.make(
+            @intFromFloat((@as(f32, @floatFromInt(color.r)) * @as(f32, @floatFromInt(other.r)))/256),
+            @intFromFloat((@as(f32, @floatFromInt(color.g)) * @as(f32, @floatFromInt(other.g)))/256),
+            @intFromFloat((@as(f32, @floatFromInt(color.b)) * @as(f32, @floatFromInt(other.b)))/256),
+            @intFromFloat((@as(f32, @floatFromInt(color.a)) * @as(f32, @floatFromInt(other.a)))/256),
+        );
     }
 };
 
