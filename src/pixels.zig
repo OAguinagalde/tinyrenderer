@@ -137,9 +137,24 @@ pub const BGR = extern struct {
     }
     pub fn from(comptime T: type, color: T) BGR {
         return switch (T) {
-            BGRA, RGBA, RGB => BGR { .r = color.r, .g = color.g, .b = color.b },
-            else => @compileError("Conversion from " ++ T ++ " -> " ++ BGR ++ " not implemented!"),
+            BGRA, RGBA, RGB, BGR => BGR { .r = color.r, .g = color.g, .b = color.b },
+            else => @compileError("Conversion from " ++ @typeName(T) ++ " -> " ++ @typeName(BGR) ++ " not implemented!"),
         };
+    }
+    pub fn tint(color: BGR, other: BGR) BGR {
+        return BGR.make(
+            @intFromFloat((@as(f32, @floatFromInt(color.r)) * @as(f32, @floatFromInt(other.r)))/256),
+            @intFromFloat((@as(f32, @floatFromInt(color.g)) * @as(f32, @floatFromInt(other.g)))/256),
+            @intFromFloat((@as(f32, @floatFromInt(color.b)) * @as(f32, @floatFromInt(other.b)))/256),
+        );
+    }
+    pub fn blend(c1: BGR, c2: BGR) BGR {
+        const result = BGR {
+            .r = @intFromFloat((@as(f32, @floatFromInt(c1.r))/255*1 + @as(f32, @floatFromInt(c2.r))/255*(1-1))*255),
+            .g = @intFromFloat((@as(f32, @floatFromInt(c1.g))/255*1 + @as(f32, @floatFromInt(c2.g))/255*(1-1))*255),
+            .b = @intFromFloat((@as(f32, @floatFromInt(c1.b))/255*1 + @as(f32, @floatFromInt(c2.b))/255*(1-1))*255),
+        };
+        return result;
     }
 };
 

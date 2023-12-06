@@ -6,6 +6,7 @@ const tic80 = @import("tic80.zig");
 const physics = @import("physics.zig");
 const windows = @import("windows.zig");
 const wasm = @import("wasm.zig");
+const font = @import("text.zig").font;
 
 const BoundingBox = math.BoundingBox;
 const Vector2i = math.Vector2i;
@@ -17,6 +18,7 @@ const Buffer2D = @import("buffer.zig").Buffer2D;
 const RGB = @import("pixels.zig").RGB;
 const RGBA = @import("pixels.zig").RGBA;
 const BGRA = @import("pixels.zig").BGRA;
+const BGR = @import("pixels.zig").BGR;
 const Ecs = @import("ecs.zig").Ecs;
 const Entity = @import("ecs.zig").Entity;
 
@@ -27,9 +29,13 @@ fn wasm_timestamp() i64 {
     return @intCast(wasm.milli_since_epoch());
 }
 
+pub const dimension_scale = 4;
+pub const desired_width = 240;
+pub const desired_height = 136;
+
 const App = struct {
-    debug_text_renderer: TextRenderer(PlatformOutPixelType, 1024, 2),
-    text_renderer: TextRenderer(PlatformOutPixelType, 1024, 0.8),
+    debug_text_renderer: TextRenderer(PlatformOutPixelType, 1024, 1),
+    text_renderer: TextRenderer(PlatformOutPixelType, 1024, 1),
     renderer: tic80.Renderer(PlatformOutPixelType, tic80.Shader(PlatformOutPixelType)),
     renderer_quads: tic80.QuadRenderer(PlatformOutPixelType, tic80.QuadShader(PlatformOutPixelType)),
     // TODO the blending renderer still uses the 3d pipeline, change to the 2d quad pipeline instead
@@ -47,14 +53,15 @@ const App = struct {
     texts: []const *const Assets.StaticTextDescriptor,
     entities_damage_dealers: HitboxSystem,
     player_damage_dealers: HitboxSystem,
+    debug: bool,
 };
 
 var app: App = undefined;
 
 pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(PlatformOutPixelType)) !void {
     _ = pixel_buffer;
-    app.debug_text_renderer = try TextRenderer(PlatformOutPixelType, 1024, 2).init(allocator);
-    app.text_renderer = try TextRenderer(PlatformOutPixelType, 1024, 0.8).init(allocator);
+    app.debug_text_renderer = try TextRenderer(PlatformOutPixelType, 1024, 1).init(allocator);
+    app.text_renderer = try TextRenderer(PlatformOutPixelType, 1024, 1).init(allocator);
     app.renderer = try tic80.Renderer(PlatformOutPixelType, tic80.Shader(PlatformOutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_quads = try tic80.QuadRenderer(PlatformOutPixelType, tic80.QuadShader(PlatformOutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_blending = try tic80.Renderer(PlatformOutPixelType, tic80.ShaderWithBlendAndKeyColor(PlatformOutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
@@ -70,15 +77,21 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(PlatformOutPixe
     app.player_damage_dealers = try HitboxSystem.init(allocator);
     app.doors = undefined; // doors are set on load_level
     app.texts = undefined; // texts are set on load_level
+    app.debug = true;
     try load_level(Assets.spawn_start_0, 0);
 }
 
 pub fn update(platform: *Platform) !bool {
-
-    platform.pixel_buffer.clear(PlatformOutPixelType.make(100, 149, 237,255));
+    const h: i32 = @intCast(platform.pixel_buffer.height);
+    const w: i32 = @intCast(platform.pixel_buffer.width);
     
-    if (platform.keys['Q']) try load_level(Assets.spawn_start_0, platform.frame);
-    if (platform.keys['E']) try load_level(Assets.spawn_up_the_rope_0, platform.frame);
+    const clear_color: BGR = @bitCast(Assets.palette[0]);
+    platform.pixel_buffer.clear(PlatformOutPixelType.from(BGR, clear_color));
+    
+    if (platform.keys['Q'] and !platform.keys_old['Q']) {}
+    if (platform.keys['E'] and !platform.keys_old['E']) try load_level(Assets.spawn_up_the_rope_0, platform.frame);
+    if (platform.keys['R'] and !platform.keys_old['R']) try load_level(Assets.spawn_start_0, platform.frame);
+    if (platform.keys['G'] and !platform.keys_old['G']) app.debug = !app.debug;
     
     if (app.player.attack_start_frame > 0 and platform.frame - app.player.attack_start_frame >= Assets.config.player.attack.cooldown) {
         app.player.attack_start_frame = 0;
@@ -176,19 +189,19 @@ pub fn update(platform: *Platform) !bool {
 
     }
 
-    app.camera.move_to(app.player.pos, @floatFromInt(@divExact(platform.w, 4)), @floatFromInt(@divExact(platform.h, 4)));
+    app.camera.move_to(app.player.pos, @floatFromInt(w), @floatFromInt(h));
 
     try update_animations_in_place(&app.animations_in_place, platform.frame);
     try particles_update(&app.particles);
 
     const view_matrix = M44.lookat_left_handed(app.camera.pos, app.camera.pos.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
-    const projection_matrix = M44.orthographic_projection(0, @floatFromInt(@divExact(platform.w,4)), @floatFromInt(@divExact(platform.h,4)), 0, 0, 2);
-    const viewport_matrix = M44.viewport_i32_2(0, 0, platform.w, platform.h, 255);
+    const projection_matrix = M44.orthographic_projection(0, @floatFromInt(w), @floatFromInt(h), 0, 0, 2);
+    const viewport_matrix = M44.viewport_i32_2(0, 0, w, h, 255);
     const mvp_matrix = projection_matrix.multiply(view_matrix.multiply(M44.translation(Vector3f.from(0, 0, 1))));
     
     const view_matrix_m33 = M33.look_at(Vector2f.from(app.camera.pos.x, app.camera.pos.y), Vector2f.from(0, 1));
-    const projection_matrix_m33 = M33.orthographic_projection(0, @floatFromInt(@divExact(platform.w,4)), @floatFromInt(@divExact(platform.h,4)), 0);
-    const viewport_matrix_m33 = M33.viewport(0, 0, platform.w, platform.h);
+    const projection_matrix_m33 = M33.orthographic_projection(0, @floatFromInt(w), @floatFromInt(h), 0);
+    const viewport_matrix_m33 = M33.viewport(0, 0, w, h);
     const mvp_matrix_33 = projection_matrix_m33.multiply(view_matrix_m33.multiply(M33.identity()));
     
     // render map
@@ -200,9 +213,10 @@ pub fn update(platform: *Platform) !bool {
     );
     
     // render static texts
+    const static_texts_color = RGBA.from(BGR, @bitCast(Assets.palette[5]));
     for (app.texts) |text| {
         const text_tile = Vector2i.from(text.pos.x, correct_y(text.pos.y));
-        try app.text_renderer.print(text_tile.scale(8).to_vec2f(), "{s}", .{text.text}, RGBA.make(255,255,255,255));
+        try app.text_renderer.print(text_tile.scale(8).to_vec2f(), "{s}", .{text.text}, static_texts_color);
     }
     app.text_renderer.render_all(
         platform.pixel_buffer,
@@ -249,14 +263,16 @@ pub fn update(platform: *Platform) !bool {
             const radius = render_component.radius;
             try app.renderer_shapes.add_quad(position_component.*, Vector2f.from(radius, radius), render_component.color);
         }
-        for (app.player_damage_dealers.hitboxes.slice()) |hb| {
-            try app.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(255,0,0,100));
+        if (app.debug) {
+            for (app.player_damage_dealers.hitboxes.slice()) |hb| {
+                try app.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(255,0,0,100));
+            }
+            for (app.entities_damage_dealers.hitboxes.slice()) |hb| {
+                try app.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(0,255,0,100));
+            }
+            const hb = app.player.hurtbox;
+            try app.renderer_shapes.add_quad(Vector2f.from(hb.left, hb.bottom), Vector2f.from(hb.right - hb.left, hb.top - hb.bottom), RGBA.make(0,0,255,100));
         }
-        for (app.entities_damage_dealers.hitboxes.slice()) |hb| {
-            try app.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(0,255,0,100));
-        }
-        const hb = app.player.hurtbox;
-        try app.renderer_shapes.add_quad(Vector2f.from(hb.left, hb.bottom), Vector2f.from(hb.right - hb.left, hb.top - hb.bottom), RGBA.make(0,0,255,100));
     }
     app.renderer_shapes.render(
         platform.pixel_buffer,
@@ -264,25 +280,28 @@ pub fn update(platform: *Platform) !bool {
         viewport_matrix_m33
     );
 
-    const color = RGBA.make(255,255,255,255);
-    const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(app.player.physical_component.physical_pos);
-    const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*1) -  6).to_vec2f(), "ms {d: <9.2}", .{platform.ms}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*2) -  6).to_vec2f(), "fps {d:0.4}", .{platform.ms / 1000*60}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*3) -  6).to_vec2f(), "frame {}", .{platform.frame}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*4) -  6).to_vec2f(), "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*5) -  6).to_vec2f(), "mouse {} {}", .{platform.mouse.x, platform.mouse.y}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*6) -  6).to_vec2f(), "dimensions {} {}", .{platform.w, platform.h}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*7) -  6).to_vec2f(), "physical pos {d:.4} {d:.4}", .{app.player.physical_component.physical_pos.x, app.player.physical_component.physical_pos.y}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*8) -  6).to_vec2f(), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*9) -  6).to_vec2f(), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
-    try app.debug_text_renderer.print(Vector2i.from(5, platform.h - (12*10) - 6).to_vec2f(), "vel {d:.5} {d:.5}", .{app.player.physical_component.velocity.x, app.player.physical_component.velocity.y}, color);
-    app.debug_text_renderer.render_all(
-        platform.pixel_buffer,
-        M33.orthographic_projection(0, @floatFromInt(platform.w), @floatFromInt(platform.h), 0),
-        M33.viewport(0, 0, platform.w, platform.h)
-    );
 
+    if (app.debug) {
+        const debug_text_color: BGR = @bitCast(Assets.palette[3]);
+        const color = RGBA.from(BGR, debug_text_color);
+        const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(app.player.physical_component.physical_pos);
+        const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
+        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*1) -  6).to_vec2f(), "ms {d: <9.2}", .{platform.ms}, color);
+        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*2) -  6).to_vec2f(), "fps {d:0.4}", .{platform.ms / 1000*60}, color);
+        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*3) -  6).to_vec2f(), "frame {}", .{platform.frame}, color);
+        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*4) -  6).to_vec2f(), "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z}, color);
+        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*5) -  6).to_vec2f(), "mouse {} {}", .{platform.mouse.x, platform.mouse.y}, color);
+        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*6) -  6).to_vec2f(), "dimensions {} {}", .{w, h}, color);
+        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*7) -  6).to_vec2f(), "physical pos {d:.4} {d:.4}", .{app.player.physical_component.physical_pos.x, app.player.physical_component.physical_pos.y}, color);
+        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*8) -  6).to_vec2f(), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
+        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*9) -  6).to_vec2f(), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
+        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*10) - 6).to_vec2f(), "vel {d:.5} {d:.5}", .{app.player.physical_component.velocity.x, app.player.physical_component.velocity.y}, color);
+        app.debug_text_renderer.render_all(
+            platform.pixel_buffer,
+            M33.orthographic_projection(0, @floatFromInt(w), @floatFromInt(h), 0),
+            M33.viewport(0, 0, w, h)
+        );
+    }
     return true;
 }
 
@@ -995,7 +1014,7 @@ pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type
 pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: usize, comptime size: comptime_float) type {
     return struct {
 
-        const texture = @import("text.zig").font.texture;
+        const texture = font.texture;
         
         const Shader = struct {
 
@@ -1382,9 +1401,9 @@ pub const Assets = struct {
         }
     };
 
-    pub const static_text_tutorial_0 = StaticTextDescriptor.from(Vector2i.from(3, correct_y(10)), Vector2i.from(24, 1), "press [m] to toggle music");
-    pub const static_text_tutorial_1 = StaticTextDescriptor.from(Vector2i.from(3, correct_y(9)), Vector2i.from(24, 1), "press [r] to restart");
-    pub const static_text_tutorial_2 = StaticTextDescriptor.from(Vector2i.from(35, correct_y(8)), Vector2i.from(18, 1), "press [f] to attack");
+    pub const static_text_tutorial_0 = StaticTextDescriptor.from(Vector2i.from(3, correct_y(3)), Vector2i.from(25, 1), "[m] to toggle music");
+    pub const static_text_tutorial_1 = StaticTextDescriptor.from(Vector2i.from(3, correct_y(2)), Vector2i.from(25, 1), "[r] to restart");
+    pub const static_text_tutorial_2 = StaticTextDescriptor.from(Vector2i.from(35, correct_y(8)), Vector2i.from(19, 1), "[f] to attack");
 
     pub const EntitySpawnDescriptor = struct {
         /// indexes into a `tic80.Map` 

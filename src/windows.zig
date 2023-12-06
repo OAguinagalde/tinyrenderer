@@ -9,8 +9,8 @@ const BGRA = @import("pixels.zig").BGRA;
 const State = struct {
     x: i32 = 10,
     y: i32 = 10,
-    w: i32 = 240*4,
-    h: i32 = 136*4,
+    w: i32 = desired_width*dimension_scale,
+    h: i32 = desired_height*dimension_scale,
     render_target: win32.BITMAPINFO = undefined,
     keys_old: [256]bool = [1]bool{false} ** 256,
     keys: [256]bool = [1]bool{false} ** 256,
@@ -56,16 +56,23 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
             var paint_struct: win32.PAINTSTRUCT = undefined;
             const handle_device_context = win32.BeginPaint(window_handle, &paint_struct);
 
-            _ = win32.StretchDIBits(
+            const result = win32.StretchDIBits(
                 handle_device_context,
-                0, 0, state.w, state.h,
-                0, 0, state.w, state.h,
+                0, 0, @divExact(state.w,1), @divExact(state.h,1),
+                0, 0, @intCast(@divExact(state.pixel_buffer.width,1)), @intCast(@divExact(state.pixel_buffer.height,1)),
+                
+                // 0, 0, state.w, state.h,
+                // 0, 0, @intCast(state.pixel_buffer.width), @intCast(state.pixel_buffer.height),
                 state.pixel_buffer.data.ptr,
                 &state.render_target,
                 win32.DIB_RGB_COLORS,
                 win32.SRCCOPY
             );
 
+            if (result == 0) {
+                std.log.debug("win32.StretchDIBits == 0. Last error: {any}", .{win32.GetLastError()});
+                // unreachable;
+            }
             _ = win32.EndPaint(window_handle, &paint_struct);
             return 0;
         },
@@ -77,8 +84,13 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
 }
 
 pub fn main() !void {
+    
     const allocator = std.heap.page_allocator;
     const instance_handle = win32.GetModuleHandleW(null);
+    if (instance_handle == null) {
+        std.log.debug("win32.GetModuleHandleW == NULL. Last error: {any}", .{win32.GetLastError()});
+        unreachable;
+    }
     const window_class_name = win32.L("doesntmatter");
     const window_class = win32.WNDCLASSW {
         .style = @enumFromInt(0),
@@ -94,19 +106,23 @@ pub fn main() !void {
     };
     
     state.render_target.bmiHeader.biSize = @sizeOf(@TypeOf(state.render_target.bmiHeader));
-    state.render_target.bmiHeader.biWidth = state.w;
+    state.render_target.bmiHeader.biWidth = desired_width;
     // NOTE from the ms docs
     // > StretchDIBits creates a top-down image if the sign of the biHeight member of the BITMAPINFOHEADER structure for the DIB is negative
     // > The origin of a bottom-up DIB is the lower-left corner; the origin of a top-down DIB is the upper-left corner.
-    state.render_target.bmiHeader.biHeight = state.h;
+    state.render_target.bmiHeader.biHeight = desired_height;
     state.render_target.bmiHeader.biPlanes = 1;
     state.render_target.bmiHeader.biBitCount = 32;
     state.render_target.bmiHeader.biCompression = win32.BI_RGB;
 
-    state.pixel_buffer = Buffer2D(BGRA).from(try allocator.alloc(BGRA, @intCast(state.w * state.h)), @intCast(state.w));
+    state.pixel_buffer = Buffer2D(BGRA).from(try allocator.alloc(BGRA, desired_width * desired_height), desired_width);
     defer allocator.free(state.pixel_buffer.data);
 
-    _ = win32.RegisterClassW(&window_class);
+    const register_class_error = win32.RegisterClassW(&window_class);
+    if (register_class_error == 0) {
+        std.log.debug("win32.RegisterClassW == 0. Last error: {any}", .{win32.GetLastError()});
+        unreachable;
+    }
     defer _ = win32.UnregisterClassW(window_class_name, instance_handle);
     
     const window_handle_maybe = win32.CreateWindowExW(
@@ -117,6 +133,10 @@ pub fn main() !void {
         state.x, state.y, state.w, state.h,
         null, null, instance_handle, null
     );
+    if (window_handle_maybe == null) {
+        std.log.debug("win32.CreateWindowExW == NULL. Last error: {any}", .{win32.GetLastError()});
+        unreachable;
+    }   
     
     if (window_handle_maybe) |window_handle| {
         _ = win32.ShowWindow(window_handle, .SHOW);
@@ -195,12 +215,15 @@ pub fn main() !void {
                 }
             }
 
-            var rect: win32.RECT = undefined;
-            _ = win32.GetClientRect(window_handle, &rect);
-            const client_width = rect.right - rect.left;
-            const client_height = rect.bottom - rect.top;
-            std.debug.assert(client_height == state.h);
-            std.debug.assert(client_width == state.w);
+            {
+                // make sure sizes are correct
+                var rect: win32.RECT = undefined;
+                _ = win32.GetClientRect(window_handle, &rect);
+                const client_width = rect.right - rect.left;
+                const client_height = rect.bottom - rect.top;
+                std.debug.assert(client_height == state.h);
+                std.debug.assert(client_width == state.w);
+            }
 
             const mouse_previous = mouse;
             var mouse_current: win32.POINT = undefined;
@@ -223,7 +246,9 @@ pub fn main() !void {
                 .h =  state.h,
             };
             
+            // _ = platform;
             const keep_running = try update(&platform);
+            // state.pixel_buffer.clear(BGRA.make(100,100,100,100));
             
             state.keys_old = state.keys;
             frame += 1;
@@ -232,13 +257,22 @@ pub fn main() !void {
             if (running == false) continue;
 
             // render
-            const device_context_handle = win32.GetDC(window_handle).?;
-            _ = win32.StretchDIBits(
-                device_context_handle,
-                // The destination x, y (upper left) and width height (in logical units)
-                0, 0, client_width, client_height,
-                // The source x, y (upper left) and width height (in pixels)
-                0, 0, client_width, client_height,
+            const device_context_handle = win32.GetDC(window_handle);
+            if (device_context_handle == null) {
+                std.log.debug("win32.GetDC == 0. Last error: {any}", .{win32.GetLastError()});
+                unreachable;
+            }
+            // std.log.debug("StretchDIBits {}x{} from {}x{}", .{state.w, state.h, @as(i32,@intCast(state.pixel_buffer.width)), @as(i32,@intCast(state.pixel_buffer.height))});
+            const stretch_di_bits_error = win32.StretchDIBits(
+                device_context_handle.?,
+                // NOTE so stretchdibits is a fucking mess. These 2 coordinates are the top left in the window itself...
+                0, 0,
+                // then how many pixels we want to draw starting from that corner...
+                @divExact(state.w,1), @divExact(state.h,1),
+                // These two, are the bottom left corner of OUR pixel buffer. If we want this to also be the top left, then biHeight in the header must be a negative number...
+                0, 0,
+                // ... finally, starting from that bottom left corner, how many pixels we want to draw in the previously defined rectangle of the window itself
+                @intCast(@divExact(state.pixel_buffer.width,1)), @intCast(@divExact(state.pixel_buffer.height,1)),
                 // A pointer to the data and a structure with information about the DIB
                 state.pixel_buffer.data.ptr, &state.render_target,
                 // This is used to tell windows whether the colors are just RGB or whether we are using a color palette (in which case, it would be defined in the DIB structure)
@@ -246,7 +280,11 @@ pub fn main() !void {
                 // Finally, what operation to use when rastering. We just want to copy it.
                 win32.SRCCOPY
             );
-            _ = win32.ReleaseDC(window_handle, device_context_handle);
+            if (stretch_di_bits_error == 0) {
+                std.log.debug("win32.StretchDIBits == 0. Last error: {any}", .{win32.GetLastError()});
+                // unreachable;
+            }
+            _ = win32.ReleaseDC(window_handle, device_context_handle.?);
         }
     }
 
@@ -268,3 +306,6 @@ pub const Platform = struct {
 const app = @import("windows_001.zig");
 const init = app.init;
 const update = app.update;
+const dimension_scale = app.dimension_scale;
+const desired_width = app.desired_width;
+const desired_height = app.desired_height;
