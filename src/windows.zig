@@ -15,6 +15,8 @@ const State = struct {
     keys_old: [256]bool = [1]bool{false} ** 256,
     keys: [256]bool = [1]bool{false} ** 256,
     pixel_buffer: Buffer2D(BGRA) = undefined,
+    clicked: bool = false,
+    mwheel: i32 = 0,
 };
 
 var state: State = .{};
@@ -27,6 +29,25 @@ fn window_callback(window_handle: win32.HWND , message_type: u32, w_param: win32
         win32.WM_CLOSE => {
             win32.PostQuitMessage(0);
             return 0;
+        },
+
+        win32.WM_MOUSEWHEEL => {
+            // 
+            //     const delta = win32.GET_WHEEL_DELTA_WPARAM(w_param);
+            // 
+            // The delta value indicates the distance the wheel was rotated.
+            // A positive value means the wheel was scrolled forward (away from the user),
+            // and a negative value means the wheel was scrolled backward (toward the user).
+            // 
+            //     if (delta > 0) {
+            //     } else if (delta < 0) {
+            //     }
+            // 
+            state.mwheel = @intCast(@as(i16, @bitCast(@as(u16, @truncate(w_param >> 16)) & @as(u16, 0xFFFF))));
+        },
+        
+        win32.WM_LBUTTONDOWN => {
+            state.clicked = true;
         },
 
         win32.WM_SYSKEYDOWN,
@@ -158,12 +179,19 @@ pub fn main() !void {
         }
 
         var mouse: Vector2i = undefined;
+        // get mouse data from win32
         {
             var mouse_current: win32.POINT = undefined;
             _ = win32.GetCursorPos(&mouse_current);
             mouse.x = mouse_current.x;
             mouse.y = mouse_current.y;
         }
+        // by default, the mouse positions will be relative to the top left corner of the left-most screen
+        // convert it so that its a relative position to the top left of the window client area, and take into account
+        // the dimension_scaling there might be
+        mouse.x = @divFloor(mouse.x - state.x, dimension_scale);
+        mouse.y = @divFloor(mouse.y - state.y, dimension_scale);
+
         var frame: usize = 0;    
         var cpu_counter_now: i64 = blk: {
             var counter: win32.LARGE_INTEGER = undefined;
@@ -226,12 +254,29 @@ pub fn main() !void {
             }
 
             const mouse_previous = mouse;
-            var mouse_current: win32.POINT = undefined;
-            _ = win32.GetCursorPos(&mouse_current);
+            // relative to the top left corner of the window client area
+            const mouse_current: win32.POINT = blk: {
+                var point: win32.POINT = undefined;
+                if (win32.GetCursorPos(&point) == 0) {
+                    std.log.debug("win32.GetCursorPos == 0. Last error: {any}", .{win32.GetLastError()});
+                    unreachable;
+                }
+                if (win32.ScreenToClient(window_handle, &point) == 0) {
+                    std.log.debug("win32.ScreenToClient == 0. Last error: {any}", .{win32.GetLastError()});
+                    unreachable;
+                }
+                break :blk point;
+            };
             const mouse_dx = mouse_current.x - mouse_previous.x;
             const mouse_dy = mouse_current.y - mouse_previous.y;
             mouse.x = mouse_current.x;
             mouse.y = mouse_current.y;
+
+            const l_click = state.clicked;
+            state.clicked = false;
+
+            const mwheel = state.mwheel;
+            state.mwheel = 0;
 
             var platform = Platform {
                 .frame = frame,
@@ -244,6 +289,8 @@ pub fn main() !void {
                 .allocator = allocator,
                 .w =  state.w,
                 .h =  state.h,
+                .l_click = l_click,
+                .mwheel = mwheel,
             };
             
             // _ = platform;
@@ -301,9 +348,11 @@ pub const Platform = struct {
     pixel_buffer: Buffer2D(BGRA),
     ms: f32,
     frame: usize,
+    l_click: bool,
+    mwheel: i32
 };
 
-const app = @import("windows_001.zig");
+const app = @import("app_editor.zig");
 const init = app.init;
 const update = app.update;
 const dimension_scale = app.dimension_scale;
