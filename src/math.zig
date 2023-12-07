@@ -57,6 +57,10 @@ pub const Vector2f = struct {
         return Vector2f { .x = self.x * factor, .y = self.y * factor };
     }
 
+    pub fn scale_vec(self: Vector2f, other: Vector2f) Vector2f {
+        return Vector2f { .x = self.x * other.x, .y = self.y * other.y };
+    }
+
     /// dot product (represented by a dot ·) of 2 vectors A and B is a scalar N, sometimes called scalar product
     pub fn dot(self: Vector2f, other: Vector2f) f32 {
         return self.x * other.x + self.y * other.y;
@@ -260,11 +264,7 @@ pub const M33 = struct {
         return result;
     }
 
-    pub fn viewport(xi: i32, yi: i32, wi: i32, hi: i32) M33 {
-        const x: f32 = @floatFromInt(xi);
-        const y: f32 = @floatFromInt(yi);
-        const w: f32 = @floatFromInt(wi);
-        const h: f32 = @floatFromInt(hi);
+    pub fn viewport(x: f32, y: f32, w: f32, h: f32) M33 {
         const t = M33.translation(.{.x = x+1, .y = y+1});
         const s = M33.scaling_matrix(.{.x = map_range_to_range(0, 2, 0, w), .y = map_range_to_range(0, 2, 0, h)});
         return s.multiply(t);
@@ -673,6 +673,15 @@ pub const M44 = struct {
     /// will map a point in the 3-dimensional cube [-1, 1]*[-1, 1]*[-1, 1]
     /// onto the screen cube [x, x+w]*[y, y+h]*[0, d],
     /// where d is the depth/resolution of the z-buffer
+    pub fn viewport_i32_old(x: i32, y: i32, w: i32, h: i32, depth: i32) M44 {
+        const xf: f32 = @floatFromInt(x);
+        const yf: f32 = @floatFromInt(y);
+        const wf: f32 = @floatFromInt(w);
+        const hf: f32 = @floatFromInt(h);
+        const depthf: f32 = @floatFromInt(depth);
+        return viewport_old(xf, yf, wf, hf, depthf);
+    }
+    
     pub fn viewport_i32(x: i32, y: i32, w: i32, h: i32, depth: i32) M44 {
         const xf: f32 = @floatFromInt(x);
         const yf: f32 = @floatFromInt(y);
@@ -681,23 +690,15 @@ pub const M44 = struct {
         const depthf: f32 = @floatFromInt(depth);
         return viewport(xf, yf, wf, hf, depthf);
     }
-    
-    pub fn viewport_i32_2(x: i32, y: i32, w: i32, h: i32, depth: i32) M44 {
-        const xf: f32 = @floatFromInt(x);
-        const yf: f32 = @floatFromInt(y);
-        const wf: f32 = @floatFromInt(w);
-        const hf: f32 = @floatFromInt(h);
-        const depthf: f32 = @floatFromInt(depth);
-        return viewport_2(xf, yf, wf, hf, depthf);
-    }
-    pub fn viewport_2(x: f32, y: f32, w: f32, h: f32, depth: f32) M44 {
+
+    pub fn viewport(x: f32, y: f32, w: f32, h: f32, depth: f32) M44 {
         const t = M44.translation(.{.x = x+1, .y = y+1, .z = 0});
         const s = M44.scaling_matrix(.{.x = map_range_to_range(0, 2, 0, w), .y = map_range_to_range(0, 2, 0, h), .z = map_range_to_range(0, 1, 0, depth)});
         return s.multiply(t);
     }
 
     /// returns a matrix which maps the cube [-1,1]*[-1,1]*[0,1] onto the screen cube [x,x+w]*[y,y+h]*[0,d]
-    pub fn viewport(x: f32, y: f32, w: f32, h: f32, depth: f32) M44 {
+    pub fn viewport_old(x: f32, y: f32, w: f32, h: f32, depth: f32) M44 {
         var matrix = M44.identity();
         
         // 1 0 0 translation_x
@@ -900,6 +901,10 @@ pub fn BoundingBox(comptime T: type) type {
                 .left = left,
                 .right = right,
             };
+        }
+
+        pub inline fn from_tl_br(tl: anytype, br: anytype) Self {
+            return from(tl.y, br.y, tl.x, br.x);
         }
 
         /// `point` can be anything that has fields `x: T` and `y: T`
