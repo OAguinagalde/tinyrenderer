@@ -41,9 +41,10 @@ pub const desired_height = 136;
 // TODO particle emitters on torches and poisonous waters etc
 // TODO tools
 
+const text_scale = 1;
 const App = struct {
-    debug_text_renderer: TextRenderer(PlatformOutPixelType, 1024, 1),
-    text_renderer: TextRenderer(PlatformOutPixelType, 1024, 1),
+    debug_text_renderer: TextRenderer(PlatformOutPixelType, 1024, text_scale),
+    text_renderer: TextRenderer(PlatformOutPixelType, 1024, text_scale),
     renderer: tic80.Renderer(PlatformOutPixelType, tic80.Shader(PlatformOutPixelType)),
     renderer_quads: tic80.QuadRenderer(PlatformOutPixelType, tic80.QuadShader(PlatformOutPixelType)),
     // TODO the blending renderer still uses the 3d pipeline, change to the 2d quad pipeline instead
@@ -68,8 +69,8 @@ var app: App = undefined;
 
 pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(PlatformOutPixelType)) !void {
     _ = pixel_buffer;
-    app.debug_text_renderer = try TextRenderer(PlatformOutPixelType, 1024, 1).init(allocator);
-    app.text_renderer = try TextRenderer(PlatformOutPixelType, 1024, 1).init(allocator);
+    app.debug_text_renderer = try TextRenderer(PlatformOutPixelType, 1024, text_scale).init(allocator);
+    app.text_renderer = try TextRenderer(PlatformOutPixelType, 1024, text_scale).init(allocator);
     app.renderer = try tic80.Renderer(PlatformOutPixelType, tic80.Shader(PlatformOutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_quads = try tic80.QuadRenderer(PlatformOutPixelType, tic80.QuadShader(PlatformOutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
     app.renderer_blending = try tic80.Renderer(PlatformOutPixelType, tic80.ShaderWithBlendAndKeyColor(PlatformOutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
@@ -90,14 +91,15 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(PlatformOutPixe
 }
 
 pub fn update(platform: *Platform) !bool {
-    const h: i32 = @intCast(platform.pixel_buffer.height);
-    const w: i32 = @intCast(platform.pixel_buffer.width);
-    
+
+    const h: f32 = @floatFromInt(platform.pixel_buffer.height);
+    const w: f32 = @floatFromInt(platform.pixel_buffer.width);
+
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     platform.pixel_buffer.clear(PlatformOutPixelType.from(BGR, clear_color));
-    
+
     if (platform.keys['Q'] and !platform.keys_old['Q']) {}
-    if (platform.keys['E'] and !platform.keys_old['E']) try load_level(Assets.spawn_up_the_rope_0, platform.frame);
+    if (platform.keys['E'] and !platform.keys_old['E']) {}
     if (platform.keys['R'] and !platform.keys_old['R']) try load_level(Assets.spawn_start_0, platform.frame);
     if (platform.keys['G'] and !platform.keys_old['G']) app.debug = !app.debug;
     
@@ -107,12 +109,12 @@ pub fn update(platform: *Platform) !bool {
 
     var player_is_walking: bool = false;
     if (platform.keys['A'] and app.player.attack_start_frame == 0) {
-        app.player.physical_component.velocity.x -= 0.02;
+        app.player.physical_component.velocity.x -= 0.010;
         app.player.look_direction = .Left;
         player_is_walking = true;
     }
     if (platform.keys['D'] and app.player.attack_start_frame == 0) {
-        app.player.physical_component.velocity.x += 0.02;
+        app.player.physical_component.velocity.x += 0.010;
         app.player.look_direction = .Right;
         player_is_walking = true;
     }
@@ -147,7 +149,21 @@ pub fn update(platform: *Platform) !bool {
         try app.entities_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, platform.frame);
     }
 
-    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(8*34.5, 8*4.5)));
+    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(275, 36)));
+    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(539, 36)));
+    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(643, 60)));
+    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(515, 164)));
+    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(548, 164)));
+    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(580, 164)));
+    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(619, 164)));
+    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(1036, 44)));
+    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(1003, 44)));
+    if (app.random.float(f32)>0.8) {
+        const height = 21;
+        const from: f32 = 304;
+        const to: f32 = 367;
+        try particle_create(&app.particles, particles_generators.poison(Vector2f.from(app.random.float(f32)*(to-from)+from, height)));
+    }
 
     const player_floored = Physics.apply(&app.player.physical_component);
     app.player.pos = Physics.calculate_real_pos(app.player.physical_component.physical_pos);
@@ -184,28 +200,25 @@ pub fn update(platform: *Platform) !bool {
                     app.player.physical_component.velocity = app.player.physical_component.velocity.add(hitbox.knockback);
                     for (0..5) |_| try particle_create(&app.particles, particles_generators.bleed(app.player.pos));
                     do_remove = true;
-                    continue;
                     // TODO sfx
                 },
             }
         }
-
-        if (do_remove or frames_up >= hitbox.duration) _ = app.player_damage_dealers.hitboxes.release_by_index(i);
-
+        if (do_remove or (frames_up >= hitbox.duration)) app.player_damage_dealers.hitboxes.release_by_index(i);
     }
 
-    app.camera.move_to(app.player.pos, @floatFromInt(w), @floatFromInt(h));
+    app.camera.move_to(app.player.pos, w, h);
 
     try update_animations_in_place(&app.animations_in_place, platform.frame);
     try particles_update(&app.particles);
 
     const view_matrix = M44.lookat_left_handed(app.camera.pos, app.camera.pos.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
-    const projection_matrix = M44.orthographic_projection(0, @floatFromInt(w), @floatFromInt(h), 0, 0, 2);
-    const viewport_matrix = M44.viewport_i32_2(0, 0, w, h, 255);
+    const projection_matrix = M44.orthographic_projection(0, w, h, 0, 0, 2);
+    const viewport_matrix = M44.viewport(0, 0, w, h, 255);
     const mvp_matrix = projection_matrix.multiply(view_matrix.multiply(M44.translation(Vector3f.from(0, 0, 1))));
     
     const view_matrix_m33 = M33.look_at(Vector2f.from(app.camera.pos.x, app.camera.pos.y), Vector2f.from(0, 1));
-    const projection_matrix_m33 = M33.orthographic_projection(0, @floatFromInt(w), @floatFromInt(h), 0);
+    const projection_matrix_m33 = M33.orthographic_projection(0, w, h, 0);
     const viewport_matrix_m33 = M33.viewport(0, 0, w, h);
     const mvp_matrix_33 = projection_matrix_m33.multiply(view_matrix_m33.multiply(M33.identity()));
     
@@ -285,29 +298,44 @@ pub fn update(platform: *Platform) !bool {
         viewport_matrix_m33
     );
 
-
     if (app.debug) {
         const debug_text_color: BGR = @bitCast(Assets.palette[3]);
         const color = RGBA.from(BGR, debug_text_color);
         const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(app.player.physical_component.physical_pos);
         const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
-        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*1) -  6).to_vec2f(), "ms {d: <9.2}", .{platform.ms}, color);
-        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*2) -  6).to_vec2f(), "fps {d:0.4}", .{platform.ms / 1000*60}, color);
-        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*3) -  6).to_vec2f(), "frame {}", .{platform.frame}, color);
-        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*4) -  6).to_vec2f(), "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z}, color);
-        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*5) -  6).to_vec2f(), "mouse {} {}", .{platform.mouse.x, platform.mouse.y}, color);
-        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*6) -  6).to_vec2f(), "dimensions {} {}", .{w, h}, color);
-        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*7) -  6).to_vec2f(), "physical pos {d:.4} {d:.4}", .{app.player.physical_component.physical_pos.x, app.player.physical_component.physical_pos.y}, color);
-        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*8) -  6).to_vec2f(), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
-        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*9) -  6).to_vec2f(), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
-        try app.debug_text_renderer.print(Vector2i.from(5, h - (6*10) - 6).to_vec2f(), "vel {d:.5} {d:.5}", .{app.player.physical_component.velocity.x, app.player.physical_component.velocity.y}, color);
+        const mouse: Vector2f = blk: {
+            const mx = @divFloor(platform.mouse.x, dimension_scale);
+            // inverse y since mouse is given relative to top left corner
+            const my = @divFloor((desired_height*dimension_scale) - platform.mouse.y, dimension_scale);
+            const offset = Vector2f.from(app.camera.pos.x, app.camera.pos.y);
+            const pos = Vector2i.from(mx, my).to_vec2f().add(offset);
+            break :blk pos;
+        };
+        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*1) -  6), "ms {d: <9.2}", .{platform.ms}, color);
+        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*2) -  6), "fps {d:0.4}", .{platform.ms / 1000*60}, color);
+        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*3) -  6), "frame {}", .{platform.frame}, color);
+        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*4) -  6), "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z}, color);
+        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*5) -  6), "mouse {d:.4} {d:.4}", .{mouse.x, mouse.y}, color);
+        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*6) -  6), "dimensions {} {}", .{w, h}, color);
+        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*7) -  6), "physical pos {d:.4} {d:.4}", .{app.player.physical_component.physical_pos.x, app.player.physical_component.physical_pos.y}, color);
+        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*8) -  6), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
+        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*9) -  6), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
+        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*10) - 6), "vel {d:.5} {d:.5}", .{app.player.physical_component.velocity.x, app.player.physical_component.velocity.y}, color);
         app.debug_text_renderer.render_all(
             platform.pixel_buffer,
-            M33.orthographic_projection(0, @floatFromInt(w), @floatFromInt(h), 0),
+            M33.orthographic_projection(0, w, h, 0),
             M33.viewport(0, 0, w, h)
         );
     }
+   
     return true;
+}
+
+fn key_pressing(platform: *Platform, key: usize) bool {
+    return platform.keys[key];
+}
+fn key_pressed(platform: *Platform, key: usize) bool {
+    return platform.keys[key] and !platform.keys_old[key];
 }
 
 pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
@@ -686,7 +714,7 @@ const EntitySystem = struct {
                             const hitbox = BoundingBox(f32).from(6, 1, 3, 8).scale(Vector2f.from(attack_dir_f32, 1)).offset(pos_component.*);
                             const behaviour: Assets.HitboxType = .once_per_frame;
                             const duration = Assets.animation_attack_1.duration;
-                            const knockback = Vector2f.from(attack_dir_f32, 0);
+                            const knockback = Vector2f.from(attack_dir_f32, 0).scale(0.25);
                             try app.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
 
                             const mirror_animation = switch(knight_component.attack_direction){.Right=> false, .Left=> true};
@@ -725,7 +753,7 @@ const EntitySystem = struct {
                             const hitbox = BoundingBox(f32).from(7, 1, 3, 10).scale(Vector2f.from(attack_dir_f32, 1)).offset(pos_component.*);
                             const behaviour: Assets.HitboxType = .once_per_frame;
                             const duration = Assets.animation_attack_1.duration;
-                            const knockback = Vector2f.from(attack_dir_f32*1.20, 0);
+                            const knockback = Vector2f.from(attack_dir_f32*1.20, 0).scale(0.25);
                             try app.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
 
                             const mirror_animation = switch(knight_component.attack_direction){.Right=> false, .Left=> true};
@@ -772,8 +800,6 @@ const EntitySystem = struct {
                 },
                 else => unreachable
             }
-
-
         }
     
         for (app.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
@@ -826,7 +852,7 @@ pub fn Pool(comptime T: type) type {
         }
 
         pub fn release_by_index(self: *Self, i: usize) void {
-            if (self.index <= i) unreachable;
+            std.debug.assert(i <= self.index);
             self.marked_deleted.appendAssumeCapacity(i);
         }
 
@@ -989,6 +1015,17 @@ pub const particles_generators = struct {
             .alpha = 120,
         };
     }
+    pub fn poison(pos: Vector2f) ParticleDescriptor {
+        return ParticleDescriptor {
+            .color = RGB.from_other(BGR, @bitCast(Assets.palette[if (app.random.boolean()) 6 else 7])),
+            .life = 100,
+            .position = pos,
+            .radius = 2 + app.random.float(f32) * 3,
+            .speed = Vector2f.from((app.random.float(f32) * 2) - 1, 0).scale(0.02),
+            .weight = -0.13,
+            .alpha = 120,
+        };
+    }
     pub fn other(pos: Vector2f, radious: f32, speed: Vector2f, alpha: u8) ParticleDescriptor {
         return ParticleDescriptor {
             .color = RGB.from_other(BGR, @bitCast(Assets.palette[15])),
@@ -1062,6 +1099,18 @@ pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type
             return self;
         }
 
+        pub fn add_quad_from_bb(self: *Self, bb: BoundingBox(f32), tint: RGBA) !void {
+            const pos = Vector2f.from(bb.left, bb.bottom);
+            const size = Vector2f.from(bb.right - bb.left, bb.top - bb.bottom);
+            const vertices = [4] shader.Vertex {
+                .{ .pos = .{ .x = pos.x,          .y = pos.y          }, .tint = tint },
+                .{ .pos = .{ .x = pos.x + size.x, .y = pos.y          }, .tint = tint },
+                .{ .pos = .{ .x = pos.x + size.x, .y = pos.y + size.y }, .tint = tint },
+                .{ .pos = .{ .x = pos.x,          .y = pos.y + size.y }, .tint = tint },
+            };
+            try self.vertex_buffer.appendSlice(&vertices);
+        }
+        
         pub fn add_quad(self: *Self, pos: Vector2f, size: Vector2f, tint: RGBA) !void {
             const vertices = [4] shader.Vertex {
                 .{ .pos = .{ .x = pos.x,          .y = pos.y          }, .tint = tint },
@@ -1090,6 +1139,17 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
     return struct {
 
         const texture = font.texture;
+        const char_width: f32 = (base_width - pad_left - pad_right) * size;
+        const char_height: f32 = (base_height - pad_top - pad_bottom) * size;
+        // NOTE the font has quite a lot of padding so rather than rendering the whole 8x8 quad, only render the relevant part of the quad
+        // the rest is just transparent anyway
+        const base_width: f32 = 8;
+        const base_height: f32 = 8;
+        const pad_top: f32 = 0;
+        const pad_bottom: f32 = 3;
+        const pad_left: f32 = 0;
+        const pad_right: f32 = 5;
+        const space_between_characters: f32 = 1;
         
         const Shader = struct {
 
@@ -1155,28 +1215,41 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
         }
 
         pub fn print(self: *Self, pos: Vector2f, comptime fmt: []const u8, args: anytype, tint: RGBA) !void {
-            const char_width: f32 = 4;
-            const char_height: f32 = 8;
             var buff: [max_size_per_print]u8 = undefined;
             const str = try std.fmt.bufPrint(&buff, fmt, args);
             for (str, 0..) |c, i| {
-                const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width * size;
+
+                // x and y are the bottom left of the quad
+                const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width + @as(f32, @floatFromInt(i));
                 const y: f32 = pos.y;
                 
-                const u_1: f32 = @floatFromInt((c%16) * 8);
-                const v_1: f32 = @floatFromInt((c/16) * 8);
-                const u_2: f32 = u_1 + char_width;
-                const v_2: f32 = v_1 + char_height;
+                // texture left and right
+                const u_1: f32 = @as(f32, @floatFromInt(c%16)) * base_width + pad_left;
+                const u_2: f32 = u_1 + base_width - pad_left - pad_right;
+                // texture top and bottom. Note that the texture is invertex so the mat here is also inverted
+                const v_1: f32 = (@as(f32, @floatFromInt(c/16)) + 1) * base_height - pad_bottom;
+                const v_2: f32 = @as(f32, @floatFromInt(c/16)) * base_height + pad_top;
 
+                // NOTE the texture is reversed hence the weird uv coordinates
                 const vertices = [4] Shader.Vertex {
-                    .{ .pos = .{ .x = x,                     .y = y                      }, .uv = .{ .x = u_1, .y = v_2 }, .tint = tint },
-                    .{ .pos = .{ .x = x + char_width * size, .y = y                      }, .uv = .{ .x = u_2, .y = v_2 }, .tint = tint },
-                    .{ .pos = .{ .x = x + char_width * size, .y = y + char_height * size }, .uv = .{ .x = u_2, .y = v_1 }, .tint = tint },
-                    .{ .pos = .{ .x = x,                     .y = y + char_height * size }, .uv = .{ .x = u_1, .y = v_1 }, .tint = tint }
+                    .{ .pos = .{ .x = x,              .y = y               }, .uv = .{ .x = u_1, .y = v_1 }, .tint = tint },
+                    .{ .pos = .{ .x = x + char_width, .y = y               }, .uv = .{ .x = u_2, .y = v_1 }, .tint = tint },
+                    .{ .pos = .{ .x = x + char_width, .y = y + char_height }, .uv = .{ .x = u_2, .y = v_2 }, .tint = tint },
+                    .{ .pos = .{ .x = x,              .y = y + char_height }, .uv = .{ .x = u_1, .y = v_2 }, .tint = tint }
                 };
                 
                 try self.vertex_buffer.appendSlice(&vertices);                
             }
+        }
+
+        pub fn width(self: *Self) f32 {
+            _ = self;
+            return char_width;
+        }
+        
+        pub fn height(self: *Self) f32 {
+            _ = self;
+            return char_height;
         }
 
         pub fn render_all(self: *Self, pixel_buffer: Buffer2D(out_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
@@ -1352,11 +1425,15 @@ pub const Assets = struct {
         &[_] EntitySpawnDescriptor { },
     );
 
+    /// contains the top left and bottom right tiles of the map, where br is exclusive (not actually a part of the map)
     pub const LevelBackgroundDescriptor = struct {
         tl: Vector2i,
         br: Vector2i,
         fn from(tl: Vector2i, br: Vector2i) LevelBackgroundDescriptor {
             return LevelBackgroundDescriptor { .tl = tl, .br = br };
+        }
+        pub fn to_bb_corrected(self: LevelBackgroundDescriptor) BoundingBox(f32) {
+            return BoundingBox(f32).from(@floatFromInt(correct_y(self.tl.y)), @floatFromInt(correct_y(self.br.y-1)), @floatFromInt(self.tl.x), @floatFromInt(self.br.x-1));
         }
     };
     
@@ -1579,10 +1656,10 @@ pub const Assets = struct {
         .weight = 2,
         .hp = 30,
         .speed = 0.02,
-        .chase_range = 5*8,
+        .chase_range = 6*8,
         .attack_dmg = 15,
         .attack_cooldown = 60,
-        .attack_range = 1*8,
+        .attack_range = 3*8,
         .hurtbox = BoundingBox(f32).from(4, 0, -3, 3),
     };
     pub const entity_knight_1 = EntityDescriptor {
