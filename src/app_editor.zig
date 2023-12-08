@@ -34,14 +34,6 @@ pub const dimension_scale = 2;
 pub const desired_width = 240*2;
 pub const desired_height = 136*2;
 
-// TODO damage numbers
-// TODO exclamation mark when slimes start attacking
-// TODO transparent overlay on poison pool
-// TODO trigger areas
-// TODO torch flame particles
-// TODO particle emitters on torches and poisonous waters etc
-// TODO tools
-
 const text_scale = 1;
 const App = struct {
     debug_text_renderer: TextRenderer(PlatformOutPixelType, 1024, text_scale),
@@ -114,10 +106,17 @@ pub fn update(platform: *Platform) !bool {
         const offset = Vector2f.from(app.camera.pos.x, app.camera.pos.y);
         break :blk mouse_window.add(offset);
     };
+    // represents the tile x, y where the mouse is, assuming that tile size is 8
+    // and that the coordinate 0, 0 is the bottom left pixel of the tile 0, 0
     const mouse_tile = Vector2f.from(@floor(mouse_world.x/8), @floor(mouse_world.y/8));
+    const mouse_tile_in_map = mouse_tile.add(Vector2f.from(@floatFromInt(app.level_background.bb.left), @floatFromInt(app.level_background.bb.bottom)));
 
 
     const pan_speed = 5;
+    if (key_pressed(platform, 'M')) {
+        try save_map(platform.allocator);
+        std.log.debug("Saved!", .{});
+    }
     if (key_pressed(platform, 'G')) app.debug = !app.debug;
     if (key_pressing(platform, 'W')) app.camera.pos.y += pan_speed;
     if (key_pressing(platform, 'A')) app.camera.pos.x -= pan_speed;
@@ -149,6 +148,24 @@ pub fn update(platform: *Platform) !bool {
         mvp_matrix,
         viewport_matrix
     );
+
+    // draw a white rectangle around the sprite slection box
+    {
+        var map_tile_bb = app.level_background.bb.to(f32);
+        map_tile_bb.right += 1;
+        map_tile_bb.top += 1;
+        const map_bb = map_tile_bb.offset(Vec2(f32).from(-map_tile_bb.left, -map_tile_bb.bottom)).scale(Vec2(f32).from(8,8));
+        const width = 1;
+        const left_bar = BoundingBox(f32).from(map_bb.top+width, map_bb.bottom-width, map_bb.left-width, map_bb.left);
+        const bottom_bar = BoundingBox(f32).from(map_bb.bottom, map_bb.bottom-width, map_bb.left-width, map_bb.right+width);
+        const right_bar = BoundingBox(f32).from(map_bb.top+width, map_bb.bottom-width, map_bb.right, map_bb.right+width);
+        const top_bar = BoundingBox(f32).from(map_bb.top+width, map_bb.top, map_bb.left-width, map_bb.right+width);
+        try app.renderer_shapes.add_quad_from_bb(left_bar, @bitCast(@as(u32,0xffffffff)));
+        try app.renderer_shapes.add_quad_from_bb(bottom_bar, @bitCast(@as(u32,0xffffffff)));
+        try app.renderer_shapes.add_quad_from_bb(right_bar, @bitCast(@as(u32,0xffffffff)));
+        try app.renderer_shapes.add_quad_from_bb(top_bar, @bitCast(@as(u32,0xffffffff)));
+        app.renderer_shapes.render(platform.pixel_buffer, mvp_matrix, viewport_matrix);
+    }
     
     // list all the levels and if a level is clicked, change the value of `app.level_background`
     const levels_enum: std.builtin.Type = @typeInfo(Assets.Levels);
@@ -176,6 +193,20 @@ pub fn update(platform: *Platform) !bool {
         projection_matrix_screen,
         viewport_matrix
     );
+    // draw a white rectangle around the sprite slection box
+    {
+        var bb = sprite_selection_bb;
+        const width = 1;
+        const left_bar = BoundingBox(f32).from(bb.top+width, bb.bottom-width, bb.left-width, bb.left);
+        const bottom_bar = BoundingBox(f32).from(bb.bottom, bb.bottom-width, bb.left-width, bb.right+width);
+        const right_bar = BoundingBox(f32).from(bb.top+width, bb.bottom-width, bb.right, bb.right+width);
+        const top_bar = BoundingBox(f32).from(bb.top+width, bb.top, bb.left-width, bb.right+width);
+        try app.renderer_shapes.add_quad_from_bb(left_bar, @bitCast(@as(u32,0xffffffff)));
+        try app.renderer_shapes.add_quad_from_bb(bottom_bar, @bitCast(@as(u32,0xffffffff)));
+        try app.renderer_shapes.add_quad_from_bb(right_bar, @bitCast(@as(u32,0xffffffff)));
+        try app.renderer_shapes.add_quad_from_bb(top_bar, @bitCast(@as(u32,0xffffffff)));
+        app.renderer_shapes.render(platform.pixel_buffer, projection_matrix_screen, viewport_matrix);
+    }
     for (0..16) |j| {
         for (0..16) |i| {
             const jj: f32 = @floatFromInt(j);
@@ -209,7 +240,7 @@ pub fn update(platform: *Platform) !bool {
             break :blk bb.offset(Vec2(f32).from(-bb.left, -bb.bottom));
         };
         if (map_tiles_bb.contains(mouse_tile)) {
-            if (platform.l_click) app.map[@intFromFloat(mouse_tile.y)][@intFromFloat(mouse_tile.x)] = app.selected_sprite;
+            if (platform.l_click) app.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = app.selected_sprite;
             try app.renderer_shapes.add_quad(mouse_tile.scale(8), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
             app.renderer_shapes.render(
                 platform.pixel_buffer,
@@ -261,6 +292,29 @@ fn key_pressing(platform: *Platform, key: usize) bool {
 }
 fn key_pressed(platform: *Platform, key: usize) bool {
     return platform.keys[key] and !platform.keys_old[key];
+}
+
+pub fn save_map(allocator: std.mem.Allocator) !void {
+    var buffer = std.ArrayList(u8).init(allocator);
+    const map: [136][240]u8 = app.map;
+    for (map) |byte_row| {
+        _ = try buffer.writer().write(byte_row[0..]);
+    }
+    const file = try std.fs.cwd().createFile("map.data", .{});
+    defer file.close();
+    try file.writeAll(buffer.items);
+}
+
+pub fn read_map(allocator: std.mem.Allocator) !void {
+    std.fs.cwd().readFile("map.data", &app.map)
+    var buffer = std.ArrayList(u8).init(allocator);
+    const map: [136][240]u8 = app.map;
+    for (map) |byte_row| {
+        _ = try buffer.writer().write(byte_row[0..]);
+    }
+    const file = try std.fs.cwd().createFile("map.data", .{});
+    defer file.close();
+    try file.writeAll(buffer.items);
 }
 
 pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
