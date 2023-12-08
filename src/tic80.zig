@@ -6,6 +6,7 @@ const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
 const Vector4f = math.Vector4f;
+const BoundingBox = math.BoundingBox;
 const M44 = math.M44;
 const M33 = math.M33;
 const Plane = math.Plane;
@@ -377,17 +378,14 @@ pub fn QuadRenderer(comptime output_pixel_type: type, comptime shader: type) typ
             try self.vertex_buffer.appendSlice(&vertices);
         }
 
-        pub fn add_map(self: *Self, comptime map: Map, tl: Vector2i, br: Vector2i, pos: Vector2f) !void {
-            const top: usize = @intCast(tl.y);
-            const bottom: usize = @intCast(br.y);
-            const left: usize = @intCast(tl.x);
-            const right: usize = @intCast(br.x);
-            for (map[top..bottom], 0..) |map_row, row_i| {
-                for (map_row[left..right], 0..) |atlas_index, col_i| {
-                    // NOTE(Oscar) aparently the embedded map data has the indices rows and columns inversed? not sure if my fault or just how it is
-                    const row: f32 = @floatFromInt(atlas_index%16);
-                    const col: f32 = @floatFromInt(@divFloor(atlas_index, 16));
-                    const offset = Vector2f.from(@floatFromInt(col_i*8), @floatFromInt(((bottom-top-1)*8)-(row_i*8)));
+        pub fn add_map(self: *Self, map: Map, bb: BoundingBox(usize), pos: Vector2f) !void {
+            for (map[bb.bottom..bb.top+1], 0..) |map_row, i| {
+                for (map_row[bb.left..bb.right+1], 0..) |sprite_index, j| {
+                    // figure out the uv of the sprite_index
+                    const col: f32 = @floatFromInt(sprite_index%16);
+                    const row: f32 = @floatFromInt(@divFloor(sprite_index, 16));
+                    // offset for this particular tile of the map
+                    const offset = Vector2f.from(@floatFromInt(j*8), @floatFromInt(i*8));
                     const vertices = [4] shader.Vertex {
                         .{ .pos = .{ .x = offset.x + pos.x,               .y = offset.y + pos.y               }, .uv = .{ .x = col*sprite_size + 0,           .y = row*sprite_size + sprite_size } }, // 0 - bottom left
                         .{ .pos = .{ .x = offset.x + pos.x + sprite_size, .y = offset.y + pos.y               }, .uv = .{ .x = col*sprite_size + sprite_size, .y = row*sprite_size + sprite_size } }, // 1 - bottom right

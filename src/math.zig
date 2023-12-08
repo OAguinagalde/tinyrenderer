@@ -100,6 +100,52 @@ pub const Vector2f = struct {
     }
 };
 
+pub fn Vec2(comptime T: type) type {
+    return struct {
+
+        const Self = @This();
+
+        x: T,
+        y: T,
+        
+        pub inline fn from(x: T, y: T) Self {
+            return Self { .x = x, .y = y };
+        }
+
+        pub fn add(self: Self, other: Self) Self {
+            return Self.from(self.x + other.x, self.y + other.y);
+        }
+
+        pub fn scale(self: Self, factor: T) Self {
+            return Self.from(self.x * factor, self.y * factor);
+        }
+
+        pub fn scale_vec(self: Self, other: Self) Self {
+            return Self.from(self.x * other.x, self.y * other.y);
+        }
+
+        pub fn dot(self: Self, other: Self) T {
+            return self.x * other.x + self.y * other.y;
+        }
+
+        pub fn magnitude(self: Self) T {
+            return std.math.sqrt(self.x * self.x + self.y * self.y);
+        }
+        
+        pub fn normalized(self: Self) Self {
+            if (std.meta.trait.isFloat(T)) {
+                const mag = self.magnitude();
+                return Self.from(self.x / mag, self.y / mag);
+            }
+            else @compileError("type " ++ @typeName(T) ++ " is not a floating point number");
+        }
+
+        pub fn perpendicular(self: Self) Self {
+            return Self.from(self.y, -self.x);
+        }
+    };
+}
+
 pub const Vector3f = struct {
     x: f32,
     y: f32,
@@ -879,6 +925,10 @@ fn map_range_to_range_normalized(n: f32, from: f32, to: f32, map_from: f32, map_
 pub fn BoundingBox(comptime T: type) type {
     return struct {
 
+        comptime {
+            std.debug.assert(std.meta.trait.isFloat(T) or std.meta.trait.isIntegral(T));
+        }
+
         const Self = @This();
         const Pair = struct {
             x: T, y: T,
@@ -903,16 +953,38 @@ pub fn BoundingBox(comptime T: type) type {
             };
         }
 
+        pub inline fn to(self: Self, comptime OtherType: type) BoundingBox(OtherType) {
+            const self_is_float = comptime std.meta.trait.isFloat(T);
+            const other_is_float = comptime std.meta.trait.isFloat(OtherType);
+            if (self_is_float) {
+                if (other_is_float) {
+                    return BoundingBox(OtherType).from(@floatCast(self.top), @floatCast(self.bottom), @floatCast(self.left), @floatCast(self.right));
+                }
+                else {
+                    return BoundingBox(OtherType).from(@intFromFloat(self.top), @intFromFloat(self.bottom), @intFromFloat(self.left), @intFromFloat(self.right));
+
+                }
+            }
+            else {
+                if (other_is_float) {
+                    return BoundingBox(OtherType).from(@floatFromInt(self.top), @floatFromInt(self.bottom), @floatFromInt(self.left), @floatFromInt(self.right));
+                }
+                else {
+                    return BoundingBox(OtherType).from(@intCast(self.top), @intCast(self.bottom), @intCast(self.left), @intCast(self.right));
+                }
+            }
+        }
+
         pub inline fn from_tl_br(tl: anytype, br: anytype) Self {
             return from(tl.y, br.y, tl.x, br.x);
         }
 
         /// `point` can be anything that has fields `x: T` and `y: T`
-        pub fn contains(self: Self, point: anytype) bool {
+        pub inline fn contains(self: Self, point: anytype) bool {
             return point.x >= self.left and point.x <= self.right and point.y >= self.bottom and point.y <= self.top;
         }
 
-        pub fn overlaps(self: Self, other: Self) bool {
+        pub inline fn overlaps(self: Self, other: Self) bool {
             return self.contains(Pair.from(other.left, other.top))
                 or self.contains(Pair.from(other.right, other.top))
                 or self.contains(Pair.from(other.left, other.bottom))
@@ -941,6 +1013,16 @@ pub fn BoundingBox(comptime T: type) type {
                 self.bottom + os.y,
                 self.left + os.x,
                 self.right + os.x,
+            );
+        }
+
+        /// generally `offset` should be enough but when working with unsigned types this is handy
+        pub fn offset_negative(self: Self, os: anytype) Self {
+            return Self.from(
+                self.top - os.y,
+                self.bottom - os.y,
+                self.left - os.x,
+                self.right - os.x,
             );
         }
         
