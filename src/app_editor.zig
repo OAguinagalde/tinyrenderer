@@ -29,7 +29,7 @@ const timestamp = if (builtin.os.tag == .windows) std.time.timestamp else wasm_t
 fn wasm_timestamp() i64 {
     return @intCast(wasm.milli_since_epoch());
 }
-
+pub const main = if (builtin.os.tag == .windows) windows.main else wasm.main;
 pub const dimension_scale = 2;
 pub const desired_width = 240*2;
 pub const desired_height = 136*2;

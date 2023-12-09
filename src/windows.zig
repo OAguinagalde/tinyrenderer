@@ -352,8 +352,8 @@ pub const Platform = struct {
     mwheel: i32
 };
 
-// const app = @import("app_editor.zig");
-const app = @import("windows_001.zig");
+// Root must have an init, update, and some extra variables made public... for now anyway
+const app = @import("root");
 const init = app.init;
 const update = app.update;
 const dimension_scale = app.dimension_scale;

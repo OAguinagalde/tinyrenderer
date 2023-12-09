@@ -3,16 +3,16 @@ const Builder = std.build.Builder;
 
 pub fn build(b: *Builder) !void {
 
-    const target_win32 = b.option(bool, "win32", "default compilation for win32") orelse false;
+    const target_win32 = b.option([]const u8, "win32", "default compilation for win32");
     const target_wasm = b.option(bool, "wasm", "default compilation for wasm") orelse false;
-    if (!(target_win32 or target_wasm)) {
+    if (target_win32 == null and !target_wasm) {
         std.log.err("choose a target, ex: `zig build -Dwin32`", .{});
         return error.NoTarget;
     }
     
     const run_step = b.step("run", "Run the application");
 
-    if (target_win32) {
+    if (target_win32) |root_file| {
 
         const tracy = b.option([]const u8, "tracy", "Enable Tracy integration. Supply path to Tracy source");
         const tracy_callstack = b.option(bool, "tracy-callstack", "Include callstack information with Tracy data. Does nothing if -Dtracy is not provided") orelse (tracy != null);
@@ -23,7 +23,8 @@ pub fn build(b: *Builder) !void {
         const target: std.zig.CrossTarget = .{ .os_tag = .windows };
         const exe = b.addExecutable(.{
             .name = "windows",
-            .root_source_file = .{ .path = "src/windows.zig" },
+            // load whatever file is passed in the `-Dwin32=XXXXX` flag and assume its in src folder with a .zig extension
+            .root_source_file = .{ .path = try std.fmt.allocPrint(b.allocator, "src/{s}.zig", .{root_file}) },
             .target = target,
             .optimize = optimization_options,
         });
