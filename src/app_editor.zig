@@ -113,6 +113,7 @@ pub fn update(platform: *Platform) !bool {
 
 
     const pan_speed = 5;
+    if (key_pressed(platform, 'L')) try read_map();
     if (key_pressed(platform, 'M')) {
         try save_map(platform.allocator);
         std.log.debug("Saved!", .{});
@@ -305,16 +306,10 @@ pub fn save_map(allocator: std.mem.Allocator) !void {
     try file.writeAll(buffer.items);
 }
 
-pub fn read_map(allocator: std.mem.Allocator) !void {
-    std.fs.cwd().readFile("map.data", &app.map)
-    var buffer = std.ArrayList(u8).init(allocator);
-    const map: [136][240]u8 = app.map;
-    for (map) |byte_row| {
-        _ = try buffer.writer().write(byte_row[0..]);
-    }
-    const file = try std.fs.cwd().createFile("map.data", .{});
-    defer file.close();
-    try file.writeAll(buffer.items);
+pub fn read_map() !void {
+    const map_data_start: [*]u8 = @ptrCast(&app.map[0][0]);
+    const underlying_bytes: []u8 = @ptrCast(map_data_start[0..240*136]);
+    _ = try std.fs.cwd().readFile("map.data", underlying_bytes);
 }
 
 pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
