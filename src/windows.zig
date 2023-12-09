@@ -352,7 +352,8 @@ pub const Platform = struct {
     mwheel: i32
 };
 
-const app = @import("app_editor.zig");
+// const app = @import("app_editor.zig");
+const app = @import("windows_001.zig");
 const init = app.init;
 const update = app.update;
 const dimension_scale = app.dimension_scale;

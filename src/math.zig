@@ -7,6 +7,18 @@ pub const Vector2i = struct {
     pub inline fn from(x: i32, y: i32) Vector2i {
         return Vector2i { .x = x, .y = y };
     }
+    
+    pub inline fn to(self: Vector2i, comptime T: type) Vec2(T) {
+        const t_is_float = comptime std.meta.trait.isFloat(T);
+        const t_is_int = comptime std.meta.trait.isIntegral(T);
+        if (!t_is_float and !t_is_int) @compileError("Type "++@typeName(T)++" is neither a float or an int type");
+        if (t_is_float) {
+            return Vec2(T).from(@floatFromInt(self.x), @floatFromInt(self.y));
+        }
+        else {
+            return Vec2(T).from(@intCast(self.x), @intCast(self.y));
+        }
+    }
 
     pub fn add(self: Vector2i, other: Vector2i) Vector2i {
         return Vector2i { .x = self.x + other.x, .y = self.y + other.y };
@@ -973,6 +985,14 @@ pub fn BoundingBox(comptime T: type) type {
                     return BoundingBox(OtherType).from(@intCast(self.top), @intCast(self.bottom), @intCast(self.left), @intCast(self.right));
                 }
             }
+        }
+
+        pub inline fn width(self: Self) T {
+            return self.right - self.left;
+        }
+
+        pub inline fn height(self: Self) T {
+            return self.top - self.bottom;
         }
 
         pub inline fn from_tl_br(tl: anytype, br: anytype) Self {
