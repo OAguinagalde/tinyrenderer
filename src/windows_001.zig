@@ -22,6 +22,7 @@ const BGRA = @import("pixels.zig").BGRA;
 const BGR = @import("pixels.zig").BGR;
 const Ecs = @import("ecs.zig").Ecs;
 const Entity = @import("ecs.zig").Entity;
+const Resources = @import("app_editor.zig").Resources;
 
 const Platform = if (builtin.os.tag == .windows) windows.Platform else wasm.Platform;
 const PlatformOutPixelType = if (builtin.os.tag == .windows) BGRA else RGBA;
@@ -65,6 +66,8 @@ const App = struct {
     entities_damage_dealers: HitboxSystem,
     player_damage_dealers: HitboxSystem,
     debug: bool,
+    resources: Resources,
+    resource_file_name: []const u8,
 };
 
 var app: App = undefined;
@@ -89,6 +92,11 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(PlatformOutPixe
     app.doors = undefined; // doors are set on load_level
     app.texts = undefined; // texts are set on load_level
     app.debug = true;
+    app.resource_file_name = "resources.bin";
+    app.resources.load_from_file(app.resource_file_name) catch |err| {
+        std.log.debug("err: failed to load from file: {any}", .{err});
+        app.resources.load_from_embedded();
+    };
     try load_level(Assets.spawn_start_0, 0);
 }
 
@@ -100,6 +108,7 @@ pub fn update(platform: *Platform) !bool {
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     platform.pixel_buffer.clear(PlatformOutPixelType.from(BGR, clear_color));
 
+    if (key_pressed(platform, 'L')) try app.resources.load_from_file(app.resource_file_name);
     if (platform.keys['Q'] and !platform.keys_old['Q']) {}
     if (platform.keys['E'] and !platform.keys_old['E']) {}
     if (platform.keys['R'] and !platform.keys_old['R']) try load_level(Assets.spawn_start_0, platform.frame);
@@ -226,7 +235,7 @@ pub fn update(platform: *Platform) !bool {
     
     // render map
     const map_bb_f = app.level_background.bb.scale(Vec2(usize).from(8,8)).to(f32);
-    try app.renderer_quads.add_map(Assets.map, app.level_background.bb, Vector2f.from(map_bb_f.left, map_bb_f.bottom));
+    try app.renderer_quads.add_map(app.resources.map, app.level_background.bb, Vector2f.from(map_bb_f.left, map_bb_f.bottom));
     app.renderer_quads.render(
         platform.pixel_buffer,
         mvp_matrix_33,
@@ -389,7 +398,7 @@ inline fn collision_checker(tile: Vector2i) bool {
     if (tile.x < 0 or tile.y < 0) return true;
     const tileu = tile.to(usize);
     if (!app.level_background.bb.contains(tileu)) return true;
-    const tile_index = Assets.map[tileu.y][tileu.x];
+    const tile_index = app.resources.map[tileu.y][tileu.x];
     const col = tile_index%16;
     const row = @divFloor(tile_index, 16);
     return Assets.map_flags[col + row*16] == 0x01;

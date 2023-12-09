@@ -49,8 +49,9 @@ const App = struct {
     debug: bool,
     zoom: i32,
     selected_sprite: u8,
-    map: tic80.Map,
     camera: Camera,
+    resources: Resources,
+    resource_file_name: []const u8,
 };
 
 var app: App = undefined;
@@ -70,7 +71,11 @@ pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(PlatformOutPixe
     app.zoom = 1;
     app.level_background = Assets.level_all_levels.background.*;
     app.selected_sprite = 0;
-    app.map = Assets.map;
+    app.resource_file_name = "resources.bin";
+    app.resources.load_from_file(app.resource_file_name) catch |err| {
+        std.log.debug("err: failed to load from file: {any}", .{err});
+        app.resources.load_from_embedded();
+    };
 }
 
 pub fn update(platform: *Platform) !bool {
@@ -96,11 +101,8 @@ pub fn update(platform: *Platform) !bool {
 
 
     const pan_speed = 5;
-    if (key_pressed(platform, 'L')) try read_map();
-    if (key_pressed(platform, 'M')) {
-        try save_map(platform.allocator);
-        std.log.debug("Saved!", .{});
-    }
+    if (key_pressed(platform, 'L')) try app.resources.load_from_file(app.resource_file_name);
+    if (key_pressed(platform, 'M')) try app.resources.save_to_file(platform.allocator, app.resource_file_name);
     if (key_pressed(platform, 'G')) app.debug = !app.debug;
     if (key_pressing(platform, 'W')) app.camera.pos.y += pan_speed;
     if (key_pressing(platform, 'A')) app.camera.pos.x -= pan_speed;
@@ -126,7 +128,7 @@ pub fn update(platform: *Platform) !bool {
     const projection_matrix_screen = M33.orthographic_projection(0, w, h, 0);
     
     // render the map
-    try app.renderer_quads.add_map(app.map, app.level_background.bb, Vector2f.from(0,0));
+    try app.renderer_quads.add_map(app.resources.map, app.level_background.bb, Vector2f.from(0,0));
     app.renderer_quads.render(
         platform.pixel_buffer,
         mvp_matrix,
@@ -224,7 +226,7 @@ pub fn update(platform: *Platform) !bool {
             break :blk bb.offset(Vec2(f32).from(-bb.left, -bb.bottom));
         };
         if (map_tiles_bb.contains(mouse_tile)) {
-            if (platform.l_click) app.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = app.selected_sprite;
+            if (platform.l_click) app.resources.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = app.selected_sprite;
             try app.renderer_shapes.add_quad(mouse_tile.scale(8), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
             app.renderer_shapes.render(
                 platform.pixel_buffer,
@@ -276,23 +278,6 @@ fn key_pressing(platform: *Platform, key: usize) bool {
 }
 fn key_pressed(platform: *Platform, key: usize) bool {
     return platform.keys[key] and !platform.keys_old[key];
-}
-
-pub fn save_map(allocator: std.mem.Allocator) !void {
-    var buffer = std.ArrayList(u8).init(allocator);
-    const map: [136][240]u8 = app.map;
-    for (map) |byte_row| {
-        _ = try buffer.writer().write(byte_row[0..]);
-    }
-    const file = try std.fs.cwd().createFile("map.data", .{});
-    defer file.close();
-    try file.writeAll(buffer.items);
-}
-
-pub fn read_map() !void {
-    const map_data_start: [*]u8 = @ptrCast(&app.map[0][0]);
-    const underlying_bytes: []u8 = @ptrCast(map_data_start[0..240*136]);
-    _ = try std.fs.cwd().readFile("map.data", underlying_bytes);
 }
 
 pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
@@ -626,6 +611,35 @@ inline fn correct_y(thing: anytype) @TypeOf(thing) {
 }
 
 const Direction = enum {Left, Right};
+
+pub const Resources = struct {
+    
+    map: tic80.Map,
+
+    pub fn save_to_file(self: *const Resources, allocator: std.mem.Allocator, file_name: []const u8) !void {
+        var serialized_data = std.ArrayList(u8).init(allocator);
+        for (self.map) |byte_row| {
+            _ = try serialized_data.writer().write(byte_row[0..]);
+        }
+        const file = try std.fs.cwd().createFile(file_name, .{});
+        defer file.close();
+        try file.writeAll(serialized_data.items);
+        std.log.debug("resources saved to file {s}!", .{file_name});
+    }
+
+    pub fn load_from_file(self: *Resources, file_name: []const u8) !void {
+        const map_data_start: [*]u8 = @ptrCast(&self.map);
+        const underlying_bytes: []u8 = @ptrCast(map_data_start[0..240*136]);
+        _ = try std.fs.cwd().readFile(file_name, underlying_bytes);
+        std.log.debug("resources from file {s} loaded!", .{file_name});
+    }
+
+    pub fn load_from_embedded(self: *Resources) void {
+        self.map = Assets.map;
+        std.log.debug("resources embedded loaded!", .{});
+    }
+
+};
 
 pub const Assets = struct {
     
