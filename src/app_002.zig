@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const math = @import("math.zig");
 const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
@@ -8,10 +9,18 @@ const M33 = math.M33;
 const Buffer2D = @import("buffer.zig").Buffer2D;
 const RGB = @import("pixels.zig").RGB;
 const BGRA = @import("pixels.zig").BGRA;
+const RGBA = @import("pixels.zig").RGBA;
 const tic80 = @import("tic80.zig");
-const TextRenderer = @import("text.zig").TextRenderer(BGRA, 1024, 1024);
-const Platform = @import("windows.zig").Platform;
+const TextRenderer = @import("text.zig").TextRenderer(BGRA, 1024, 1);
+const windows = @import("windows.zig");
+const Platform = windows.Platform;
 const graphics = @import("graphics.zig");
+
+
+pub const main = if (builtin.os.tag == .windows) windows.main else undefined;
+pub const dimension_scale = 4;
+pub const desired_width = 240;
+pub const desired_height = 136;
 
 const App = struct {
     text_renderer: TextRenderer,
@@ -22,16 +31,16 @@ const App = struct {
 var app: App = undefined;
 
 pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
-    app.text_renderer = try TextRenderer.init(allocator, pixel_buffer);
+    _ = pixel_buffer;
+    app.text_renderer = try TextRenderer.init(allocator);
     app.shape_renderer = try ShapeRenderer(BGRA, RGB.from(0,0,0)).init(allocator);
     app.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
 }
 
 pub fn update(platform: *Platform) !bool {
+    const h: f32 = @floatFromInt(platform.pixel_buffer.height);
+    const w: f32 = @floatFromInt(platform.pixel_buffer.width);
     platform.pixel_buffer.clear(BGRA.make(100, 149, 237,255));
-    
-    if (platform.keys['Q']) {}
-    if (platform.keys['E']) {}
     
     if (platform.keys['W']) app.camera.pos = app.camera.pos.add(Vector3f.from(0, 1, 0));
     if (platform.keys['A']) app.camera.pos = app.camera.pos.add(Vector3f.from(-1, 0, 0));
@@ -39,23 +48,24 @@ pub fn update(platform: *Platform) !bool {
     if (platform.keys['D']) app.camera.pos = app.camera.pos.add(Vector3f.from(1, 0, 0));
     
     const view_matrix = M33.look_at(Vector2f.from(app.camera.pos.x, app.camera.pos.y), Vector2f.from(0, 1));
-    const projection_matrix = M33.orthographic_projection(0, @floatFromInt(platform.w), @floatFromInt(platform.h), 0);
-    const viewport_matrix = M33.viewport(0, 0, platform.w, platform.h);
-    const mvp_matrix = projection_matrix.multiply(view_matrix.multiply(M33.identity()));
+    const projection_matrix = M33.orthographic_projection(0, w, h, 0);
+    const viewport_matrix = M33.viewport(0, 0, w, h);
+    const mvp_matrix = projection_matrix.multiply(view_matrix);
 
-    try app.shape_renderer.add_quad(Vector2f.from(20, 20), Vector2f.from(200, 100));
-    try app.shape_renderer.add_quad(Vector2f.from(0, 0), Vector2f.from(@floatFromInt(platform.w), @floatFromInt(platform.h)));
+    try app.shape_renderer.add_quad(Vector2f.from(-100, -100), Vector2f.from(w+100, h+100));
     app.shape_renderer.render(platform.pixel_buffer, mvp_matrix, viewport_matrix);
     
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*1) - 4 }, "ms {d: <9.2}", .{platform.ms});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*2) - 4 }, "fps {d:0.4}", .{platform.ms / 1000*60});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*3) - 4 }, "frame {}", .{platform.frame});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*4) - 4 }, "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*5) - 4 }, "mouse {} {}", .{platform.mouse.x, platform.mouse.y});
-    try app.text_renderer.print(Vector2i { .x = 5, .y = platform.h - (12*6) - 4 }, "dimensions {} {}", .{platform.w, platform.h});
+    const text_height = app.text_renderer.height() + 1;
+    const text_color = RGBA.from(RGBA, @bitCast(@as(u32, 0xffffffff)));
+    try app.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*0) }, "ms {d: <9.2}", .{platform.ms}, text_color);
+    try app.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*1) }, "frame {}", .{platform.frame}, text_color);
+    try app.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*2) }, "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z}, text_color);
+    try app.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*3) }, "mouse {} {}", .{platform.mouse.x, platform.mouse.y}, text_color);
+    try app.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*4) }, "dimensions {} {}", .{w, h}, text_color);
     app.text_renderer.render_all(
-        M44.orthographic_projection(0, @floatFromInt(platform.w), @floatFromInt(platform.h), 0, 0, 10),
-        M44.viewport_i32_2(0, 0, platform.w, platform.h, 255)
+        platform.pixel_buffer,
+        M33.orthographic_projection(0, w, h, 0),
+        M33.viewport(0, 0, w, h)
     );
     return true;
 }

@@ -31,7 +31,7 @@ fn wasm_timestamp() i64 {
     return @intCast(wasm.milli_since_epoch());
 }
 
-pub const main = if (builtin.os.tag == .windows) windows.main else wasm.main;
+pub const main = if (builtin.os.tag == .windows) windows.main else undefined;
 pub const dimension_scale = 4;
 pub const desired_width = 240;
 pub const desired_height = 136;

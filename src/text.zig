@@ -11,24 +11,83 @@ const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
 const Vector4f = math.Vector4f;
 const M44 = math.M44;
+const M33 = math.M33;
 const Buffer2D = buffer.Buffer2D;
 const GraphicsPipelineConfiguration = graphics.GraphicsPipelineConfiguration;
 const GraphicsPipeline = graphics.GraphicsPipeline;
 
-pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: usize, comptime preallocate_vertex_buffer_size: usize) type {
+pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: usize, comptime size: comptime_float) type {
     return struct {
 
-        pixel_buffer: Buffer2D(out_pixel_type),
+        const texture = font.texture;
+        const char_width: f32 = (base_width - pad_left - pad_right) * size;
+        const char_height: f32 = (base_height - pad_top - pad_bottom) * size;
+        // NOTE the font has quite a lot of padding so rather than rendering the whole 8x8 quad, only render the relevant part of the quad
+        // the rest is just transparent anyway
+        const base_width: f32 = 8;
+        const base_height: f32 = 8;
+        const pad_top: f32 = 0;
+        const pad_bottom: f32 = 3;
+        const pad_left: f32 = 0;
+        const pad_right: f32 = 5;
+        const space_between_characters: f32 = 1;
+        
+        const Shader = struct {
+
+            pub const Context = struct {
+                mvp_matrix: M33,
+            };
+
+            pub const Invariant = struct {
+                tint: RGBA,
+                uv: Vector2f,
+            };
+
+            pub const Vertex = struct {
+                pos: Vector2f,
+                uv: Vector2f,
+                tint: RGBA,
+            };
+
+            pub const pipeline_configuration = graphics.GraphicsPipelineQuads2DConfiguration {
+                .blend_with_background = true,
+                .do_quad_clipping = true,
+                .do_scissoring = false,
+                .trace = false
+            };
+
+            pub const Pipeline = graphics.GraphicsPipelineQuads2D(
+                out_pixel_type,
+                Context,
+                Invariant,
+                Vertex,
+                pipeline_configuration,
+                struct {
+                    inline fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector3f {
+                        out_invariant.tint = vertex.tint;
+                        out_invariant.uv = vertex.uv;
+                        return context.mvp_matrix.apply_to_vec2(vertex.pos);
+                    }
+                }.vertex_shader,
+                struct {
+                    inline fn fragment_shader(context: Context, invariants: Invariant) out_pixel_type {
+                        _ = context;
+                        const sample = texture.point_sample(false, invariants.uv);
+                        const sample_adapted = out_pixel_type.from(RGBA, sample); 
+                        const tint = out_pixel_type.from(RGBA, invariants.tint);
+                        return sample_adapted.tint(tint);
+                    }
+                }.fragment_shader,
+            );
+        };
+
         vertex_buffer: std.ArrayList(Shader.Vertex),
         
         const Self = @This();
 
-        const Shader = quad.Shader(out_pixel_type, RGBA, false, true);
-
-        pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(out_pixel_type)) !Self {
+        pub fn init(allocator: std.mem.Allocator) !Self {
             return .{
-                .pixel_buffer = pixel_buffer,
-                .vertex_buffer = try std.ArrayList(Shader.Vertex).initCapacity(allocator, preallocate_vertex_buffer_size*4)
+                .vertex_buffer = std.ArrayList(Shader.Vertex).init(allocator)
             };
         }
 
@@ -36,38 +95,52 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
             self.vertex_buffer.clearAndFree();
         }
 
-        pub fn print(self: *Self, pos: Vector2i, comptime fmt: []const u8, args: anytype) !void {
-            const char_width: i32 = 4;
-            const char_height: i32 = 7;
-            const size = 2;
+        pub fn print(self: *Self, pos: Vector2f, comptime fmt: []const u8, args: anytype, tint: RGBA) !void {
             var buff: [max_size_per_print]u8 = undefined;
             const str = try std.fmt.bufPrint(&buff, fmt, args);
             for (str, 0..) |c, i| {
-                const x: i32 = pos.x + @as(i32, @intCast(i)) * char_width * size;
-                const y: i32 = pos.y;
-                
-                const u_1: i32 = (c%16) * 8;
-                const v_1: i32 = (c/16) * 8;
-                const u_2: i32 = u_1 + char_width;
-                const v_2: i32 = v_1 + char_height;
 
+                // x and y are the bottom left of the quad
+                const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width + @as(f32, @floatFromInt(i));
+                const y: f32 = pos.y;
+                
+                // texture left and right
+                const u_1: f32 = @as(f32, @floatFromInt(c%16)) * base_width + pad_left;
+                const u_2: f32 = u_1 + base_width - pad_left - pad_right;
+                // texture top and bottom. Note that the texture is invertex so the mat here is also inverted
+                const v_1: f32 = (@as(f32, @floatFromInt(c/16)) + 1) * base_height - pad_bottom;
+                const v_2: f32 = @as(f32, @floatFromInt(c/16)) * base_height + pad_top;
+
+                // NOTE the texture is reversed hence the weird uv coordinates
                 const vertices = [4] Shader.Vertex {
-                    .{ .pos = .{ .x = @floatFromInt(x),                     .y = @floatFromInt(y)                      }, .uv = .{ .x = @floatFromInt(u_1), .y = @floatFromInt(v_2), } },
-                    .{ .pos = .{ .x = @floatFromInt(x + char_width * size), .y = @floatFromInt(y)                      }, .uv = .{ .x = @floatFromInt(u_2), .y = @floatFromInt(v_2) }, },
-                    .{ .pos = .{ .x = @floatFromInt(x + char_width * size), .y = @floatFromInt(y + char_height * size) }, .uv = .{ .x = @floatFromInt(u_2), .y = @floatFromInt(v_1) }, },
-                    .{ .pos = .{ .x = @floatFromInt(x),                     .y = @floatFromInt(y + char_height * size) }, .uv = .{ .x = @floatFromInt(u_1), .y = @floatFromInt(v_1) }, }
+                    .{ .pos = .{ .x = x,              .y = y               }, .uv = .{ .x = u_1, .y = v_1 }, .tint = tint },
+                    .{ .pos = .{ .x = x + char_width, .y = y               }, .uv = .{ .x = u_2, .y = v_1 }, .tint = tint },
+                    .{ .pos = .{ .x = x + char_width, .y = y + char_height }, .uv = .{ .x = u_2, .y = v_2 }, .tint = tint },
+                    .{ .pos = .{ .x = x,              .y = y + char_height }, .uv = .{ .x = u_1, .y = v_2 }, .tint = tint }
                 };
                 
                 try self.vertex_buffer.appendSlice(&vertices);                
             }
         }
 
-        pub fn render_all(self: *Self, projection_matrix: M44, viewport_matrix: M44) void {
-            const context = Shader.Context {
-                .texture = font.texture,
-                .projection_matrix = projection_matrix,
-            };
-            Shader.Pipeline.render(self.pixel_buffer, context, self.vertex_buffer.items, self.vertex_buffer.items.len/2, .{ .viewport_matrix = viewport_matrix, });
+        pub fn width(self: *Self) f32 {
+            _ = self;
+            return char_width;
+        }
+        
+        pub fn height(self: *Self) f32 {
+            _ = self;
+            return char_height;
+        }
+
+        pub fn render_all(self: *Self, pixel_buffer: Buffer2D(out_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
+            Shader.Pipeline.render(
+                pixel_buffer,
+                .{ .mvp_matrix = mvp_matrix, },
+                self.vertex_buffer.items,
+                self.vertex_buffer.items.len/4,
+                .{ .viewport_matrix = viewport_matrix, }
+            );
             self.vertex_buffer.clearRetainingCapacity();
         }
     };
