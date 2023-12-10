@@ -81,9 +81,10 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.level_background = Assets.level_all_levels.background.*;
     state.selected_sprite = 0;
     state.resource_file_name = "resources.bin";
+    state.resources = Resources.init(allocator);
     state.resources.load_from_file(state.resource_file_name) catch |err| {
         std.log.debug("err: failed to load from file: {any}", .{err});
-        state.resources.load_from_embedded();
+        try state.resources.load_from_embedded();
     };
 }
 
@@ -163,23 +164,24 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     }
     
     // list all the levels and if a level is clicked, change the value of `app.level_background`
-    const levels_enum: std.builtin.Type = @typeInfo(Assets.Levels);
     const level_list_top_left = Vector2f.from(1, h - h/5);
     const level_names_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
     const level_names_highlight_color = RGBA.from(BGR, @bitCast(Assets.palette[2]));
-    inline for (levels_enum.Enum.fields, 0..) |l, i| {
+    for (state.resources.levels.items, 0..) |l, i| {
         const height_text = state.debug_text_renderer.height()+1;
-        const top = level_list_top_left.y - height_text * i;
+        const top = level_list_top_left.y - height_text * @as(f32,@floatFromInt(i));
         const bottom = top - height_text;
         const left = level_list_top_left.x;
         const right = level_list_top_left.x + 4*state.debug_text_renderer.width();
         const selection_bb = BoundingBox(f32).from(top, bottom, left, right);
-        try state.debug_text_renderer.print(Vector2f.from(left, bottom), "[{}]: {s}", .{i,l.name}, level_names_color);
+        const level_name = state.resources.get_level_name(l.name);
+        try state.debug_text_renderer.print(Vector2f.from(left, bottom), "[{}]: {s} bb {} {} {} {}", .{i,level_name, l.bb.top, l.bb.bottom, l.bb.left, l.bb.right}, level_names_color);
         if (selection_bb.contains(mouse_window)) {
-            if (ud.l_click) state.level_background = Assets.Levels.get(@enumFromInt(l.value)).background.*;
+            if (ud.l_click) state.level_background = Assets.LevelBackgroundDescriptor.from(l.bb.to(usize));
             try state.renderer_shapes.add_quad_from_bb(selection_bb, level_names_highlight_color);
         }
     }
+
     const sprites_top = 16*8 + 10;
     const sprite_selection_bb = BoundingBox(f32).from(sprites_top, 10, 10, 10+16*8);
     try state.renderer_shapes.add_quad_from_bb(sprite_selection_bb, RGBA.from(BGR, @bitCast(Assets.palette[0])));
@@ -621,15 +623,50 @@ inline fn correct_y(thing: anytype) @TypeOf(thing) {
 
 const Direction = enum {Left, Right};
 
+// TODO add header with version of resource file and throw error if wrong version
 pub const Resources = struct {
     
-    map: tic80.Map,
+    allocator: std.mem.Allocator,
+    strings: std.ArrayList(u8),
+    map: [136][240]u8,
+    levels: std.ArrayList(LevelDescriptor),
+
+    pub fn init(allocator: std.mem.Allocator) Resources {
+        return .{
+            .allocator = allocator,
+            .strings = std.ArrayList(u8).init(allocator),
+            .map = undefined,
+            .levels = std.ArrayList(LevelDescriptor).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *Resources) void {
+        self.strings.deinit();
+        self.levels.deinit();
+    }
 
     pub fn save_to_file(self: *const Resources, allocator: std.mem.Allocator, file_name: []const u8) !void {
         var serialized_data = std.ArrayList(u8).init(allocator);
         for (self.map) |byte_row| {
+            // write the map
             _ = try serialized_data.writer().write(byte_row[0..]);
         }
+        // write the level count
+        // NOTE just int cast to u8, force level count to be less than 256
+        _ = try serialized_data.writer().writeByte(@intCast(self.levels.items.len));
+        for (self.levels.items) |level| {
+            // write the level's name length
+            // NOTE just int cast to u8, level name should be smaller than 256 bytes
+            _ = try serialized_data.writer().writeByte(@intCast(level.name.length));
+            // write the level's name
+            for (self.get_level_name(level.name)) |char| try serialized_data.writer().writeByte(char);
+            // write the level's map bounding box
+            _ = try serialized_data.writer().writeByte(level.bb.top);
+            _ = try serialized_data.writer().writeByte(level.bb.bottom);
+            _ = try serialized_data.writer().writeByte(level.bb.left);
+            _ = try serialized_data.writer().writeByte(level.bb.right);
+        }
+
         const file = try std.fs.cwd().createFile(file_name, .{});
         defer file.close();
         try file.writeAll(serialized_data.items);
@@ -637,16 +674,64 @@ pub const Resources = struct {
     }
 
     pub fn load_from_file(self: *Resources, file_name: []const u8) !void {
-        const map_data_start: [*]u8 = @ptrCast(&self.map);
-        const underlying_bytes: []u8 = @ptrCast(map_data_start[0..240*136]);
-        _ = try std.fs.cwd().readFile(file_name, underlying_bytes);
+        var new_resources = Resources.init(self.allocator);
+        const map_data_start: [*]u8 = @ptrCast(&new_resources.map);
+        const map_underlying_bytes: []u8 = @ptrCast(map_data_start[0..240*136]);
+        const file = try std.fs.cwd().openFile(file_name, .{});
+        defer file.close();
+        // read the map
+        _ = try file.reader().read(map_underlying_bytes);
+        // read the level count
+        const level_count: usize = @intCast(try file.reader().readByte());
+        var name_starting_index: usize = 0;
+        for (0..level_count) |_| {
+            const name_length: usize = @intCast(try file.reader().readByte());
+            const slice = try new_resources.strings.addManyAsSlice(name_length);
+            _ = try file.reader().read(slice);
+            const top = try file.reader().readByte();
+            const bottom = try file.reader().readByte();
+            const left = try file.reader().readByte();
+            const right = try file.reader().readByte();
+            try new_resources.levels.append(.{
+                .name = .{.index = name_starting_index, .length = name_length},
+                .bb = BoundingBox(u8).from(top, bottom, left, right)
+            });
+            name_starting_index += name_length;
+        }
         std.log.debug("resources from file {s} loaded!", .{file_name});
+        self.deinit();
+        self.* = new_resources;
     }
 
-    pub fn load_from_embedded(self: *Resources) void {
+    pub fn load_from_embedded(self: *Resources) !void {
         self.map = Assets.map;
+        var name_starting_index: usize = 0;
+        inline for (@typeInfo(Assets.Levels).Enum.fields) |field| {
+            const slice = try self.strings.addManyAsSlice(field.name.len);
+            std.mem.copy(u8, slice, field.name);
+            const level = Assets.Levels.get(@enumFromInt(field.value));
+            try self.levels.append(.{
+                .name = .{.index = name_starting_index, .length = field.name.len},
+                .bb = level.background.bb.to(u8)
+            });
+            name_starting_index += field.name.len;
+        }
         std.log.debug("resources embedded loaded!", .{});
     }
+
+    pub fn get_level_name(self: *const Resources, string: String) []const u8 {
+        return self.strings.items[string.index..string.index+string.length];
+    }
+
+    const String = struct {
+        index: usize,
+        length: usize
+    };
+
+    const LevelDescriptor = struct {
+        name: String,
+        bb: BoundingBox(u8),
+    };
 
 };
 
@@ -778,7 +863,6 @@ pub const Assets = struct {
         &[_] EntitySpawnDescriptor { },
     );
 
-    /// contains the top left and bottom right tiles of the map, where br is exclusive (not actually a part of the map)
     pub const LevelBackgroundDescriptor = struct {
         bb: BoundingBox(usize),
         fn from(bb: BoundingBox(usize)) LevelBackgroundDescriptor {
