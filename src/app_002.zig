@@ -11,59 +11,73 @@ const RGB = @import("pixels.zig").RGB;
 const BGRA = @import("pixels.zig").BGRA;
 const RGBA = @import("pixels.zig").RGBA;
 const tic80 = @import("tic80.zig");
-const TextRenderer = @import("text.zig").TextRenderer(BGRA, 1024, 1);
-const windows = @import("windows.zig");
-const Platform = windows.Platform;
+const TextRenderer = @import("text.zig").TextRenderer(platform.OutPixelType, 1024, 1);
 const graphics = @import("graphics.zig");
 
+const windows = @import("windows.zig");
+const wasm = @import("wasm.zig");
+const platform = if (builtin.os.tag == .windows) windows else wasm;
+const Application = platform.Application(.{
+    .init = init,
+    .update = update,
+    .dimension_scale = 4,
+    .desired_width = 240,
+    .desired_height = 136,
+});
 
-pub const main = if (builtin.os.tag == .windows) windows.main else undefined;
-pub const dimension_scale = 4;
-pub const desired_width = 240;
-pub const desired_height = 136;
+// TODO: currently the wasm target only works if the exported functions are explicitly referenced.
+// The reason for this is that zig compiles lazily. By referencing Platform.run, the comptime code
+// in that funciton is executed, which in turn references the exported functions, making it so
+// that those are "found" by zig and properly exported.
+comptime {
+    _ = Application.run;
+}
 
-const App = struct {
+pub fn main() !void {
+    try Application.run();
+}
+
+const State = struct {
     text_renderer: TextRenderer,
-    shape_renderer: ShapeRenderer(BGRA, RGB.from(0,0,0)),
+    shape_renderer: ShapeRenderer(platform.OutPixelType, RGB.from(0,0,0)),
     camera: Camera,
 };
 
-var app: App = undefined;
+var state: State = undefined;
 
-pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(BGRA)) !void {
-    _ = pixel_buffer;
-    app.text_renderer = try TextRenderer.init(allocator);
-    app.shape_renderer = try ShapeRenderer(BGRA, RGB.from(0,0,0)).init(allocator);
-    app.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
+pub fn init(allocator: std.mem.Allocator) anyerror!void {
+    state.text_renderer = try TextRenderer.init(allocator);
+    state.shape_renderer = try ShapeRenderer(platform.OutPixelType, RGB.from(0,0,0)).init(allocator);
+    state.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
 }
 
-pub fn update(platform: *Platform) !bool {
-    const h: f32 = @floatFromInt(platform.pixel_buffer.height);
-    const w: f32 = @floatFromInt(platform.pixel_buffer.width);
-    platform.pixel_buffer.clear(BGRA.make(100, 149, 237,255));
+pub fn update(ud: *platform.UpdateData) anyerror!bool {
+    const h: f32 = @floatFromInt(ud.pixel_buffer.height);
+    const w: f32 = @floatFromInt(ud.pixel_buffer.width);
+    ud.pixel_buffer.clear(platform.OutPixelType.from(RGBA, RGBA.make(100, 149, 237,255)));
     
-    if (platform.keys['W']) app.camera.pos = app.camera.pos.add(Vector3f.from(0, 1, 0));
-    if (platform.keys['A']) app.camera.pos = app.camera.pos.add(Vector3f.from(-1, 0, 0));
-    if (platform.keys['S']) app.camera.pos = app.camera.pos.add(Vector3f.from(0, -1, 0));
-    if (platform.keys['D']) app.camera.pos = app.camera.pos.add(Vector3f.from(1, 0, 0));
+    if (ud.keys['W']) state.camera.pos = state.camera.pos.add(Vector3f.from(0, 1, 0));
+    if (ud.keys['A']) state.camera.pos = state.camera.pos.add(Vector3f.from(-1, 0, 0));
+    if (ud.keys['S']) state.camera.pos = state.camera.pos.add(Vector3f.from(0, -1, 0));
+    if (ud.keys['D']) state.camera.pos = state.camera.pos.add(Vector3f.from(1, 0, 0));
     
-    const view_matrix = M33.look_at(Vector2f.from(app.camera.pos.x, app.camera.pos.y), Vector2f.from(0, 1));
+    const view_matrix = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
     const projection_matrix = M33.orthographic_projection(0, w, h, 0);
     const viewport_matrix = M33.viewport(0, 0, w, h);
     const mvp_matrix = projection_matrix.multiply(view_matrix);
 
-    try app.shape_renderer.add_quad(Vector2f.from(-100, -100), Vector2f.from(w+100, h+100));
-    app.shape_renderer.render(platform.pixel_buffer, mvp_matrix, viewport_matrix);
+    try state.shape_renderer.add_quad(Vector2f.from(-100, -100), Vector2f.from(w+100, h+100));
+    state.shape_renderer.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
     
-    const text_height = app.text_renderer.height() + 1;
+    const text_height = state.text_renderer.height() + 1;
     const text_color = RGBA.from(RGBA, @bitCast(@as(u32, 0xffffffff)));
-    try app.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*0) }, "ms {d: <9.2}", .{platform.ms}, text_color);
-    try app.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*1) }, "frame {}", .{platform.frame}, text_color);
-    try app.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*2) }, "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z}, text_color);
-    try app.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*3) }, "mouse {} {}", .{platform.mouse.x, platform.mouse.y}, text_color);
-    try app.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*4) }, "dimensions {} {}", .{w, h}, text_color);
-    app.text_renderer.render_all(
-        platform.pixel_buffer,
+    try state.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*0) }, "ms {d: <9.2}", .{ud.ms}, text_color);
+    try state.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*1) }, "frame {}", .{ud.frame}, text_color);
+    try state.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*2) }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, text_color);
+    try state.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*3) }, "mouse {} {}", .{ud.mouse.x, ud.mouse.y}, text_color);
+    try state.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*4) }, "dimensions {} {}", .{w, h}, text_color);
+    state.text_renderer.render_all(
+        ud.pixel_buffer,
         M33.orthographic_projection(0, w, h, 0),
         M33.viewport(0, 0, w, h)
     );

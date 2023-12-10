@@ -30,6 +30,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
         pub const OutPixelType = RGBA;
         pub const width = app.desired_width;
         pub const height = app.desired_height;
+        pub const dimension_scale = app.dimension_scale;
 
         pub export fn wasm_get_static_buffer() [*]u8 {
             return @ptrCast(&static_buffer_for_runtime_use);
@@ -286,6 +287,15 @@ pub const UpdateData = struct {
     fps: usize,
     ms: f32,
     frame: usize,
+
+    pub fn key_pressing(ud: *const UpdateData, key: usize) bool {
+        return ud.keys[key];
+    }
+    
+    pub fn key_pressed(ud: *const UpdateData, key: usize) bool {
+        return ud.keys[key] and !ud.keys_old[key];
+    }
+
 };
 pub const OutPixelType = RGBA;
 pub const InitFn = fn (allocator: std.mem.Allocator) anyerror!void;
@@ -297,3 +307,7 @@ pub const ApplicationDescription = struct {
     desired_width: comptime_int,
     desired_height: comptime_int,
 };
+
+pub fn timestamp() i64 {
+    return @intCast(milli_since_epoch());
+}

@@ -11,9 +11,9 @@ const BGRA = @import("pixels.zig").BGRA;
 pub fn Application(comptime app: ApplicationDescription) type {
     return struct {
         
-        pub const OutPixelType = BGRA;
         pub const width = app.desired_width;
         pub const height = app.desired_height;
+        pub const dimension_scale = app.dimension_scale;
 
         const State = struct {
             x: i32 = 10,
@@ -363,7 +363,14 @@ pub const UpdateData = struct {
     l_click: bool,
     mwheel: i32,
 
+    pub fn key_pressing(ud: *const UpdateData, key: usize) bool {
+        return ud.keys[key];
+    }
     
+    pub fn key_pressed(ud: *const UpdateData, key: usize) bool {
+        return ud.keys[key] and !ud.keys_old[key];
+    }
+
 };
 pub const InitFn = fn (allocator: std.mem.Allocator) anyerror!void;
 pub const UpdateFn = fn (update_data: *UpdateData) anyerror!bool;
@@ -374,3 +381,6 @@ pub const ApplicationDescription = struct {
     desired_width: comptime_int,
     desired_height: comptime_int,
 };
+
+pub const timestamp: fn () i64 = std.time.timestamp;
+pub const OutPixelType = BGRA;

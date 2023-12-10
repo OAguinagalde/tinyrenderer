@@ -4,8 +4,6 @@ const math = @import("math.zig");
 const graphics = @import("graphics.zig");
 const tic80 = @import("tic80.zig");
 const physics = @import("physics.zig");
-const windows = @import("windows.zig");
-const wasm = @import("wasm.zig");
 const font = @import("text.zig").font;
 
 const BoundingBox = math.BoundingBox;
@@ -22,19 +20,30 @@ const BGRA = @import("pixels.zig").BGRA;
 const BGR = @import("pixels.zig").BGR;
 const Ecs = @import("ecs.zig").Ecs;
 const Entity = @import("ecs.zig").Entity;
-const Resources = @import("app_editor.zig").Resources;
+const Resources = @import("app_003.zig").Resources;
 
-const Platform = if (builtin.os.tag == .windows) windows.Platform else wasm.Platform;
-const PlatformOutPixelType = if (builtin.os.tag == .windows) BGRA else RGBA;
-const timestamp = if (builtin.os.tag == .windows) std.time.timestamp else wasm_timestamp;
-fn wasm_timestamp() i64 {
-    return @intCast(wasm.milli_since_epoch());
+const windows = @import("windows.zig");
+const wasm = @import("wasm.zig");
+const platform = if (builtin.os.tag == .windows) windows else wasm;
+const Application = platform.Application(.{
+    .init = init,
+    .update = update,
+    .dimension_scale = 4,
+    .desired_width = 240,
+    .desired_height = 136,
+});
+
+// TODO: currently the wasm target only works if the exported functions are explicitly referenced.
+// The reason for this is that zig compiles lazily. By referencing Platform.run, the comptime code
+// in that funciton is executed, which in turn references the exported functions, making it so
+// that those are "found" by zig and properly exported.
+comptime {
+    _ = Application.run;
 }
 
-pub const main = if (builtin.os.tag == .windows) windows.main else undefined;
-pub const dimension_scale = 4;
-pub const desired_width = 240;
-pub const desired_height = 136;
+pub fn main() !void {
+    try Application.run();
+}
 
 // TODO damage numbers
 // TODO exclamation mark when slimes start attacking
@@ -45,14 +54,14 @@ pub const desired_height = 136;
 // TODO tools
 
 const text_scale = 1;
-const App = struct {
-    debug_text_renderer: TextRenderer(PlatformOutPixelType, 1024, text_scale),
-    text_renderer: TextRenderer(PlatformOutPixelType, 1024, text_scale),
-    renderer: tic80.Renderer(PlatformOutPixelType, tic80.Shader(PlatformOutPixelType)),
-    renderer_quads: tic80.QuadRenderer(PlatformOutPixelType, tic80.QuadShader(PlatformOutPixelType)),
+const State = struct {
+    debug_text_renderer: TextRenderer(platform.OutPixelType, 1024, text_scale),
+    text_renderer: TextRenderer(platform.OutPixelType, 1024, text_scale),
+    renderer: tic80.Renderer(platform.OutPixelType, tic80.Shader(platform.OutPixelType)),
+    renderer_quads: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType)),
     // TODO the blending renderer still uses the 3d pipeline, change to the 2d quad pipeline instead
-    renderer_blending: tic80.Renderer(PlatformOutPixelType, tic80.ShaderWithBlendAndKeyColor(PlatformOutPixelType, 0)),
-    renderer_shapes: ShapeRenderer(PlatformOutPixelType, RGB.from(255,255,255)),
+    renderer_blending: tic80.Renderer(platform.OutPixelType, tic80.ShaderWithBlendAndKeyColor(platform.OutPixelType, 0)),
+    renderer_shapes: ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)),
     entities: EntitySystem,
     level_background: Assets.LevelBackgroundDescriptor,
     player: Player,
@@ -70,186 +79,185 @@ const App = struct {
     resource_file_name: []const u8,
 };
 
-var app: App = undefined;
+var state: State = undefined;
 
-pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(PlatformOutPixelType)) !void {
-    _ = pixel_buffer;
-    app.debug_text_renderer = try TextRenderer(PlatformOutPixelType, 1024, text_scale).init(allocator);
-    app.text_renderer = try TextRenderer(PlatformOutPixelType, 1024, text_scale).init(allocator);
-    app.renderer = try tic80.Renderer(PlatformOutPixelType, tic80.Shader(PlatformOutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    app.renderer_quads = try tic80.QuadRenderer(PlatformOutPixelType, tic80.QuadShader(PlatformOutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    app.renderer_blending = try tic80.Renderer(PlatformOutPixelType, tic80.ShaderWithBlendAndKeyColor(PlatformOutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    app.renderer_shapes = try ShapeRenderer(PlatformOutPixelType, RGB.from(255,255,255)).init(allocator);
-    app.entities = try EntitySystem.init(allocator);
-    app.player = Player.init(0);
-    app.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
-    app.animations_in_place = try AnimationSystem.init(allocator);
-    app.particles = try Particles.init(allocator);
-    app.rng_engine = std.rand.DefaultPrng.init(@bitCast(timestamp()));
-    app.random = app.rng_engine.random();
-    app.entities_damage_dealers = try HitboxSystem.init(allocator);
-    app.player_damage_dealers = try HitboxSystem.init(allocator);
-    app.doors = undefined; // doors are set on load_level
-    app.texts = undefined; // texts are set on load_level
-    app.debug = true;
-    app.resource_file_name = "resources.bin";
-    app.resources.load_from_file(app.resource_file_name) catch |err| {
+pub fn init(allocator: std.mem.Allocator) anyerror!void {
+    state.debug_text_renderer = try TextRenderer(platform.OutPixelType, 1024, text_scale).init(allocator);
+    state.text_renderer = try TextRenderer(platform.OutPixelType, 1024, text_scale).init(allocator);
+    state.renderer = try tic80.Renderer(platform.OutPixelType, tic80.Shader(platform.OutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    state.renderer_quads = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    state.renderer_blending = try tic80.Renderer(platform.OutPixelType, tic80.ShaderWithBlendAndKeyColor(platform.OutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    state.renderer_shapes = try ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)).init(allocator);
+    state.entities = try EntitySystem.init(allocator);
+    state.player = Player.init(0);
+    state.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
+    state.animations_in_place = try AnimationSystem.init(allocator);
+    state.particles = try Particles.init(allocator);
+    state.rng_engine = std.rand.DefaultPrng.init(@bitCast(platform.timestamp()));
+    state.random = state.rng_engine.random();
+    state.entities_damage_dealers = try HitboxSystem.init(allocator);
+    state.player_damage_dealers = try HitboxSystem.init(allocator);
+    state.doors = undefined; // doors are set on load_level
+    state.texts = undefined; // texts are set on load_level
+    state.debug = true;
+    state.resource_file_name = "resources.bin";
+    state.resources.load_from_file(state.resource_file_name) catch |err| {
         std.log.debug("err: failed to load from file: {any}", .{err});
-        app.resources.load_from_embedded();
+        state.resources.load_from_embedded();
     };
     try load_level(Assets.spawn_start_0, 0);
 }
 
-pub fn update(platform: *Platform) !bool {
+pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
-    const h: f32 = @floatFromInt(platform.pixel_buffer.height);
-    const w: f32 = @floatFromInt(platform.pixel_buffer.width);
+    const h: f32 = @floatFromInt(ud.pixel_buffer.height);
+    const w: f32 = @floatFromInt(ud.pixel_buffer.width);
 
     const clear_color: BGR = @bitCast(Assets.palette[0]);
-    platform.pixel_buffer.clear(PlatformOutPixelType.from(BGR, clear_color));
+    ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
 
-    if (key_pressed(platform, 'L')) try app.resources.load_from_file(app.resource_file_name);
-    if (platform.keys['Q'] and !platform.keys_old['Q']) {}
-    if (platform.keys['E'] and !platform.keys_old['E']) {}
-    if (platform.keys['R'] and !platform.keys_old['R']) try load_level(Assets.spawn_start_0, platform.frame);
-    if (platform.keys['G'] and !platform.keys_old['G']) app.debug = !app.debug;
+    if (key_pressed(ud, 'L')) try state.resources.load_from_file(state.resource_file_name);
+    if (ud.keys['Q'] and !ud.keys_old['Q']) {}
+    if (ud.keys['E'] and !ud.keys_old['E']) {}
+    if (ud.keys['R'] and !ud.keys_old['R']) try load_level(Assets.spawn_start_0, ud.frame);
+    if (ud.keys['G'] and !ud.keys_old['G']) state.debug = !state.debug;
     
-    if (app.player.attack_start_frame > 0 and platform.frame - app.player.attack_start_frame >= Assets.config.player.attack.cooldown) {
-        app.player.attack_start_frame = 0;
+    if (state.player.attack_start_frame > 0 and ud.frame - state.player.attack_start_frame >= Assets.config.player.attack.cooldown) {
+        state.player.attack_start_frame = 0;
     }
 
     var player_is_walking: bool = false;
-    if (platform.keys['A'] and app.player.attack_start_frame == 0) {
-        app.player.physical_component.velocity.x -= 0.010;
-        app.player.look_direction = .Left;
+    if (ud.keys['A'] and state.player.attack_start_frame == 0) {
+        state.player.physical_component.velocity.x -= 0.010;
+        state.player.look_direction = .Left;
         player_is_walking = true;
     }
-    if (platform.keys['D'] and app.player.attack_start_frame == 0) {
-        app.player.physical_component.velocity.x += 0.010;
-        app.player.look_direction = .Right;
+    if (ud.keys['D'] and state.player.attack_start_frame == 0) {
+        state.player.physical_component.velocity.x += 0.010;
+        state.player.look_direction = .Right;
         player_is_walking = true;
     }
-    const player_direction_offset: f32 = switch (app.player.look_direction) { .Right => 1, .Left => -1 };
-    if (!platform.keys_old['W'] and platform.keys['W'] and app.player.jumps > 0) {
-        app.player.physical_component.velocity.y = 0.17;
-        app.player.jumps -= 1;
+    const player_direction_offset: f32 = switch (state.player.look_direction) { .Right => 1, .Left => -1 };
+    if (!ud.keys_old['W'] and ud.keys['W'] and state.player.jumps > 0) {
+        state.player.physical_component.velocity.y = 0.17;
+        state.player.jumps -= 1;
         // TODO sfx
-        for (0..5) |_| try particle_create(&app.particles, particles_generators.other(
-            app.player.pos.add(Vector2f.from(0, 1.5)),
-            2 + app.random.float(f32) * 2,
-            Vector2f.from(((app.random.float(f32) * 2) - 1)*0.2, -0.05),
+        for (0..5) |_| try particle_create(&state.particles, particles_generators.other(
+            state.player.pos.add(Vector2f.from(0, 1.5)),
+            2 + state.random.float(f32) * 2,
+            Vector2f.from(((state.random.float(f32) * 2) - 1)*0.2, -0.05),
             100,
         ));
     }
-    if (!platform.keys_old['F'] and platform.keys['F'] and app.player.attack_start_frame == 0) {
-        _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, platform.frame), app.player.pos.add(Vector2f.from(player_direction_offset*8,0)), switch (app.player.look_direction) { .Right => false, .Left => true }, platform.frame);
-        app.player.attack_start_frame = platform.frame;
-        app.player.physical_component.velocity.x += 0.06 * player_direction_offset;
+    if (!ud.keys_old['F'] and ud.keys['F'] and state.player.attack_start_frame == 0) {
+        _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, ud.frame), state.player.pos.add(Vector2f.from(player_direction_offset*8,0)), switch (state.player.look_direction) { .Right => false, .Left => true }, ud.frame);
+        state.player.attack_start_frame = ud.frame;
+        state.player.physical_component.velocity.x += 0.06 * player_direction_offset;
         // TODO sfx
-        for (0..3) |_| try particle_create(&app.particles, particles_generators.other(
-            app.player.pos.add(Vector2f.from(player_direction_offset*5, 1)),
+        for (0..3) |_| try particle_create(&state.particles, particles_generators.other(
+            state.player.pos.add(Vector2f.from(player_direction_offset*5, 1)),
             2,
-            Vector2f.from((0.5 + (app.random.float(f32) * 0.3)) * player_direction_offset, (app.random.float(f32) * 0.6) - 0.2).scale(0.74),
+            Vector2f.from((0.5 + (state.random.float(f32) * 0.3)) * player_direction_offset, (state.random.float(f32) * 0.6) - 0.2).scale(0.74),
             60,
         ));
         const damage = Assets.config.player.attack.damage;
-        const hitbox = Assets.config.player.attack.hitbox_relative_to_position.scale(Vector2f.from(player_direction_offset, 1)).offset(app.player.pos);
+        const hitbox = Assets.config.player.attack.hitbox_relative_to_position.scale(Vector2f.from(player_direction_offset, 1)).offset(state.player.pos);
         const behaviour: Assets.HitboxType = .once_per_target;
         const duration = Assets.config.player.attack.animation.duration;
         const knockback = Vector2f.from(Assets.config.player.attack.knockback_strength * player_direction_offset, 0);
-        try app.entities_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, platform.frame);
+        try state.entities_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, ud.frame);
     }
 
-    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(275, 36)));
-    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(539, 36)));
-    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(643, 60)));
-    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(515, 164)));
-    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(548, 164)));
-    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(580, 164)));
-    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(619, 164)));
-    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(1036, 44)));
-    if (app.random.boolean()) try particle_create(&app.particles, particles_generators.fire(Vector2f.from(1003, 44)));
-    if (app.random.float(f32)>0.8) {
+    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(275, 36)));
+    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(539, 36)));
+    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(643, 60)));
+    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(515, 164)));
+    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(548, 164)));
+    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(580, 164)));
+    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(619, 164)));
+    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(1036, 44)));
+    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(1003, 44)));
+    if (state.random.float(f32)>0.8) {
         const height = 21;
         const from: f32 = 304;
         const to: f32 = 367;
-        try particle_create(&app.particles, particles_generators.poison(Vector2f.from(app.random.float(f32)*(to-from)+from, height)));
+        try particle_create(&state.particles, particles_generators.poison(Vector2f.from(state.random.float(f32)*(to-from)+from, height)));
     }
 
-    const player_floored = Physics.apply(&app.player.physical_component);
-    app.player.pos = Physics.calculate_real_pos(app.player.physical_component.physical_pos);
-    app.player.hurtbox = Assets.entity_knight_1.hurtbox.offset(app.player.pos);
+    const player_floored = Physics.apply(&state.player.physical_component);
+    state.player.pos = Physics.calculate_real_pos(state.player.physical_component.physical_pos);
+    state.player.hurtbox = Assets.entity_knight_1.hurtbox.offset(state.player.pos);
 
     if (player_floored) {
-        app.player.jumps = 2;
-        if (player_is_walking and (app.random.float(f32) > 0.8)) {
-            try particle_create(&app.particles, particles_generators.walk(app.player.pos.add(Vector2f.from(0, 1))));
+        state.player.jumps = 2;
+        if (player_is_walking and (state.random.float(f32) > 0.8)) {
+            try particle_create(&state.particles, particles_generators.walk(state.player.pos.add(Vector2f.from(0, 1))));
         }
     }
 
     // check for doors to change level
-    const player_tile = app.player.get_current_tile();
-    for (app.doors) |door| {
+    const player_tile = state.player.get_current_tile();
+    for (state.doors) |door| {
         const door_tile = Vector2i.from(door.pos.x, correct_y(door.pos.y));
         if (player_tile.x == door_tile.x and player_tile.y == door_tile.y) {
-            try load_level(door.destination.*, platform.frame);
+            try load_level(door.destination.*, ud.frame);
             return true;
         }
     }
 
-    try app.entities.entities_update(app.player.pos, platform.frame);
+    try state.entities.entities_update(state.player.pos, ud.frame);
     
-    for (app.player_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
-        const frames_up = platform.frame - hitbox.frame;
+    for (state.player_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
+        const frames_up = ud.frame - hitbox.frame;
         var do_remove = false;
         // the entity is being hit by `hitbox`
-        if (hitbox.bb.overlaps(app.player.hurtbox)) {
+        if (hitbox.bb.overlaps(state.player.hurtbox)) {
             switch (hitbox.behaviour) {
                 // TODO implement different hitbox behaviours
                 .once_per_frame, .once_per_target => {
-                    app.player.hp -= hitbox.dmg;
-                    app.player.physical_component.velocity = app.player.physical_component.velocity.add(hitbox.knockback);
-                    for (0..5) |_| try particle_create(&app.particles, particles_generators.bleed(app.player.pos));
+                    state.player.hp -= hitbox.dmg;
+                    state.player.physical_component.velocity = state.player.physical_component.velocity.add(hitbox.knockback);
+                    for (0..5) |_| try particle_create(&state.particles, particles_generators.bleed(state.player.pos));
                     do_remove = true;
                     // TODO sfx
                 },
             }
         }
-        if (do_remove or (frames_up >= hitbox.duration)) app.player_damage_dealers.hitboxes.release_by_index(i);
+        if (do_remove or (frames_up >= hitbox.duration)) state.player_damage_dealers.hitboxes.release_by_index(i);
     }
 
-    app.camera.move_to(app.player.pos, w, h);
+    state.camera.move_to(state.player.pos, w, h);
 
-    try update_animations_in_place(&app.animations_in_place, platform.frame);
-    try particles_update(&app.particles);
+    try update_animations_in_place(&state.animations_in_place, ud.frame);
+    try particles_update(&state.particles);
 
-    const view_matrix = M44.lookat_left_handed(app.camera.pos, app.camera.pos.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
+    const view_matrix = M44.lookat_left_handed(state.camera.pos, state.camera.pos.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
     const projection_matrix = M44.orthographic_projection(0, w, h, 0, 0, 2);
     const viewport_matrix = M44.viewport(0, 0, w, h, 255);
     const mvp_matrix = projection_matrix.multiply(view_matrix.multiply(M44.translation(Vector3f.from(0, 0, 1))));
     
-    const view_matrix_m33 = M33.look_at(Vector2f.from(app.camera.pos.x, app.camera.pos.y), Vector2f.from(0, 1));
+    const view_matrix_m33 = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
     const projection_matrix_m33 = M33.orthographic_projection(0, w, h, 0);
     const viewport_matrix_m33 = M33.viewport(0, 0, w, h);
     const mvp_matrix_33 = projection_matrix_m33.multiply(view_matrix_m33.multiply(M33.identity()));
     
     // render map
-    const map_bb_f = app.level_background.bb.scale(Vec2(usize).from(8,8)).to(f32);
-    try app.renderer_quads.add_map(app.resources.map, app.level_background.bb, Vector2f.from(map_bb_f.left, map_bb_f.bottom));
-    app.renderer_quads.render(
-        platform.pixel_buffer,
+    const map_bb_f = state.level_background.bb.scale(Vec2(usize).from(8,8)).to(f32);
+    try state.renderer_quads.add_map(state.resources.map, state.level_background.bb, Vector2f.from(map_bb_f.left, map_bb_f.bottom));
+    state.renderer_quads.render(
+        ud.pixel_buffer,
         mvp_matrix_33,
         viewport_matrix_m33
     );
     
     // render static texts
     const static_texts_color = RGBA.from(BGR, @bitCast(Assets.palette[5]));
-    for (app.texts) |text| {
+    for (state.texts) |text| {
         const text_tile = Vector2i.from(text.pos.x, correct_y(text.pos.y));
-        try app.text_renderer.print(text_tile.scale(8).to_vec2f(), "{s}", .{text.text}, static_texts_color);
+        try state.text_renderer.print(text_tile.scale(8).to_vec2f(), "{s}", .{text.text}, static_texts_color);
     }
-    app.text_renderer.render_all(
-        platform.pixel_buffer,
+    state.text_renderer.render_all(
+        ud.pixel_buffer,
         mvp_matrix_33,
         viewport_matrix_m33
     );
@@ -257,29 +265,29 @@ pub fn update(platform: *Platform) !bool {
     // render entities
     {
         var it = EntitySystem.EntityStorage.view(.{EntitySystem.EntityPosition, RuntimeAnimation}).iterator();
-        while (it.next(&app.entities.entities)) |e| {
-            const anim_component = (try app.entities.entities.getComponent(RuntimeAnimation, e)).?;
-            const pos_component = (try app.entities.entities.getComponent(EntitySystem.EntityPosition, e)).?;
-            const dir_component = (try app.entities.entities.getComponent(Direction, e)).?;
-            const sprite = anim_component.calculate_frame(platform.frame);
+        while (it.next(&state.entities.entities)) |e| {
+            const anim_component = (try state.entities.entities.getComponent(RuntimeAnimation, e)).?;
+            const pos_component = (try state.entities.entities.getComponent(EntitySystem.EntityPosition, e)).?;
+            const dir_component = (try state.entities.entities.getComponent(Direction, e)).?;
+            const sprite = anim_component.calculate_frame(ud.frame);
             const pos = pos_component.* ;
-            try app.renderer_blending.add_sprite_from_atlas_index(sprite, pos.add(Vector2f.from(-4, 0)), .{.mirror = switch(dir_component.*){.Left=>true,.Right=>false} });
+            try state.renderer_blending.add_sprite_from_atlas_index(sprite, pos.add(Vector2f.from(-4, 0)), .{.mirror = switch(dir_component.*){.Left=>true,.Right=>false} });
         }
     }
     // render player
     {
-        try app.renderer_blending.add_sprite_from_atlas_index(app.player.animation.calculate_frame(platform.frame), app.player.pos.add(Vector2f.from(-4,0)), .{.mirror = (app.player.look_direction == .Left)});
+        try state.renderer_blending.add_sprite_from_atlas_index(state.player.animation.calculate_frame(ud.frame), state.player.pos.add(Vector2f.from(-4,0)), .{.mirror = (state.player.look_direction == .Left)});
     }
     // render in-place animation
     {
         var it = AnimationSystem.view(.{ Visual }).iterator();
-        while (it.next(&app.animations_in_place)) |entity| {
-            const visual = (try app.animations_in_place.getComponent(Visual, entity)).?;
-            try app.renderer_blending.add_sprite_from_atlas_index(visual.sprite, visual.position.add(Vector2f.from(-4,0)), .{ .mirror = visual.flipped });
+        while (it.next(&state.animations_in_place)) |entity| {
+            const visual = (try state.animations_in_place.getComponent(Visual, entity)).?;
+            try state.renderer_blending.add_sprite_from_atlas_index(visual.sprite, visual.position.add(Vector2f.from(-4,0)), .{ .mirror = visual.flipped });
         }
     }
-    app.renderer_blending.render(
-        platform.pixel_buffer,
+    state.renderer_blending.render(
+        ud.pixel_buffer,
         mvp_matrix,
         viewport_matrix
     );
@@ -287,54 +295,54 @@ pub fn update(platform: *Platform) !bool {
     // render particles
     {
         var it = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
-        while (it.next(&app.particles)) |e| {
-            const render_component = (try app.particles.getComponent(ParticleRenderData, e)).?;
-            const position_component = (try app.particles.getComponent(Vector2f, e)).?;
+        while (it.next(&state.particles)) |e| {
+            const render_component = (try state.particles.getComponent(ParticleRenderData, e)).?;
+            const position_component = (try state.particles.getComponent(Vector2f, e)).?;
             const radius = render_component.radius;
-            try app.renderer_shapes.add_quad(position_component.*, Vector2f.from(radius, radius), render_component.color);
+            try state.renderer_shapes.add_quad(position_component.*, Vector2f.from(radius, radius), render_component.color);
         }
-        if (app.debug) {
-            for (app.player_damage_dealers.hitboxes.slice()) |hb| {
-                try app.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(255,0,0,100));
+        if (state.debug) {
+            for (state.player_damage_dealers.hitboxes.slice()) |hb| {
+                try state.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(255,0,0,100));
             }
-            for (app.entities_damage_dealers.hitboxes.slice()) |hb| {
-                try app.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(0,255,0,100));
+            for (state.entities_damage_dealers.hitboxes.slice()) |hb| {
+                try state.renderer_shapes.add_quad(Vector2f.from(hb.bb.left, hb.bb.bottom), Vector2f.from(hb.bb.right - hb.bb.left, hb.bb.top - hb.bb.bottom), RGBA.make(0,255,0,100));
             }
-            const hb = app.player.hurtbox;
-            try app.renderer_shapes.add_quad(Vector2f.from(hb.left, hb.bottom), Vector2f.from(hb.right - hb.left, hb.top - hb.bottom), RGBA.make(0,0,255,100));
+            const hb = state.player.hurtbox;
+            try state.renderer_shapes.add_quad(Vector2f.from(hb.left, hb.bottom), Vector2f.from(hb.right - hb.left, hb.top - hb.bottom), RGBA.make(0,0,255,100));
         }
     }
-    app.renderer_shapes.render(
-        platform.pixel_buffer,
+    state.renderer_shapes.render(
+        ud.pixel_buffer,
         mvp_matrix_33,
         viewport_matrix_m33
     );
 
-    if (app.debug) {
+    if (state.debug) {
         const debug_text_color: BGR = @bitCast(Assets.palette[3]);
         const color = RGBA.from(BGR, debug_text_color);
-        const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(app.player.physical_component.physical_pos);
+        const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos);
         const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
         const mouse: Vector2f = blk: {
-            const mx = @divFloor(platform.mouse.x, dimension_scale);
+            const mx = @divFloor(ud.mouse.x, Application.dimension_scale);
             // inverse y since mouse is given relative to top left corner
-            const my = @divFloor((desired_height*dimension_scale) - platform.mouse.y, dimension_scale);
-            const offset = Vector2f.from(app.camera.pos.x, app.camera.pos.y);
+            const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
+            const offset = Vector2f.from(state.camera.pos.x, state.camera.pos.y);
             const pos = Vector2i.from(mx, my).to_vec2f().add(offset);
             break :blk pos;
         };
-        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*1) -  6), "ms {d: <9.2}", .{platform.ms}, color);
-        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*2) -  6), "fps {d:0.4}", .{platform.ms / 1000*60}, color);
-        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*3) -  6), "frame {}", .{platform.frame}, color);
-        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*4) -  6), "camera {d:.8}, {d:.8}, {d:.8}", .{app.camera.pos.x, app.camera.pos.y, app.camera.pos.z}, color);
-        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*5) -  6), "mouse {d:.4} {d:.4}", .{mouse.x, mouse.y}, color);
-        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*6) -  6), "dimensions {d:.4} {d:.4}", .{w, h}, color);
-        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*7) -  6), "physical pos {d:.4} {d:.4}", .{app.player.physical_component.physical_pos.x, app.player.physical_component.physical_pos.y}, color);
-        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*8) -  6), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
-        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*9) -  6), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
-        try app.debug_text_renderer.print(Vector2f.from(5, h - (6*10) - 6), "vel {d:.5} {d:.5}", .{app.player.physical_component.velocity.x, app.player.physical_component.velocity.y}, color);
-        app.debug_text_renderer.render_all(
-            platform.pixel_buffer,
+        try state.debug_text_renderer.print(Vector2f.from(5, h - (6*1) -  6), "ms {d: <9.2}", .{ud.ms}, color);
+        try state.debug_text_renderer.print(Vector2f.from(5, h - (6*2) -  6), "fps {d:0.4}", .{ud.ms / 1000*60}, color);
+        try state.debug_text_renderer.print(Vector2f.from(5, h - (6*3) -  6), "frame {}", .{ud.frame}, color);
+        try state.debug_text_renderer.print(Vector2f.from(5, h - (6*4) -  6), "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, color);
+        try state.debug_text_renderer.print(Vector2f.from(5, h - (6*5) -  6), "mouse {d:.4} {d:.4}", .{mouse.x, mouse.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(5, h - (6*6) -  6), "dimensions {d:.4} {d:.4}", .{w, h}, color);
+        try state.debug_text_renderer.print(Vector2f.from(5, h - (6*7) -  6), "physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(5, h - (6*8) -  6), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(5, h - (6*9) -  6), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(5, h - (6*10) - 6), "vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y}, color);
+        state.debug_text_renderer.render_all(
+            ud.pixel_buffer,
             M33.orthographic_projection(0, w, h, 0),
             M33.viewport(0, 0, w, h)
         );
@@ -343,32 +351,32 @@ pub fn update(platform: *Platform) !bool {
     return true;
 }
 
-fn key_pressing(platform: *Platform, key: usize) bool {
-    return platform.keys[key];
+fn key_pressing(ud: *platform.UpdateData, key: usize) bool {
+    return ud.keys[key];
 }
-fn key_pressed(platform: *Platform, key: usize) bool {
-    return platform.keys[key] and !platform.keys_old[key];
+fn key_pressed(ud: *platform.UpdateData, key: usize) bool {
+    return ud.keys[key] and !ud.keys_old[key];
 }
 
 pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
-    app.entities.clear();
-    app.particles.deleteAll();
-    app.player.reset_soft(frame);
+    state.entities.clear();
+    state.particles.deleteAll();
+    state.player.reset_soft(frame);
 
     const level = Assets.Levels.get(spawn.level);
-    app.level_background = level.background.*;
-    app.doors = level.doors;
-    app.texts = level.static_texts;
+    state.level_background = level.background.*;
+    state.doors = level.doors;
+    state.texts = level.static_texts;
     
     for (level.entity_spawns) |entity_spawn| {
-        try app.entities.spawn(entity_spawn.entity, tile_to_grounded_position(entity_spawn.pos), frame);
+        try state.entities.spawn(entity_spawn.entity, tile_to_grounded_position(entity_spawn.pos), frame);
     }
     
-    app.player.spawn(spawn.pos);
-    var bb = app.level_background.bb;
+    state.player.spawn(spawn.pos);
+    var bb = state.level_background.bb;
     bb.top += 1;
     bb.right += 1;
-    app.camera.set_bounds(bb.scale(Vec2(usize).from(8, 8)).to(f32));
+    state.camera.set_bounds(bb.scale(Vec2(usize).from(8, 8)).to(f32));
 }
 
 fn tile_to_grounded_position(tile: Vector2i) Vector2f {
@@ -397,8 +405,8 @@ const Physics = blk: {
 inline fn collision_checker(tile: Vector2i) bool {
     if (tile.x < 0 or tile.y < 0) return true;
     const tileu = tile.to(usize);
-    if (!app.level_background.bb.contains(tileu)) return true;
-    const tile_index = app.resources.map[tileu.y][tileu.x];
+    if (!state.level_background.bb.contains(tileu)) return true;
+    const tile_index = state.resources.map[tileu.y][tileu.x];
     const col = tile_index%16;
     const row = @divFloor(tile_index, 16);
     return Assets.map_flags[col + row*16] == 0x01;
@@ -580,7 +588,7 @@ const EntitySystem = struct {
             const entity_desc = Assets.EntityDescriptor.from(type_component.*);
 
             // find whether the entity is being damaged
-            for (app.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
+            for (state.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
                 // the entity is being hit by `hitbox`
                 if (hitbox.bb.overlaps(hb_component.*)) {
                     switch (hitbox.behaviour) {
@@ -588,10 +596,10 @@ const EntitySystem = struct {
                         .once_per_frame, .once_per_target => {
                             hp_component.* -= hitbox.dmg;
                             phys_component.velocity = phys_component.velocity.add(hitbox.knockback);
-                            _ = app.entities_damage_dealers.hitboxes.release_by_index(i);
+                            _ = state.entities_damage_dealers.hitboxes.release_by_index(i);
                             switch (type_component.*) {
-                                .slime, .slime_king  => for (0..5) |_| try particle_create(&app.particles, particles_generators.slime_damaged(pos_component.*)),
-                                else => for (0..5) |_| try particle_create(&app.particles, particles_generators.bleed(pos_component.*))
+                                .slime, .slime_king  => for (0..5) |_| try particle_create(&state.particles, particles_generators.slime_damaged(pos_component.*)),
+                                else => for (0..5) |_| try particle_create(&state.particles, particles_generators.bleed(pos_component.*))
                             }
                             // TODO sfx
                         },
@@ -676,7 +684,7 @@ const EntitySystem = struct {
                         const behaviour: Assets.HitboxType = .once_per_frame;
                         const duration = 1;
                         const knockback = phys_component.velocity;
-                        try app.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
+                        try state.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
                     }
                 },
                 .knight_1 => {
@@ -687,15 +695,15 @@ const EntitySystem = struct {
                     const cooldown_duration_1 = 60;
                     const cooldown_duration_2 = 150;
 
-                    if (knight_component.state == .idle) {
+                    if (knight_component.current_state == .idle) {
                         if (in_attack_range) {
                             // start attack
-                            knight_component.state = .charging;
+                            knight_component.current_state = .charging;
                             knight_component.state_change_frame = frame;
                             knight_component.attack_direction = if (is_right) .Right else .Left;
                             dir_component.* = if (is_right) .Right else .Left;
                             const attack_dir_f32 = switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0};
-                            _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.animation_preparing_attack, frame), pos_component.add(Vector2f.from(attack_dir_f32*3,0)), false, frame);
+                            _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.animation_preparing_attack, frame), pos_component.add(Vector2f.from(attack_dir_f32*3,0)), false, frame);
                             // TODO knight animation "charging"?
                             // TODO sfx "charging"
                         }
@@ -711,7 +719,7 @@ const EntitySystem = struct {
 
                     const attack_dir_f32 = switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0};
                     
-                    if (knight_component.state == .charging) {
+                    if (knight_component.current_state == .charging) {
                         const frames_since_charge_start = frame - knight_component.state_change_frame;
                         if (frames_since_charge_start == charge_duration) {
                             // charge complete, so swing blade in front
@@ -721,36 +729,36 @@ const EntitySystem = struct {
                             const behaviour: Assets.HitboxType = .once_per_frame;
                             const duration = Assets.animation_attack_1.duration;
                             const knockback = Vector2f.from(attack_dir_f32, 0).scale(0.25);
-                            try app.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
+                            try state.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
 
                             const mirror_animation = switch(knight_component.attack_direction){.Right=> false, .Left=> true};
-                            _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.animation_attack_1, frame), pos_component.add(Vector2f.from(attack_dir_f32*7,0)), mirror_animation, frame);
+                            _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.animation_attack_1, frame), pos_component.add(Vector2f.from(attack_dir_f32*7,0)), mirror_animation, frame);
                             // TODO sfx "swing"
                             phys_component.velocity.x = (entity_desc.speed * switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0});
-                            knight_component.state = .attack_1_cooldown;
+                            knight_component.current_state = .attack_1_cooldown;
                             knight_component.state_change_frame = frame;
                         }
                     }
 
-                    if (knight_component.state == .attack_1_cooldown) {
+                    if (knight_component.current_state == .attack_1_cooldown) {
                         const frames_since_attack = frame - knight_component.state_change_frame;
                         if (frames_since_attack < cooldown_duration_1) {
                             if (in_attack_range and (is_right == (knight_component.attack_direction == .Right))) {
                                 // if player still in front, chain attack
                                 // TODO sfx "about to chain attack"
-                                _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.animation_preparing_attack, frame), pos_component.add(Vector2f.from(attack_dir_f32*3,0)), false, frame);
-                                knight_component.state = .chaining;
+                                _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.animation_preparing_attack, frame), pos_component.add(Vector2f.from(attack_dir_f32*3,0)), false, frame);
+                                knight_component.current_state = .chaining;
                                 knight_component.state_change_frame = frame;
                             }
                         }
                         else if (frames_since_attack == cooldown_duration_1) {
                             // cooled down from first attack
-                            knight_component.state = .idle;
+                            knight_component.current_state = .idle;
                             knight_component.state_change_frame = 0;
                         }
                     }
 
-                    if (knight_component.state == .chaining) {
+                    if (knight_component.current_state == .chaining) {
                         const frames_since_chaining_started = frame - knight_component.state_change_frame;
                         if (frames_since_chaining_started == chain_charge_duration) {
                             // TODO sfx "swing"
@@ -760,21 +768,21 @@ const EntitySystem = struct {
                             const behaviour: Assets.HitboxType = .once_per_frame;
                             const duration = Assets.animation_attack_1.duration;
                             const knockback = Vector2f.from(attack_dir_f32*1.20, 0).scale(0.25);
-                            try app.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
+                            try state.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
 
                             const mirror_animation = switch(knight_component.attack_direction){.Right=> false, .Left=> true};
-                            _ = try render_animation_in_place(&app.animations_in_place, RuntimeAnimation.from(Assets.animation_attack_1, frame), pos_component.add(Vector2f.from(attack_dir_f32*7,0)), mirror_animation, frame);
+                            _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.animation_attack_1, frame), pos_component.add(Vector2f.from(attack_dir_f32*7,0)), mirror_animation, frame);
                             phys_component.velocity.x = (entity_desc.speed * switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0});
-                            knight_component.state = .attack_2_cooldown;
+                            knight_component.current_state = .attack_2_cooldown;
                             knight_component.state_change_frame = frame;
                         }
                     }
 
-                    if (knight_component.state == .attack_2_cooldown) {
+                    if (knight_component.current_state == .attack_2_cooldown) {
                         const frames_since_attack = frame - knight_component.state_change_frame;
                         if (frames_since_attack == cooldown_duration_2) {
                             // cooled down from attack 2, back to idle
-                            knight_component.state = .idle;
+                            knight_component.current_state = .idle;
                             knight_component.state_change_frame = 0;
                         }
                     }
@@ -808,9 +816,9 @@ const EntitySystem = struct {
             }
         }
     
-        for (app.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
+        for (state.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
             const frames_up = frame - hitbox.frame;
-            if (frames_up >= hitbox.duration) _ = app.entities_damage_dealers.hitboxes.release_by_index(i);
+            if (frames_up >= hitbox.duration) _ = state.entities_damage_dealers.hitboxes.release_by_index(i);
         }
     }
 
@@ -982,8 +990,8 @@ pub const particles_generators = struct {
             .color = RGB.from_other(BGR, @bitCast(Assets.palette[2])),
             .life = 1000,
             .position = pos,
-            .radius = 1 + app.random.float(f32),
-            .speed = Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.5),
+            .radius = 1 + state.random.float(f32),
+            .speed = Vector2f.from((state.random.float(f32) * 2) - 1, (state.random.float(f32) * 2) - 1).scale(0.5),
             .weight = 5,
             .alpha = 160,
         };
@@ -993,8 +1001,8 @@ pub const particles_generators = struct {
             .color = RGB.from_other(BGR, @bitCast(Assets.palette[6])),
             .life = 1000,
             .position = pos,
-            .radius = 1 + app.random.float(f32)*3,
-            .speed = Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.4),
+            .radius = 1 + state.random.float(f32)*3,
+            .speed = Vector2f.from((state.random.float(f32) * 2) - 1, (state.random.float(f32) * 2) - 1).scale(0.4),
             .weight = 6,
             .alpha = 160,
         };
@@ -1004,30 +1012,30 @@ pub const particles_generators = struct {
             .color = RGB.from_other(BGR, @bitCast(Assets.palette[15])),
             .life = 30,
             .position = pos,
-            .radius = 1 + app.random.float(f32) * 3,
-            .speed = Vector2f.from((app.random.float(f32) * 2) - 1, (app.random.float(f32) * 2) - 1).scale(0.05),
+            .radius = 1 + state.random.float(f32) * 3,
+            .speed = Vector2f.from((state.random.float(f32) * 2) - 1, (state.random.float(f32) * 2) - 1).scale(0.05),
             .weight = 0.2,
             .alpha = 120,
         };
     }
     pub fn fire(pos: Vector2f) ParticleDescriptor {
         return ParticleDescriptor {
-            .color = RGB.from_other(BGR, @bitCast(Assets.palette[if (app.random.boolean()) 3 else 4])),
+            .color = RGB.from_other(BGR, @bitCast(Assets.palette[if (state.random.boolean()) 3 else 4])),
             .life = 40,
             .position = pos,
-            .radius = 1 + app.random.float(f32) * 2,
-            .speed = Vector2f.from((app.random.float(f32) * 2) - 1, app.random.float(f32) - 0.5).scale(0.05),
+            .radius = 1 + state.random.float(f32) * 2,
+            .speed = Vector2f.from((state.random.float(f32) * 2) - 1, state.random.float(f32) - 0.5).scale(0.05),
             .weight = -0.2,
             .alpha = 120,
         };
     }
     pub fn poison(pos: Vector2f) ParticleDescriptor {
         return ParticleDescriptor {
-            .color = RGB.from_other(BGR, @bitCast(Assets.palette[if (app.random.boolean()) 6 else 7])),
+            .color = RGB.from_other(BGR, @bitCast(Assets.palette[if (state.random.boolean()) 6 else 7])),
             .life = 100,
             .position = pos,
-            .radius = 2 + app.random.float(f32) * 3,
-            .speed = Vector2f.from((app.random.float(f32) * 2) - 1, 0).scale(0.02),
+            .radius = 2 + state.random.float(f32) * 3,
+            .speed = Vector2f.from((state.random.float(f32) * 2) - 1, 0).scale(0.02),
             .weight = -0.13,
             .alpha = 120,
         };
@@ -1620,17 +1628,17 @@ pub const Assets = struct {
     const EntityKnight1Runtime = struct {
         
         state_change_frame: usize,
-        state: State,
+        current_state: EntityState,
         attack_direction: Direction,
 
-        const State = enum {
+        const EntityState = enum {
             idle, charging, attack_1_cooldown, chaining, attack_2_cooldown 
         };
 
         pub fn init() EntityKnight1Runtime {
             return .{
                 .state_change_frame = 0,
-                .state = .idle,
+                .current_state = .idle,
                 .attack_direction = .Right,
             };
         }

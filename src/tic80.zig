@@ -11,7 +11,6 @@ const M44 = math.M44;
 const M33 = math.M33;
 const Plane = math.Plane;
 const Frustum = math.Frustum;
-const win32 = @import("win32.zig");
 const OBJ = @import("obj.zig");
 const TGA = @import("tga.zig");
 const imgui = @import("imgui.zig");

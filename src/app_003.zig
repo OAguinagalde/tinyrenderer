@@ -4,8 +4,6 @@ const math = @import("math.zig");
 const graphics = @import("graphics.zig");
 const tic80 = @import("tic80.zig");
 const physics = @import("physics.zig");
-const windows = @import("windows.zig");
-const wasm = @import("wasm.zig");
 const font = @import("text.zig").font;
 
 const BoundingBox = math.BoundingBox;
@@ -23,26 +21,38 @@ const BGR = @import("pixels.zig").BGR;
 const Ecs = @import("ecs.zig").Ecs;
 const Entity = @import("ecs.zig").Entity;
 
-const Platform = if (builtin.os.tag == .windows) windows.Platform else wasm.Platform;
-const PlatformOutPixelType = if (builtin.os.tag == .windows) BGRA else RGBA;
-const timestamp = if (builtin.os.tag == .windows) std.time.timestamp else wasm_timestamp;
-fn wasm_timestamp() i64 {
-    return @intCast(wasm.milli_since_epoch());
+const windows = @import("windows.zig");
+const wasm = @import("wasm.zig");
+const platform = if (builtin.os.tag == .windows) windows else wasm;
+const Application = platform.Application(.{
+    .init = init,
+    .update = update,
+    .dimension_scale = 2,
+    .desired_width = 240*3,
+    .desired_height = 136*3,
+});
+
+// TODO: currently the wasm target only works if the exported functions are explicitly referenced.
+// The reason for this is that zig compiles lazily. By referencing Platform.run, the comptime code
+// in that funciton is executed, which in turn references the exported functions, making it so
+// that those are "found" by zig and properly exported.
+comptime {
+    _ = Application.run;
 }
-pub const main = if (builtin.os.tag == .windows) windows.main else wasm.main;
-pub const dimension_scale = 2;
-pub const desired_width = 240*2;
-pub const desired_height = 136*2;
+
+pub fn main() !void {
+    try Application.run();
+}
 
 const text_scale = 1;
-const App = struct {
-    debug_text_renderer: TextRenderer(PlatformOutPixelType, 1024, text_scale),
-    text_renderer: TextRenderer(PlatformOutPixelType, 1024, text_scale),
-    renderer: tic80.Renderer(PlatformOutPixelType, tic80.Shader(PlatformOutPixelType)),
-    renderer_quads: tic80.QuadRenderer(PlatformOutPixelType, tic80.QuadShader(PlatformOutPixelType)),
+const State = struct {
+    debug_text_renderer: TextRenderer(platform.OutPixelType, 1024, text_scale),
+    text_renderer: TextRenderer(platform.OutPixelType, 1024, text_scale),
+    renderer: tic80.Renderer(platform.OutPixelType, tic80.Shader(platform.OutPixelType)),
+    renderer_quads: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType)),
     // TODO the blending renderer still uses the 3d pipeline, change to the 2d quad pipeline instead
-    renderer_blending: tic80.Renderer(PlatformOutPixelType, tic80.ShaderWithBlendAndKeyColor(PlatformOutPixelType, 0)),
-    renderer_shapes: ShapeRenderer(PlatformOutPixelType, RGB.from(255,255,255)),
+    renderer_blending: tic80.Renderer(platform.OutPixelType, tic80.ShaderWithBlendAndKeyColor(platform.OutPixelType, 0)),
+    renderer_shapes: ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)),
     level_background: Assets.LevelBackgroundDescriptor,
     rng_engine: std.rand.DefaultPrng,
     random: std.rand.Random,
@@ -54,65 +64,64 @@ const App = struct {
     resource_file_name: []const u8,
 };
 
-var app: App = undefined;
+var state: State = undefined;
 
-pub fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(PlatformOutPixelType)) !void {
-    _ = pixel_buffer;
-    app.debug_text_renderer = try TextRenderer(PlatformOutPixelType, 1024, text_scale).init(allocator);
-    app.text_renderer = try TextRenderer(PlatformOutPixelType, 1024, text_scale).init(allocator);
-    app.renderer = try tic80.Renderer(PlatformOutPixelType, tic80.Shader(PlatformOutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    app.renderer_quads = try tic80.QuadRenderer(PlatformOutPixelType, tic80.QuadShader(PlatformOutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    app.renderer_blending = try tic80.Renderer(PlatformOutPixelType, tic80.ShaderWithBlendAndKeyColor(PlatformOutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    app.renderer_shapes = try ShapeRenderer(PlatformOutPixelType, RGB.from(255,255,255)).init(allocator);
-    app.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
-    app.rng_engine = std.rand.DefaultPrng.init(@bitCast(timestamp()));
-    app.random = app.rng_engine.random();
-    app.debug = true;
-    app.zoom = 1;
-    app.level_background = Assets.level_all_levels.background.*;
-    app.selected_sprite = 0;
-    app.resource_file_name = "resources.bin";
-    app.resources.load_from_file(app.resource_file_name) catch |err| {
+pub fn init(allocator: std.mem.Allocator) anyerror!void {
+    state.debug_text_renderer = try TextRenderer(platform.OutPixelType, 1024, text_scale).init(allocator);
+    state.text_renderer = try TextRenderer(platform.OutPixelType, 1024, text_scale).init(allocator);
+    state.renderer = try tic80.Renderer(platform.OutPixelType, tic80.Shader(platform.OutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    state.renderer_quads = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    state.renderer_blending = try tic80.Renderer(platform.OutPixelType, tic80.ShaderWithBlendAndKeyColor(platform.OutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    state.renderer_shapes = try ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)).init(allocator);
+    state.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
+    state.rng_engine = std.rand.DefaultPrng.init(@intCast(platform.timestamp()));
+    state.random = state.rng_engine.random();
+    state.debug = true;
+    state.zoom = 1;
+    state.level_background = Assets.level_all_levels.background.*;
+    state.selected_sprite = 0;
+    state.resource_file_name = "resources.bin";
+    state.resources.load_from_file(state.resource_file_name) catch |err| {
         std.log.debug("err: failed to load from file: {any}", .{err});
-        app.resources.load_from_embedded();
+        state.resources.load_from_embedded();
     };
 }
 
-pub fn update(platform: *Platform) !bool {
+pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
-    const h: f32 = @floatFromInt(platform.pixel_buffer.height);
-    const w: f32 = @floatFromInt(platform.pixel_buffer.width);
-    const zoom: f32 = @floatFromInt(app.zoom); _ = zoom;
+    const h: f32 = @floatFromInt(ud.pixel_buffer.height);
+    const w: f32 = @floatFromInt(ud.pixel_buffer.width);
+    const zoom: f32 = @floatFromInt(state.zoom); _ = zoom;
     // already takes into account native scaling if in use
     const mouse_window: Vector2f = blk: {
-        const mx = @divFloor(platform.mouse.x, dimension_scale);
+        const mx = @divFloor(ud.mouse.x, Application.dimension_scale);
         // inverse y since mouse is given relative to top left corner
-        const my = @divFloor((desired_height*dimension_scale) - platform.mouse.y, dimension_scale);
+        const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
         break :blk Vector2i.from(mx, my).to_vec2f();
     };
     const mouse_world: Vector2f = blk: {
-        const offset = Vector2f.from(app.camera.pos.x, app.camera.pos.y);
+        const offset = Vector2f.from(state.camera.pos.x, state.camera.pos.y);
         break :blk mouse_window.add(offset);
     };
     // represents the tile x, y where the mouse is, assuming that tile size is 8
     // and that the coordinate 0, 0 is the bottom left pixel of the tile 0, 0
     const mouse_tile = Vector2f.from(@floor(mouse_world.x/8), @floor(mouse_world.y/8));
-    const mouse_tile_in_map = mouse_tile.add(Vector2f.from(@floatFromInt(app.level_background.bb.left), @floatFromInt(app.level_background.bb.bottom)));
+    const mouse_tile_in_map = mouse_tile.add(Vector2f.from(@floatFromInt(state.level_background.bb.left), @floatFromInt(state.level_background.bb.bottom)));
 
 
     const pan_speed = 5;
-    if (key_pressed(platform, 'L')) try app.resources.load_from_file(app.resource_file_name);
-    if (key_pressed(platform, 'M')) try app.resources.save_to_file(platform.allocator, app.resource_file_name);
-    if (key_pressed(platform, 'G')) app.debug = !app.debug;
-    if (key_pressing(platform, 'W')) app.camera.pos.y += pan_speed;
-    if (key_pressing(platform, 'A')) app.camera.pos.x -= pan_speed;
-    if (key_pressing(platform, 'S')) app.camera.pos.y -= pan_speed;
-    if (key_pressing(platform, 'D')) app.camera.pos.x += pan_speed;
-    if (platform.mwheel > 0) app.zoom += 1;
-    if (platform.mwheel < 0) app.zoom -= 1;
+    if (ud.key_pressed('L')) try state.resources.load_from_file(state.resource_file_name);
+    if (ud.key_pressed('M')) try state.resources.save_to_file(ud.allocator, state.resource_file_name);
+    if (ud.key_pressed('G')) state.debug = !state.debug;
+    if (ud.key_pressing('W')) state.camera.pos.y += pan_speed;
+    if (ud.key_pressing('A')) state.camera.pos.x -= pan_speed;
+    if (ud.key_pressing('S')) state.camera.pos.y -= pan_speed;
+    if (ud.key_pressing('D')) state.camera.pos.x += pan_speed;
+    if (ud.mwheel > 0) state.zoom += 1;
+    if (ud.mwheel < 0) state.zoom -= 1;
 
     const clear_color: BGR = @bitCast(Assets.palette[0]);
-    platform.pixel_buffer.clear(PlatformOutPixelType.from(BGR, clear_color));
+    ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
 
     // const view_matrix_m44 = M44.lookat_left_handed(app.camera.pos, app.camera.pos.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
     const projection_matrix_m44 = M44.orthographic_projection(0, w, h, 0, 0, 2);
@@ -120,7 +129,7 @@ pub fn update(platform: *Platform) !bool {
     // const mvp_matrix_m44 = projection_matrix_m44.multiply(view_matrix_m44.multiply(M44.translation(Vector3f.from(0, 0, 1))));
     const mvp_matrix_m44 = projection_matrix_m44.multiply(M44.translation(Vector3f.from(0, 0, 1)));
     
-    const view_matrix = M33.look_at(Vector2f.from(app.camera.pos.x, app.camera.pos.y), Vector2f.from(0, 1));
+    const view_matrix = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
     const projection_matrix = M33.orthographic_projection(0, w, h, 0);
     const mvp_matrix = projection_matrix.multiply(view_matrix);
     const viewport_matrix = M33.viewport(0, 0, w, h);
@@ -128,16 +137,16 @@ pub fn update(platform: *Platform) !bool {
     const projection_matrix_screen = M33.orthographic_projection(0, w, h, 0);
     
     // render the map
-    try app.renderer_quads.add_map(app.resources.map, app.level_background.bb, Vector2f.from(0,0));
-    app.renderer_quads.render(
-        platform.pixel_buffer,
+    try state.renderer_quads.add_map(state.resources.map, state.level_background.bb, Vector2f.from(0,0));
+    state.renderer_quads.render(
+        ud.pixel_buffer,
         mvp_matrix,
         viewport_matrix
     );
 
     // draw a white rectangle around the sprite slection box
     {
-        var map_tile_bb = app.level_background.bb.to(f32);
+        var map_tile_bb = state.level_background.bb.to(f32);
         map_tile_bb.right += 1;
         map_tile_bb.top += 1;
         const map_bb = map_tile_bb.offset(Vec2(f32).from(-map_tile_bb.left, -map_tile_bb.bottom)).scale(Vec2(f32).from(8,8));
@@ -146,11 +155,11 @@ pub fn update(platform: *Platform) !bool {
         const bottom_bar = BoundingBox(f32).from(map_bb.bottom, map_bb.bottom-width, map_bb.left-width, map_bb.right+width);
         const right_bar = BoundingBox(f32).from(map_bb.top+width, map_bb.bottom-width, map_bb.right, map_bb.right+width);
         const top_bar = BoundingBox(f32).from(map_bb.top+width, map_bb.top, map_bb.left-width, map_bb.right+width);
-        try app.renderer_shapes.add_quad_from_bb(left_bar, @bitCast(@as(u32,0xffffffff)));
-        try app.renderer_shapes.add_quad_from_bb(bottom_bar, @bitCast(@as(u32,0xffffffff)));
-        try app.renderer_shapes.add_quad_from_bb(right_bar, @bitCast(@as(u32,0xffffffff)));
-        try app.renderer_shapes.add_quad_from_bb(top_bar, @bitCast(@as(u32,0xffffffff)));
-        app.renderer_shapes.render(platform.pixel_buffer, mvp_matrix, viewport_matrix);
+        try state.renderer_shapes.add_quad_from_bb(left_bar, @bitCast(@as(u32,0xffffffff)));
+        try state.renderer_shapes.add_quad_from_bb(bottom_bar, @bitCast(@as(u32,0xffffffff)));
+        try state.renderer_shapes.add_quad_from_bb(right_bar, @bitCast(@as(u32,0xffffffff)));
+        try state.renderer_shapes.add_quad_from_bb(top_bar, @bitCast(@as(u32,0xffffffff)));
+        state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
     }
     
     // list all the levels and if a level is clicked, change the value of `app.level_background`
@@ -159,23 +168,23 @@ pub fn update(platform: *Platform) !bool {
     const level_names_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
     const level_names_highlight_color = RGBA.from(BGR, @bitCast(Assets.palette[2]));
     inline for (levels_enum.Enum.fields, 0..) |l, i| {
-        const height_text = app.debug_text_renderer.height()+1;
+        const height_text = state.debug_text_renderer.height()+1;
         const top = level_list_top_left.y - height_text * i;
         const bottom = top - height_text;
         const left = level_list_top_left.x;
-        const right = level_list_top_left.x + 4*app.debug_text_renderer.width();
+        const right = level_list_top_left.x + 4*state.debug_text_renderer.width();
         const selection_bb = BoundingBox(f32).from(top, bottom, left, right);
-        try app.debug_text_renderer.print(Vector2f.from(left, bottom), "[{}]: {s}", .{i,l.name}, level_names_color);
+        try state.debug_text_renderer.print(Vector2f.from(left, bottom), "[{}]: {s}", .{i,l.name}, level_names_color);
         if (selection_bb.contains(mouse_window)) {
-            if (platform.l_click) app.level_background = Assets.Levels.get(@enumFromInt(l.value)).background.*;
-            try app.renderer_shapes.add_quad_from_bb(selection_bb, level_names_highlight_color);
+            if (ud.l_click) state.level_background = Assets.Levels.get(@enumFromInt(l.value)).background.*;
+            try state.renderer_shapes.add_quad_from_bb(selection_bb, level_names_highlight_color);
         }
     }
     const sprites_top = 16*8 + 10;
     const sprite_selection_bb = BoundingBox(f32).from(sprites_top, 10, 10, 10+16*8);
-    try app.renderer_shapes.add_quad_from_bb(sprite_selection_bb, RGBA.from(BGR, @bitCast(Assets.palette[0])));
-    app.renderer_shapes.render(
-        platform.pixel_buffer,
+    try state.renderer_shapes.add_quad_from_bb(sprite_selection_bb, RGBA.from(BGR, @bitCast(Assets.palette[0])));
+    state.renderer_shapes.render(
+        ud.pixel_buffer,
         projection_matrix_screen,
         viewport_matrix
     );
@@ -187,22 +196,22 @@ pub fn update(platform: *Platform) !bool {
         const bottom_bar = BoundingBox(f32).from(bb.bottom, bb.bottom-width, bb.left-width, bb.right+width);
         const right_bar = BoundingBox(f32).from(bb.top+width, bb.bottom-width, bb.right, bb.right+width);
         const top_bar = BoundingBox(f32).from(bb.top+width, bb.top, bb.left-width, bb.right+width);
-        try app.renderer_shapes.add_quad_from_bb(left_bar, @bitCast(@as(u32,0xffffffff)));
-        try app.renderer_shapes.add_quad_from_bb(bottom_bar, @bitCast(@as(u32,0xffffffff)));
-        try app.renderer_shapes.add_quad_from_bb(right_bar, @bitCast(@as(u32,0xffffffff)));
-        try app.renderer_shapes.add_quad_from_bb(top_bar, @bitCast(@as(u32,0xffffffff)));
-        app.renderer_shapes.render(platform.pixel_buffer, projection_matrix_screen, viewport_matrix);
+        try state.renderer_shapes.add_quad_from_bb(left_bar, @bitCast(@as(u32,0xffffffff)));
+        try state.renderer_shapes.add_quad_from_bb(bottom_bar, @bitCast(@as(u32,0xffffffff)));
+        try state.renderer_shapes.add_quad_from_bb(right_bar, @bitCast(@as(u32,0xffffffff)));
+        try state.renderer_shapes.add_quad_from_bb(top_bar, @bitCast(@as(u32,0xffffffff)));
+        state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
     }
     for (0..16) |j| {
         for (0..16) |i| {
             const jj: f32 = @floatFromInt(j);
             const ii: f32 = @floatFromInt(i);
             const pos = Vector2f.from(10 + ii*8, 10 + jj*8);
-            try app.renderer_blending.add_sprite_from_atlas_index(@intCast(i + j*16), pos, .{});
+            try state.renderer_blending.add_sprite_from_atlas_index(@intCast(i + j*16), pos, .{});
         }
     }
-    app.renderer_blending.render(
-        platform.pixel_buffer,
+    state.renderer_blending.render(
+        ud.pixel_buffer,
         mvp_matrix_m44,
         viewport_matrix_m44
     );
@@ -210,11 +219,11 @@ pub fn update(platform: *Platform) !bool {
     if (sprite_selection_bb.contains(mouse_window)) {
         const mouse_with_offset = mouse_window.add(Vector2f.from(-10,-10));
         const sprite_selected = Vector2f.from(@floor(mouse_with_offset.x/8), @floor(mouse_with_offset.y/8));
-        if (platform.l_click) app.selected_sprite = @intFromFloat(sprite_selected.x + sprite_selected.y*16);
+        if (ud.l_click) state.selected_sprite = @intFromFloat(sprite_selected.x + sprite_selected.y*16);
         // highlight the hover-ed over sprite
-        try app.renderer_shapes.add_quad(sprite_selected.scale(8).add(Vector2f.from(10,10)), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
-        app.renderer_shapes.render(
-            platform.pixel_buffer,
+        try state.renderer_shapes.add_quad(sprite_selected.scale(8).add(Vector2f.from(10,10)), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
+        state.renderer_shapes.render(
+            ud.pixel_buffer,
             projection_matrix_screen,
             viewport_matrix
         );
@@ -222,14 +231,14 @@ pub fn update(platform: *Platform) !bool {
     else {
         // figure out which map tile the mouse is on
         const map_tiles_bb = blk: {
-            var bb = app.level_background.bb.to(f32);
+            var bb = state.level_background.bb.to(f32);
             break :blk bb.offset(Vec2(f32).from(-bb.left, -bb.bottom));
         };
         if (map_tiles_bb.contains(mouse_tile)) {
-            if (platform.l_click) app.resources.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = app.selected_sprite;
-            try app.renderer_shapes.add_quad(mouse_tile.scale(8), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
-            app.renderer_shapes.render(
-                platform.pixel_buffer,
+            if (ud.l_click) state.resources.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = state.selected_sprite;
+            try state.renderer_shapes.add_quad(mouse_tile.scale(8), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
+            state.renderer_shapes.render(
+                ud.pixel_buffer,
                 mvp_matrix,
                 viewport_matrix
             );
@@ -238,30 +247,30 @@ pub fn update(platform: *Platform) !bool {
 
     // highlight the currently selected sprite
     {
-        const sprite_selected = Vector2f.from(@floatFromInt(app.selected_sprite%16), @floatFromInt(@divFloor(app.selected_sprite,16))).scale(8).add(Vector2f.from(10, 10));
-        try app.renderer_shapes.add_quad(sprite_selected, Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0xBBBBBBBB))));
-        app.renderer_shapes.render(
-            platform.pixel_buffer,
+        const sprite_selected = Vector2f.from(@floatFromInt(state.selected_sprite%16), @floatFromInt(@divFloor(state.selected_sprite,16))).scale(8).add(Vector2f.from(10, 10));
+        try state.renderer_shapes.add_quad(sprite_selected, Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0xBBBBBBBB))));
+        state.renderer_shapes.render(
+            ud.pixel_buffer,
             projection_matrix_screen,
             viewport_matrix
         );
     }
 
-    if (app.debug) {
+    if (state.debug) {
         const color = RGBA.from(BGR, @bitCast(Assets.palette[3]));
-        const height_text = app.debug_text_renderer.height()+1;
-        try app.debug_text_renderer.print(Vector2f.from(1, h - (height_text*1)), "ms {d: <9.2}", .{platform.ms}, color);
-        try app.debug_text_renderer.print(Vector2f.from(1, h - (height_text*2)), "frame {}", .{platform.frame}, color);
-        try app.debug_text_renderer.print(Vector2f.from(1, h - (height_text*3)), "camera {d:.4}, {d:.4}", .{app.camera.pos.x, app.camera.pos.y}, color);
-        try app.debug_text_renderer.print(Vector2f.from(1, h - (height_text*4)), "mouse_world {d:.4} {d:.4}", .{mouse_world.x, mouse_world.y}, color);
-        try app.debug_text_renderer.print(Vector2f.from(1, h - (height_text*5)), "mouse_window {d:.4} {d:.4}", .{mouse_window.x, mouse_window.y}, color);
-        try app.debug_text_renderer.print(Vector2f.from(1, h - (height_text*6)), "mouse_tile {d:.4} {d:.4}", .{mouse_tile.x, mouse_tile.y}, color);
-        try app.debug_text_renderer.print(Vector2f.from(1, h - (height_text*7)), "buffer dimensions {d:.4} {d:.4}", .{w, h}, color);
-        try app.debug_text_renderer.print(Vector2f.from(1, h - (height_text*8)), "zoom {}", .{app.zoom}, color);
-        try app.debug_text_renderer.print(Vector2f.from(1, h - (height_text*9)), "selected_sprite {}", .{app.selected_sprite}, color);
+        const height_text = state.debug_text_renderer.height()+1;
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*1)), "ms {d: <9.2}", .{ud.ms}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*2)), "frame {}", .{ud.frame}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*3)), "camera {d:.4}, {d:.4}", .{state.camera.pos.x, state.camera.pos.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*4)), "mouse_world {d:.4} {d:.4}", .{mouse_world.x, mouse_world.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*5)), "mouse_window {d:.4} {d:.4}", .{mouse_window.x, mouse_window.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*6)), "mouse_tile {d:.4} {d:.4}", .{mouse_tile.x, mouse_tile.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*7)), "buffer dimensions {d:.4} {d:.4}", .{w, h}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*8)), "zoom {}", .{state.zoom}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*9)), "selected_sprite {}", .{state.selected_sprite}, color);
     }
-    app.debug_text_renderer.render_all(
-        platform.pixel_buffer,
+    state.debug_text_renderer.render_all(
+        ud.pixel_buffer,
         projection_matrix_screen,
         viewport_matrix
     );
@@ -273,30 +282,30 @@ const AppMode = enum {
     Play
 };
 
-fn key_pressing(platform: *Platform, key: usize) bool {
-    return platform.keys[key];
+fn key_pressing(ud: *platform.UpdateData, key: usize) bool {
+    return ud.keys[key];
 }
-fn key_pressed(platform: *Platform, key: usize) bool {
-    return platform.keys[key] and !platform.keys_old[key];
+fn key_pressed(ud: *platform.UpdateData, key: usize) bool {
+    return ud.keys[key] and !ud.keys_old[key];
 }
 
 pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
-    app.mode = .Play;
-    app.entities.clear();
-    app.particles.deleteAll();
-    app.player.reset_soft(frame);
+    state.mode = .Play;
+    state.entities.clear();
+    state.particles.deleteAll();
+    state.player.reset_soft(frame);
 
     const level = Assets.Levels.get(spawn.level);
-    app.level_background = level.background.*;
-    app.doors = level.doors;
-    app.texts = level.static_texts;
+    state.level_background = level.background.*;
+    state.doors = level.doors;
+    state.texts = level.static_texts;
     
     for (level.entity_spawns) |entity_spawn| {
-        try app.entities.spawn(entity_spawn.entity, tile_to_grounded_position(entity_spawn.pos), frame);
+        try state.entities.spawn(entity_spawn.entity, tile_to_grounded_position(entity_spawn.pos), frame);
     }
     
-    app.player.spawn(spawn.pos);
-    app.camera.set_bounds(app.level_background.tl, app.level_background.br);
+    state.player.spawn(spawn.pos);
+    state.camera.set_bounds(state.level_background.tl, state.level_background.br);
 }
 
 fn tile_to_grounded_position(tile: Vector2i) Vector2f {
@@ -324,7 +333,7 @@ const Physics = blk: {
 
 inline fn collision_checker(tile: Vector2i) bool {
     if (tile.x < 0 or tile.y < 0) return true;
-    const level_bb = BoundingBox(i32).from(correct_y(app.level_background.tl.y), correct_y(app.level_background.br.y)-1, app.level_background.tl.x, app.level_background.br.x-1);
+    const level_bb = BoundingBox(i32).from(correct_y(state.level_background.tl.y), correct_y(state.level_background.br.y)-1, state.level_background.tl.x, state.level_background.br.x-1);
     if (!level_bb.contains(tile)) return true;
     const tile_index = Assets.map [@as(usize, @intCast(correct_y(tile.y)))] [@as(usize, @intCast(tile.x))];
     const col = tile_index%16;
@@ -949,10 +958,10 @@ pub const Assets = struct {
     const EntityKnight1Runtime = struct {
         
         state_change_frame: usize,
-        state: State,
+        current_state: EntityState,
         attack_direction: Direction,
 
-        const State = enum {
+        const EntityState = enum {
             idle, charging, attack_1_cooldown, chaining, attack_2_cooldown 
         };
 
