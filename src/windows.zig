@@ -24,7 +24,8 @@ pub fn Application(comptime app: ApplicationDescription) type {
             keys_old: [256]bool = [1]bool{false} ** 256,
             keys: [256]bool = [1]bool{false} ** 256,
             pixel_buffer: Buffer2D(BGRA) = undefined,
-            clicked: bool = false,
+            mouse_left_clicked: bool = false,
+            mouse_left_down: bool = false,
             mwheel: i32 = 0,
         };
 
@@ -198,8 +199,8 @@ pub fn Application(comptime app: ApplicationDescription) type {
                     mouse.x = mouse_current.x;
                     mouse.y = mouse_current.y;
 
-                    const l_click = state.clicked;
-                    state.clicked = false;
+                    const mouse_left_clicked = state.mouse_left_clicked;
+                    state.mouse_left_clicked = false;
 
                     const mwheel = state.mwheel;
                     state.mwheel = 0;
@@ -215,7 +216,8 @@ pub fn Application(comptime app: ApplicationDescription) type {
                         .allocator = allocator,
                         .w =  state.w,
                         .h =  state.h,
-                        .l_click = l_click,
+                        .mouse_left_down = state.mouse_left_down,
+                        .mouse_left_clicked = mouse_left_clicked,
                         .mwheel = mwheel,
                     };
                     
@@ -289,7 +291,12 @@ pub fn Application(comptime app: ApplicationDescription) type {
                 },
                 
                 win32.WM_LBUTTONDOWN => {
-                    state.clicked = true;
+                    state.mouse_left_down = true;
+                },
+
+                win32.WM_LBUTTONUP => {
+                    state.mouse_left_down = false;
+                    state.mouse_left_clicked = true;
                 },
 
                 win32.WM_SYSKEYDOWN,
@@ -360,7 +367,8 @@ pub const UpdateData = struct {
     pixel_buffer: Buffer2D(BGRA),
     ms: f32,
     frame: usize,
-    l_click: bool,
+    mouse_left_down: bool,
+    mouse_left_clicked: bool,
     mwheel: i32,
 
     pub fn key_pressing(ud: *const UpdateData, key: usize) bool {
@@ -372,6 +380,7 @@ pub const UpdateData = struct {
     }
 
 };
+
 pub const InitFn = fn (allocator: std.mem.Allocator) anyerror!void;
 pub const UpdateFn = fn (update_data: *UpdateData) anyerror!bool;
 pub const ApplicationDescription = struct {
