@@ -59,6 +59,7 @@ const State = struct {
     debug: bool,
     zoom: i32,
     selected_sprite: u8,
+    quick_select_sprite: [4]?u8,
     camera: Camera,
     resources: Resources,
     resource_file_name: []const u8,
@@ -275,7 +276,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         const level_name = state.resources.get_string(l.name);
         try state.debug_text_renderer.print(Vector2f.from(left, bottom), "[{}]: {s} bb {} {} {} {}", .{i,level_name, l.bb.top, l.bb.bottom, l.bb.left, l.bb.right}, level_names_color);
         if (selection_bb.contains(mouse_window)) {
-            if (ud.mouse_left_clicked) state.level_background = Assets.LevelBackgroundDescriptor.from(l.bb.to(usize));
             try state.renderer_shapes.add_quad_from_bb(selection_bb, level_names_highlight_color);
         }
     }
@@ -301,6 +301,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             try state.renderer_blending.add_sprite_from_atlas_index(@intCast(i + j*16), pos, .{});
         }
     }
+    if (state.quick_select_sprite[0]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 0*8, 10 + 16*8), .{});
+    if (state.quick_select_sprite[1]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 1*8, 10 + 16*8), .{});
+    if (state.quick_select_sprite[2]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 2*8, 10 + 16*8), .{});
+    if (state.quick_select_sprite[3]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 3*8, 10 + 16*8), .{});
     state.renderer_blending.render(
         ud.pixel_buffer,
         mvp_matrix_m44,
@@ -310,7 +314,12 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     if (sprite_selection_bb.contains(mouse_window)) {
         const mouse_with_offset = mouse_window.add(Vector2f.from(-10,-10));
         const sprite_selected = Vector2f.from(@floor(mouse_with_offset.x/8), @floor(mouse_with_offset.y/8));
-        if (ud.mouse_left_clicked) state.selected_sprite = @intFromFloat(sprite_selected.x + sprite_selected.y*16);
+        const sprite_selected_index: u8 = @intFromFloat(sprite_selected.x + sprite_selected.y*16);
+        if (ud.mouse_left_clicked) state.selected_sprite = sprite_selected_index;
+        if (ud.key_pressed('1')) state.quick_select_sprite[0] = sprite_selected_index;
+        if (ud.key_pressed('2')) state.quick_select_sprite[1] = sprite_selected_index;
+        if (ud.key_pressed('3')) state.quick_select_sprite[2] = sprite_selected_index;
+        if (ud.key_pressed('4')) state.quick_select_sprite[3] = sprite_selected_index;
         // highlight the hover-ed over sprite
         try state.renderer_shapes.add_quad(sprite_selected.scale(8).add(Vector2f.from(10,10)), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
         state.renderer_shapes.render(
@@ -320,13 +329,19 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         );
     }
     else {
+
+        if (ud.key_pressed('1')) if (state.quick_select_sprite[0]) |spr| { state.selected_sprite = spr; };
+        if (ud.key_pressed('2')) if (state.quick_select_sprite[1]) |spr| { state.selected_sprite = spr; };
+        if (ud.key_pressed('3')) if (state.quick_select_sprite[2]) |spr| { state.selected_sprite = spr; };
+        if (ud.key_pressed('4')) if (state.quick_select_sprite[3]) |spr| { state.selected_sprite = spr; };
+
         // figure out which map tile the mouse is on
         const map_tiles_bb = blk: {
             var bb = state.level_background.bb.to(f32);
             break :blk bb.offset(Vec2(f32).from(-bb.left, -bb.bottom));
         };
         if (map_tiles_bb.contains(mouse_tile)) {
-            if (ud.mouse_left_clicked) state.resources.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = state.selected_sprite;
+            if (ud.mouse_left_down) state.resources.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = state.selected_sprite;
             try state.renderer_shapes.add_quad(mouse_tile.scale(8), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
             state.renderer_shapes.render(
                 ud.pixel_buffer,
@@ -379,25 +394,6 @@ fn key_pressing(ud: *platform.UpdateData, key: usize) bool {
 }
 fn key_pressed(ud: *platform.UpdateData, key: usize) bool {
     return ud.keys[key] and !ud.keys_old[key];
-}
-
-pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
-    state.mode = .Play;
-    state.entities.clear();
-    state.particles.deleteAll();
-    state.player.reset_soft(frame);
-
-    const level = Assets.Levels.get(spawn.level);
-    state.level_background = level.background.*;
-    state.doors = level.doors;
-    state.texts = level.static_texts;
-    
-    for (level.entity_spawns) |entity_spawn| {
-        try state.entities.spawn(entity_spawn.entity, tile_to_grounded_position(entity_spawn.pos), frame);
-    }
-    
-    state.player.spawn(spawn.pos);
-    state.camera.set_bounds(state.level_background.tl, state.level_background.br);
 }
 
 fn tile_to_grounded_position(tile: Vector2i) Vector2f {
