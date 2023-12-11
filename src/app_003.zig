@@ -62,7 +62,8 @@ const State = struct {
     camera: Camera,
     resources: Resources,
     resource_file_name: []const u8,
-    level_being_modified: ? struct { index: u8, side: math.BoundingBoxSide }
+    level_being_modified: ? struct { index: u8, side: math.BoundingBoxSide },
+    junction_being_modified: ? struct { index: u8, a: bool },
 };
 
 var state: State = undefined;
@@ -88,6 +89,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
         try state.resources.load_from_embedded();
     };
     state.level_being_modified = null;
+    state.junction_being_modified = null;
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
@@ -100,7 +102,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         const mx = @divFloor(ud.mouse.x, Application.dimension_scale);
         // inverse y since mouse is given relative to top left corner
         const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
-        break :blk Vector2i.from(mx, my).to_vec2f();
+        break :blk Vector2i.from(mx, my).to(f32);
     };
     const mouse_world: Vector2f = blk: {
         const offset = Vector2f.from(state.camera.pos.x, state.camera.pos.y);
@@ -110,7 +112,13 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     // and that the coordinate 0, 0 is the bottom left pixel of the tile 0, 0
     const mouse_tile = Vector2f.from(@floor(mouse_world.x/8), @floor(mouse_world.y/8));
     const mouse_tile_in_map = mouse_tile.add(Vector2f.from(@floatFromInt(state.level_background.bb.left), @floatFromInt(state.level_background.bb.bottom)));
-
+    const map_editor_bb = blk: {
+        var bb = state.level_background.bb;
+        bb.top += 1;
+        bb.right += 1;
+        break :blk bb.scale(Vec2(usize).from(8,8)).to(f32);
+    };
+    const mouse_is_in_map_editor = map_editor_bb.contains(mouse_world);
 
     const pan_speed = 5;
     if (ud.key_pressed('L')) try state.resources.load_from_file(state.resource_file_name);
@@ -122,6 +130,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     if (ud.key_pressing('D')) state.camera.pos.x += pan_speed;
     if (ud.mwheel > 0) state.zoom += 1;
     if (ud.mwheel < 0) state.zoom -= 1;
+
+    if (ud.key_pressed('J') and mouse_is_in_map_editor) try state.resources.junctions.append(.{.a = mouse_tile_in_map.to(u8), .b = mouse_tile_in_map.to(u8) });    
 
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
@@ -147,7 +157,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         viewport_matrix
     );
 
-    // draw a white rectangle around the sprite slection box
+    // draw a white rectangle around the map
     {
         for (state.resources.levels.items, 0..) |*l, i| {
             const level_index: u8 = @intCast(i);
@@ -198,6 +208,58 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         try state.renderer_shapes.add_quad_border(map_bb, 1, @bitCast(@as(u32,0xffffffff)));
         state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
     }
+
+    // draw the level junctions
+    {
+        for (state.resources.junctions.items, 0..) |*junction, i| {
+            const index: u8 = @intCast(i);
+            
+            // TODO add button to add extra junction
+
+            var hover: i32 = 0;
+            if (state.level_background.bb.to(f32).contains(mouse_tile)) {
+                const mt = mouse_tile.to(u8);
+                if (mt.x == junction.a.x and mt.y == junction.a.y) {
+                    // hover junction a
+                    hover = 1;
+                }
+                else if (mt.x == junction.b.x and mt.y == junction.b.y) {
+                    // hover junction b
+                    hover = 2;
+                }
+            }
+
+            if (state.junction_being_modified) |junction_being_modified| {
+                if (!ud.mouse_left_down) state.junction_being_modified = null
+                else if (junction_being_modified.index == index) {
+                    if (mouse_is_in_map_editor and junction_being_modified.a) {
+                        junction.a = mouse_tile.to(u8);
+                    }
+                    else if (mouse_is_in_map_editor and !junction_being_modified.a) {
+                        junction.b = mouse_tile.to(u8);
+                    }
+                }
+            }
+            else {
+                if (hover > 0 and ud.mouse_left_down) state.junction_being_modified = .{.index = index, .a = hover == 1};
+            }
+
+            const exist_sprite_id = 143;
+            try state.renderer_quads.add_sprite_from_atlas_index(exist_sprite_id, junction.a.to(f32).scale(8), .{});
+            try state.renderer_quads.add_sprite_from_atlas_index(exist_sprite_id, junction.b.to(f32).scale(8), .{});
+            if (hover != 0) {
+                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(junction.b.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xff0000aa)));
+                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(junction.a.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xff0000aa)));
+            }
+            
+            // TODO add line renderer pipeline, which batches lines and renders them all together I guess?
+            // 
+            //     try state.renderer_lines.add_line(junction.a, junction.b, @bitCast(@as(u32,0x0000ffaa)));
+            // 
+        }
+        state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+        state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+    }
     
     // list all the levels and if a level is clicked, change the value of `app.level_background`
     const level_list_top_left = Vector2f.from(1, h - h/5);
@@ -213,7 +275,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         const level_name = state.resources.get_string(l.name);
         try state.debug_text_renderer.print(Vector2f.from(left, bottom), "[{}]: {s} bb {} {} {} {}", .{i,level_name, l.bb.top, l.bb.bottom, l.bb.left, l.bb.right}, level_names_color);
         if (selection_bb.contains(mouse_window)) {
-            if (ud.l_click) state.level_background = Assets.LevelBackgroundDescriptor.from(l.bb.to(usize));
+            if (ud.mouse_left_clicked) state.level_background = Assets.LevelBackgroundDescriptor.from(l.bb.to(usize));
             try state.renderer_shapes.add_quad_from_bb(selection_bb, level_names_highlight_color);
         }
     }
@@ -248,7 +310,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     if (sprite_selection_bb.contains(mouse_window)) {
         const mouse_with_offset = mouse_window.add(Vector2f.from(-10,-10));
         const sprite_selected = Vector2f.from(@floor(mouse_with_offset.x/8), @floor(mouse_with_offset.y/8));
-        if (ud.l_click) state.selected_sprite = @intFromFloat(sprite_selected.x + sprite_selected.y*16);
+        if (ud.mouse_left_clicked) state.selected_sprite = @intFromFloat(sprite_selected.x + sprite_selected.y*16);
         // highlight the hover-ed over sprite
         try state.renderer_shapes.add_quad(sprite_selected.scale(8).add(Vector2f.from(10,10)), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
         state.renderer_shapes.render(
@@ -264,7 +326,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             break :blk bb.offset(Vec2(f32).from(-bb.left, -bb.bottom));
         };
         if (map_tiles_bb.contains(mouse_tile)) {
-            if (ud.l_click) state.resources.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = state.selected_sprite;
+            if (ud.mouse_left_clicked) state.resources.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = state.selected_sprite;
             try state.renderer_shapes.add_quad(mouse_tile.scale(8), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
             state.renderer_shapes.render(
                 ud.pixel_buffer,
@@ -288,15 +350,16 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     if (state.debug) {
         const color = RGBA.from(BGR, @bitCast(Assets.palette[3]));
         const height_text = state.debug_text_renderer.height()+1;
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*1)), "ms {d: <9.2}", .{ud.ms}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*2)), "frame {}", .{ud.frame}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*3)), "camera {d:.4}, {d:.4}", .{state.camera.pos.x, state.camera.pos.y}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*4)), "mouse_world {d:.4} {d:.4}", .{mouse_world.x, mouse_world.y}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*5)), "mouse_window {d:.4} {d:.4}", .{mouse_window.x, mouse_window.y}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*6)), "mouse_tile {d:.4} {d:.4}", .{mouse_tile.x, mouse_tile.y}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*7)), "buffer dimensions {d:.4} {d:.4}", .{w, h}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*8)), "zoom {}", .{state.zoom}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*9)), "selected_sprite {}", .{state.selected_sprite}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*1 )), "ms {d: <9.2}", .{ud.ms}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*2 )), "frame {}", .{ud.frame}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*3 )), "camera {d:.4}, {d:.4}", .{state.camera.pos.x, state.camera.pos.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*4 )), "mouse_world {d:.4} {d:.4}", .{mouse_world.x, mouse_world.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*5 )), "mouse_window {d:.4} {d:.4}", .{mouse_window.x, mouse_window.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*6 )), "mouse_tile {d:.4} {d:.4}", .{mouse_tile.x, mouse_tile.y}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*7 )), "buffer dimensions {d:.4} {d:.4}", .{w, h}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*8 )), "zoom {}", .{state.zoom}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*9 )), "selected_sprite {}", .{state.selected_sprite}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*10)), "l click {}", .{ud.mouse_left_clicked}, color);
     }
     state.debug_text_renderer.render_all(
         ud.pixel_buffer,
@@ -668,6 +731,7 @@ pub const Resources = struct {
     strings: std.ArrayList(u8),
     map: [136][240]u8,
     levels: std.ArrayList(LevelDescriptor),
+    junctions: std.ArrayList(LevelJunctionDescriptor),
 
     pub fn init(allocator: std.mem.Allocator) Resources {
         return .{
@@ -675,12 +739,14 @@ pub const Resources = struct {
             .strings = std.ArrayList(u8).init(allocator),
             .map = undefined,
             .levels = std.ArrayList(LevelDescriptor).init(allocator),
+            .junctions = std.ArrayList(LevelJunctionDescriptor).init(allocator),
         };
     }
 
     pub fn deinit(self: *Resources) void {
         self.strings.deinit();
         self.levels.deinit();
+        self.junctions.deinit();
     }
 
     pub fn save_to_file(self: *const Resources, allocator: std.mem.Allocator, file_name: []const u8) !void {
@@ -704,7 +770,13 @@ pub const Resources = struct {
             _ = try serialized_data.writer().writeByte(level.bb.left);
             _ = try serialized_data.writer().writeByte(level.bb.right);
         }
-
+        _ = try serialized_data.writer().writeByte(@intCast(self.junctions.items.len));
+        for (self.junctions.items) |junction| {
+            _ = try serialized_data.writer().writeByte(junction.a.x);
+            _ = try serialized_data.writer().writeByte(junction.a.y);
+            _ = try serialized_data.writer().writeByte(junction.b.x);
+            _ = try serialized_data.writer().writeByte(junction.b.y);
+        }
         const file = try std.fs.cwd().createFile(file_name, .{});
         defer file.close();
         try file.writeAll(serialized_data.items);
@@ -736,6 +808,15 @@ pub const Resources = struct {
             });
             name_starting_index += name_length;
         }
+        // read the level junction count
+        const level_junction_count: usize = @intCast(try file.reader().readByte());
+        for (0..level_junction_count) |_| {
+            const ax = try file.reader().readByte();
+            const ay = try file.reader().readByte();
+            const bx = try file.reader().readByte();
+            const by = try file.reader().readByte();
+            try new_resources.junctions.append(.{.a = Vec2(u8).from(ax, ay), .b = Vec2(u8).from(bx, by)});
+        }
         std.log.debug("resources from file {s} loaded!", .{file_name});
         self.deinit();
         self.* = new_resources;
@@ -754,6 +835,7 @@ pub const Resources = struct {
             });
             name_starting_index += field.name.len;
         }
+        try self.junctions.append(.{.a = Vec2(u8).from(19,2), .b = Vec2(u8).from(30,3) });
         std.log.debug("resources embedded loaded!", .{});
     }
 
@@ -766,9 +848,16 @@ pub const Resources = struct {
         length: usize
     };
 
+    const LevelIndex = u8;
+
     const LevelDescriptor = struct {
         name: String,
         bb: BoundingBox(u8),
+    };
+
+    pub const LevelJunctionDescriptor = struct {
+        a: Vec2(u8),
+        b: Vec2(u8),
     };
 
 };
