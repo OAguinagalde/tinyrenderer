@@ -934,6 +934,10 @@ fn map_range_to_range_normalized(n: f32, from: f32, to: f32, map_from: f32, map_
     return ((n - from) * factor) + map_from;
 }
 
+pub const BoundingBoxSide = enum {
+    top, bottom, left, right
+};
+
 pub fn BoundingBox(comptime T: type) type {
     return struct {
 
@@ -985,6 +989,15 @@ pub fn BoundingBox(comptime T: type) type {
                     return BoundingBox(OtherType).from(@intCast(self.top), @intCast(self.bottom), @intCast(self.left), @intCast(self.right));
                 }
             }
+        }
+
+        pub inline fn side(self: Self, s: BoundingBoxSide) T {
+            return switch (s) {
+                .top => self.top,
+                .botom => self.botom,
+                .left => self.left,
+                .right => self.right,
+            };
         }
 
         pub inline fn width(self: Self) T {

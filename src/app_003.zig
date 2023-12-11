@@ -62,6 +62,7 @@ const State = struct {
     camera: Camera,
     resources: Resources,
     resource_file_name: []const u8,
+    level_being_modified: ? struct { index: u8, side: math.BoundingBoxSide }
 };
 
 var state: State = undefined;
@@ -86,6 +87,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
         std.log.debug("err: failed to load from file: {any}", .{err});
         try state.resources.load_from_embedded();
     };
+    state.level_being_modified = null;
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
@@ -147,19 +149,53 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     // draw a white rectangle around the sprite slection box
     {
+        for (state.resources.levels.items, 0..) |*l, i| {
+            const level_index: u8 = @intCast(i);
+            const level_bb_f32 = l.bb.to(f32);
+            var level_bb = level_bb_f32;
+            level_bb.right += 1;
+            level_bb.top += 1;
+            level_bb = level_bb.scale(Vec2(f32).from(8,8));
+            const color: RGBA = if (level_bb.contains(mouse_world)) @bitCast(@as(u32,0xff00ffff)) else @bitCast(@as(u32,0xffffffff));
+            try state.renderer_shapes.add_quad_border(level_bb, 1, color);
+            
+            // This handles the ability to modify the bounding boxes of levels when pressing the key 'E' near the bounding box of a level
+            if (state.level_being_modified) |level_being_modified| {
+                if (level_being_modified.index == level_index) {
+                    if (!ud.key_pressing('E')) {
+                        state.level_being_modified = null;
+                        continue;
+                    }
+                    else {
+                        if (!level_bb.contains(mouse_world)) switch (level_being_modified.side) {
+                            .top => if (mouse_tile_in_map.y < 136 and mouse_tile_in_map.y>level_bb_f32.top) { l.bb.top = @intFromFloat(mouse_tile_in_map.y); },
+                            .bottom => if (mouse_tile_in_map.y >= 0 and mouse_tile_in_map.y<level_bb_f32.bottom) { l.bb.bottom = @intFromFloat(mouse_tile_in_map.y); },
+                            .left => if (mouse_tile_in_map.x >= 0 and mouse_tile_in_map.x<level_bb_f32.left) { l.bb.left = @intFromFloat(mouse_tile_in_map.x); },
+                            .right => if (mouse_tile_in_map.x < 240 and mouse_tile_in_map.x>level_bb_f32.right) { l.bb.right = @intFromFloat(mouse_tile_in_map.x); },
+                        }
+                        else switch (level_being_modified.side) {
+                            .top => if (mouse_tile_in_map.y < 136 and mouse_tile_in_map.y<level_bb_f32.top) { l.bb.top = @intFromFloat(mouse_tile_in_map.y); },
+                            .bottom => if (mouse_tile_in_map.y >= 0 and mouse_tile_in_map.y>level_bb_f32.bottom) { l.bb.bottom = @intFromFloat(mouse_tile_in_map.y); },
+                            .left => if (mouse_tile_in_map.x >= 0 and mouse_tile_in_map.x>level_bb_f32.left) { l.bb.left = @intFromFloat(mouse_tile_in_map.x); },
+                            .right => if (mouse_tile_in_map.x < 240 and mouse_tile_in_map.x<level_bb_f32.right) { l.bb.right = @intFromFloat(mouse_tile_in_map.x); },
+                        }
+                    }
+                }
+            }
+            else if (ud.key_pressing('E')) {
+                // this is the condition for modifying the bounding box of a level
+                if (@abs(level_bb.left - mouse_world.x) < 4 and mouse_world.y > level_bb.bottom and mouse_world.y < level_bb.top) state.level_being_modified = .{ .index = level_index, .side = .left };
+                if (@abs(level_bb.right - mouse_world.x) < 4 and mouse_world.y > level_bb.bottom and mouse_world.y < level_bb.top) state.level_being_modified = .{ .index = level_index, .side = .right };
+                if (@abs(level_bb.top - mouse_world.y) < 4 and mouse_world.x > level_bb.left and mouse_world.x < level_bb.right) state.level_being_modified = .{ .index = level_index, .side = .top };
+                if (@abs(level_bb.bottom - mouse_world.y) < 4 and mouse_world.x > level_bb.left and mouse_world.x < level_bb.right) state.level_being_modified = .{ .index = level_index, .side = .bottom };
+            }
+        }
+
         var map_tile_bb = state.level_background.bb.to(f32);
         map_tile_bb.right += 1;
         map_tile_bb.top += 1;
         const map_bb = map_tile_bb.offset(Vec2(f32).from(-map_tile_bb.left, -map_tile_bb.bottom)).scale(Vec2(f32).from(8,8));
-        const width = 1;
-        const left_bar = BoundingBox(f32).from(map_bb.top+width, map_bb.bottom-width, map_bb.left-width, map_bb.left);
-        const bottom_bar = BoundingBox(f32).from(map_bb.bottom, map_bb.bottom-width, map_bb.left-width, map_bb.right+width);
-        const right_bar = BoundingBox(f32).from(map_bb.top+width, map_bb.bottom-width, map_bb.right, map_bb.right+width);
-        const top_bar = BoundingBox(f32).from(map_bb.top+width, map_bb.top, map_bb.left-width, map_bb.right+width);
-        try state.renderer_shapes.add_quad_from_bb(left_bar, @bitCast(@as(u32,0xffffffff)));
-        try state.renderer_shapes.add_quad_from_bb(bottom_bar, @bitCast(@as(u32,0xffffffff)));
-        try state.renderer_shapes.add_quad_from_bb(right_bar, @bitCast(@as(u32,0xffffffff)));
-        try state.renderer_shapes.add_quad_from_bb(top_bar, @bitCast(@as(u32,0xffffffff)));
+        try state.renderer_shapes.add_quad_border(map_bb, 1, @bitCast(@as(u32,0xffffffff)));
         state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
     }
     
@@ -174,7 +210,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         const left = level_list_top_left.x;
         const right = level_list_top_left.x + 4*state.debug_text_renderer.width();
         const selection_bb = BoundingBox(f32).from(top, bottom, left, right);
-        const level_name = state.resources.get_level_name(l.name);
+        const level_name = state.resources.get_string(l.name);
         try state.debug_text_renderer.print(Vector2f.from(left, bottom), "[{}]: {s} bb {} {} {} {}", .{i,level_name, l.bb.top, l.bb.bottom, l.bb.left, l.bb.right}, level_names_color);
         if (selection_bb.contains(mouse_window)) {
             if (ud.l_click) state.level_background = Assets.LevelBackgroundDescriptor.from(l.bb.to(usize));
@@ -192,16 +228,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     );
     // draw a white rectangle around the sprite slection box
     {
-        var bb = sprite_selection_bb;
-        const width = 1;
-        const left_bar = BoundingBox(f32).from(bb.top+width, bb.bottom-width, bb.left-width, bb.left);
-        const bottom_bar = BoundingBox(f32).from(bb.bottom, bb.bottom-width, bb.left-width, bb.right+width);
-        const right_bar = BoundingBox(f32).from(bb.top+width, bb.bottom-width, bb.right, bb.right+width);
-        const top_bar = BoundingBox(f32).from(bb.top+width, bb.top, bb.left-width, bb.right+width);
-        try state.renderer_shapes.add_quad_from_bb(left_bar, @bitCast(@as(u32,0xffffffff)));
-        try state.renderer_shapes.add_quad_from_bb(bottom_bar, @bitCast(@as(u32,0xffffffff)));
-        try state.renderer_shapes.add_quad_from_bb(right_bar, @bitCast(@as(u32,0xffffffff)));
-        try state.renderer_shapes.add_quad_from_bb(top_bar, @bitCast(@as(u32,0xffffffff)));
+        try state.renderer_shapes.add_quad_border(sprite_selection_bb, 1, @bitCast(@as(u32,0xffffffff)));
         state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
     }
     for (0..16) |j| {
@@ -461,6 +488,17 @@ pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type
             };
             try self.vertex_buffer.appendSlice(&vertices);
         }
+
+        pub fn add_quad_border(self: *Self, bb: BoundingBox(f32), thickness: f32, tint: RGBA) !void {
+            const line_left = BoundingBox(f32).from(bb.top+thickness, bb.bottom-thickness, bb.left-thickness, bb.left);
+            const line_bottom = BoundingBox(f32).from(bb.bottom, bb.bottom-thickness, bb.left-thickness, bb.right+thickness);
+            const line_right = BoundingBox(f32).from(bb.top+thickness, bb.bottom-thickness, bb.right, bb.right+thickness);
+            const line_top = BoundingBox(f32).from(bb.top+thickness, bb.top, bb.left-thickness, bb.right+thickness);
+            try self.add_quad_from_bb(line_left, tint);
+            try self.add_quad_from_bb(line_bottom, tint);
+            try self.add_quad_from_bb(line_right, tint);
+            try self.add_quad_from_bb(line_top, tint);
+        }
         
         pub fn add_quad(self: *Self, pos: Vector2f, size: Vector2f, tint: RGBA) !void {
             const vertices = [4] shader.Vertex {
@@ -659,7 +697,7 @@ pub const Resources = struct {
             // NOTE just int cast to u8, level name should be smaller than 256 bytes
             _ = try serialized_data.writer().writeByte(@intCast(level.name.length));
             // write the level's name
-            for (self.get_level_name(level.name)) |char| try serialized_data.writer().writeByte(char);
+            for (self.get_string(level.name)) |char| try serialized_data.writer().writeByte(char);
             // write the level's map bounding box
             _ = try serialized_data.writer().writeByte(level.bb.top);
             _ = try serialized_data.writer().writeByte(level.bb.bottom);
@@ -719,7 +757,7 @@ pub const Resources = struct {
         std.log.debug("resources embedded loaded!", .{});
     }
 
-    pub fn get_level_name(self: *const Resources, string: String) []const u8 {
+    pub fn get_string(self: *const Resources, string: String) []const u8 {
         return self.strings.items[string.index..string.index+string.length];
     }
 
