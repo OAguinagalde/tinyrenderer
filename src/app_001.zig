@@ -63,14 +63,14 @@ const State = struct {
     renderer_blending: tic80.Renderer(platform.OutPixelType, tic80.ShaderWithBlendAndKeyColor(platform.OutPixelType, 0)),
     renderer_shapes: ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)),
     entities: EntitySystem,
-    level_background: Assets.LevelBackgroundDescriptor,
+    level_background: BoundingBox(usize),
     player: Player,
     camera: Camera,
     animations_in_place: AnimationSystem,
     particles: Particles,
     rng_engine: std.rand.DefaultPrng,
     random: std.rand.Random,
-    doors: []const *const Assets.DoorDescriptor,
+    doors: std.ArrayList(Door),
     texts: []const *const Assets.StaticTextDescriptor,
     entities_damage_dealers: HitboxSystem,
     player_damage_dealers: HitboxSystem,
@@ -78,7 +78,7 @@ const State = struct {
     resources: Resources,
     resource_file_name: []const u8,
 };
-
+const Door = struct{pos:Vec2(u8), index:usize};
 var state: State = undefined;
 
 pub fn init(allocator: std.mem.Allocator) anyerror!void {
@@ -97,15 +97,16 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.random = state.rng_engine.random();
     state.entities_damage_dealers = try HitboxSystem.init(allocator);
     state.player_damage_dealers = try HitboxSystem.init(allocator);
-    state.doors = undefined; // doors are set on load_level
+    state.doors = std.ArrayList(Door).init(allocator); // doors are set on load_level
     state.texts = undefined; // texts are set on load_level
     state.debug = true;
     state.resource_file_name = "resources.bin";
+    state.resources = Resources.init(allocator);
     state.resources.load_from_file(state.resource_file_name) catch |err| {
         std.log.debug("err: failed to load from file: {any}", .{err});
-        state.resources.load_from_embedded();
+        try state.resources.load_from_embedded();
     };
-    try load_level(Assets.spawn_start_0, 0);
+    try load_level(Vec2(u8).from(5, 1), 0);
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
@@ -116,11 +117,9 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
 
-    if (key_pressed(ud, 'L')) try state.resources.load_from_file(state.resource_file_name);
-    if (ud.keys['Q'] and !ud.keys_old['Q']) {}
-    if (ud.keys['E'] and !ud.keys_old['E']) {}
-    if (ud.keys['R'] and !ud.keys_old['R']) try load_level(Assets.spawn_start_0, ud.frame);
-    if (ud.keys['G'] and !ud.keys_old['G']) state.debug = !state.debug;
+    if (ud.key_pressed('L')) try state.resources.load_from_file(state.resource_file_name);
+    if (ud.key_pressed('R')) try load_level(Vec2(u8).from(5, 1), ud.frame);
+    if (ud.key_pressed('G')) state.debug = !state.debug;
     
     if (state.player.attack_start_frame > 0 and ud.frame - state.player.attack_start_frame >= Assets.config.player.attack.cooldown) {
         state.player.attack_start_frame = 0;
@@ -197,10 +196,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     // check for doors to change level
     const player_tile = state.player.get_current_tile();
-    for (state.doors) |door| {
-        const door_tile = Vector2i.from(door.pos.x, correct_y(door.pos.y));
-        if (player_tile.x == door_tile.x and player_tile.y == door_tile.y) {
-            try load_level(door.destination.*, ud.frame);
+    for (state.doors.items) |door| {
+        if (player_tile.x == door.pos.x and player_tile.y == door.pos.y and ud.key_pressed('E')) {
+            const junction = state.resources.junctions.items[door.index];
+            if (junction.a.x == door.pos.x and junction.a.y == door.pos.y) try load_level(junction.b, ud.frame) else try load_level(junction.a, ud.frame);
             return true;
         }
     }
@@ -242,8 +241,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const mvp_matrix_33 = projection_matrix_m33.multiply(view_matrix_m33.multiply(M33.identity()));
     
     // render map
-    const map_bb_f = state.level_background.bb.scale(Vec2(usize).from(8,8)).to(f32);
-    try state.renderer_quads.add_map(state.resources.map, state.level_background.bb, Vector2f.from(map_bb_f.left, map_bb_f.bottom));
+    const map_bb_f = state.level_background.scale(Vec2(usize).from(8,8)).to(f32);
+    try state.renderer_quads.add_map(state.resources.map, state.level_background, Vector2f.from(map_bb_f.left, map_bb_f.bottom));
     state.renderer_quads.render(
         ud.pixel_buffer,
         mvp_matrix_33,
@@ -251,16 +250,16 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     );
     
     // render static texts
-    const static_texts_color = RGBA.from(BGR, @bitCast(Assets.palette[5]));
-    for (state.texts) |text| {
-        const text_tile = Vector2i.from(text.pos.x, correct_y(text.pos.y));
-        try state.text_renderer.print(text_tile.scale(8).to_vec2f(), "{s}", .{text.text}, static_texts_color);
-    }
-    state.text_renderer.render_all(
-        ud.pixel_buffer,
-        mvp_matrix_33,
-        viewport_matrix_m33
-    );
+    // const static_texts_color = RGBA.from(BGR, @bitCast(Assets.palette[5]));
+    // for (state.texts) |text| {
+    //     const text_tile = Vector2i.from(text.pos.x, correct_y(text.pos.y));
+    //     try state.text_renderer.print(text_tile.scale(8).to(f32), "{s}", .{text.text}, static_texts_color);
+    // }
+    // state.text_renderer.render_all(
+    //     ud.pixel_buffer,
+    //     mvp_matrix_33,
+    //     viewport_matrix_m33
+    // );
     
     // render entities
     {
@@ -328,7 +327,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             // inverse y since mouse is given relative to top left corner
             const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
             const offset = Vector2f.from(state.camera.pos.x, state.camera.pos.y);
-            const pos = Vector2i.from(mx, my).to_vec2f().add(offset);
+            const pos = Vector2i.from(mx, my).to(f32).add(offset);
             break :blk pos;
         };
         try state.debug_text_renderer.print(Vector2f.from(5, h - (6*1) -  6), "ms {d: <9.2}", .{ud.ms}, color);
@@ -351,32 +350,46 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     return true;
 }
 
-fn key_pressing(ud: *platform.UpdateData, key: usize) bool {
-    return ud.keys[key];
-}
-fn key_pressed(ud: *platform.UpdateData, key: usize) bool {
-    return ud.keys[key] and !ud.keys_old[key];
-}
-
-pub fn load_level(spawn: Assets.SpawnDescriptor, frame: usize) !void {
+pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
+    
+    std.log.debug("spawning at {any}", .{spawn});
     state.entities.clear();
     state.particles.deleteAll();
     state.player.reset_soft(frame);
+    state.doors.clearRetainingCapacity();
 
-    const level = Assets.Levels.get(spawn.level);
-    state.level_background = level.background.*;
-    state.doors = level.doors;
-    state.texts = level.static_texts;
-    
-    for (level.entity_spawns) |entity_spawn| {
-        try state.entities.spawn(entity_spawn.entity, tile_to_grounded_position(entity_spawn.pos), frame);
+    var found = false;
+    for (state.resources.levels.items) |level| {
+        if (level.bb.contains(spawn)) {
+            
+            // found the level
+            found = true;
+            
+            state.level_background = level.bb.to(usize);
+            
+            var bb = state.level_background;
+            bb.top += 1;
+            bb.right += 1;
+            state.camera.set_bounds(bb.scale(Vec2(usize).from(8, 8)).to(f32));
+
+            for (state.resources.junctions.items, 0..) |junction, i| {
+                if (level.bb.contains(junction.a)) try state.doors.append(.{.pos=junction.a, .index=i});
+                if (level.bb.contains(junction.b)) try state.doors.append(.{.pos=junction.b, .index=i});
+            }
+
+            break;
+        }
     }
+
+    if (!found) return error.LevelContainingSpawnNotFound;
     
-    state.player.spawn(spawn.pos);
-    var bb = state.level_background.bb;
-    bb.top += 1;
-    bb.right += 1;
-    state.camera.set_bounds(bb.scale(Vec2(usize).from(8, 8)).to(f32));
+    // TODO
+    // state.texts = level.static_texts;
+    // for (level.entity_spawns) |entity_spawn| {
+    //     try state.entities.spawn(entity_spawn.entity, tile_to_grounded_position(entity_spawn.pos), frame);
+    // }
+    
+    state.player.spawn(spawn.to(i32));
 }
 
 fn tile_to_grounded_position(tile: Vector2i) Vector2f {
@@ -405,7 +418,7 @@ const Physics = blk: {
 inline fn collision_checker(tile: Vector2i) bool {
     if (tile.x < 0 or tile.y < 0) return true;
     const tileu = tile.to(usize);
-    if (!state.level_background.bb.contains(tileu)) return true;
+    if (!state.level_background.contains(tileu)) return true;
     const tile_index = state.resources.map[tileu.y][tileu.x];
     const col = tile_index%16;
     const row = @divFloor(tile_index, 16);
@@ -485,7 +498,7 @@ const Player = struct {
     }
 
     pub fn spawn(self: *Player, pos: Vector2i) void {
-        self.pos = Vector2f.from(@floatFromInt(pos.x*8), @floatFromInt(correct_y(pos.y)*8));
+        self.pos = pos.to(f32).scale(8);
         self.physical_component = Physics.PhysicalObject.from(self.pos, 3);
         self.hurtbox = Assets.entity_knight_1.hurtbox.offset(self.pos);
     }

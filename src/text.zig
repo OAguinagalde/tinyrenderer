@@ -3,18 +3,12 @@ const std = @import("std");
 const math = @import("math.zig");
 const graphics = @import("graphics.zig");
 const buffer = @import("buffer.zig");
-const quad = @import("shaders/quad.zig");
 const RGBA = @import("pixels.zig").RGBA;
 
-const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
-const Vector4f = math.Vector4f;
-const M44 = math.M44;
 const M33 = math.M33;
 const Buffer2D = buffer.Buffer2D;
-const GraphicsPipelineConfiguration = graphics.GraphicsPipelineConfiguration;
-const GraphicsPipeline = graphics.GraphicsPipeline;
 
 pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: usize, comptime size: comptime_float) type {
     return struct {
