@@ -1,116 +1,9 @@
 const std = @import("std");
 
-pub const Vector2i = struct {
-    x: i32,
-    y: i32,
-
-    pub inline fn from(x: i32, y: i32) Vector2i {
-        return Vector2i { .x = x, .y = y };
-    }
-    
-    pub inline fn to(self: Vector2i, comptime T: type) Vec2(T) {
-        const t_is_float = comptime std.meta.trait.isFloat(T);
-        const t_is_int = comptime std.meta.trait.isIntegral(T);
-        if (!t_is_float and !t_is_int) @compileError("Type "++@typeName(T)++" is neither a float or an int type");
-        if (t_is_float) {
-            return Vec2(T).from(@floatFromInt(self.x), @floatFromInt(self.y));
-        }
-        else {
-            return Vec2(T).from(@intCast(self.x), @intCast(self.y));
-        }
-    }
-
-    pub fn add(self: Vector2i, other: Vector2i) Vector2i {
-        return Vector2i { .x = self.x + other.x, .y = self.y + other.y };
-    }
-
-    pub fn substract(self: Vector2i, other: Vector2i) Vector2i {
-        return Vector2i { .x = self.x - other.x, .y = self.y - other.y };
-    }
-
-    pub fn scale(self: Vector2i, factor: i32) Vector2i {
-        return Vector2i { .x = self.x * factor, .y = self.y * factor };
-    }
-
-    pub fn dot(self: Vector2i, other: Vector2i) i32 {
-        return self.x * other.x + self.y * other.y;
-    }
-
-    pub fn cross_product(self: Vector2i, other: Vector2i) Vector3f {
-        return Vector3f {
-            .x = 0.0,
-            .y = 0.0,
-            .z = self.x * other.y - self.y * other.x,
-        };
-    }
-
-    pub fn to_vec2f(self: Vector2i) Vector2f {
-        return Vector2f { .x = @floatFromInt(self.x), .y = @floatFromInt(self.y) };
-    }
-};
-
-pub const Vector2f = struct {
-    x: f32,
-    y: f32,
-    
-    pub inline fn from(x: f32, y: f32) Vector2f {
-        return Vector2f { .x = x, .y = y };
-    }
-
-    pub fn add(self: Vector2f, other: Vector2f) Vector2f {
-        return Vector2f { .x = self.x + other.x, .y = self.y + other.y };
-    }
-
-    pub fn substract(self: Vector2f, other: Vector2f) Vector2f {
-        return Vector2f { .x = self.x - other.x, .y = self.y - other.y };
-    }
-
-    pub fn scale(self: Vector2f, factor: f32) Vector2f {
-        return Vector2f { .x = self.x * factor, .y = self.y * factor };
-    }
-
-    pub fn scale_vec(self: Vector2f, other: Vector2f) Vector2f {
-        return Vector2f { .x = self.x * other.x, .y = self.y * other.y };
-    }
-
-    /// dot product (represented by a dot ·) of 2 vectors A and B is a scalar N, sometimes called scalar product
-    pub fn dot(self: Vector2f, other: Vector2f) f32 {
-        return self.x * other.x + self.y * other.y;
-    }
-
-    /// also known as length, magnitude or norm, represented like ||v||
-    pub fn magnitude(self: Vector2f) f32 {
-        return std.math.sqrt(self.x * self.x + self.y * self.y);
-    }
-    
-    pub fn normalized(self: Vector2f) Vector2f {
-        const mag = self.magnitude();
-        return Vector2f { .x = self.x / mag, .y = self.y / mag };
-    }
-
-    pub fn cross_product(self: Vector2f, other: Vector2f) Vector3f {
-        return Vector3f {
-            .x = 0.0,
-            .y = 0.0,
-            .z = self.x * other.y - self.y * other.x,
-        };
-    }
-
-    /// The cross product or vector product (represented by an x) of 2 vectors A and B is another vector C.
-    /// C is exactly perpendicular (90 degrees) to the plane AB, meaning that there has to be a 3rd dimension for the cross product for this to make sense.
-    /// The length of C will be the same as the area of the parallelogram formed by AB.
-    /// This implementation assumes z = 0, meaning that the result will always be of type Vec3 (0, 0, x*v.y-y*v.x).
-    /// For that same reason, the magnitude of the resulting Vec3 will be just the value of the component z
-    pub fn cross_product_magnitude(self: Vector2f, other: Vector2f) f32 {
-        return self.cross_product(other).z;
-    }
-
-    pub fn perpendicular(self: Vector2f) Vector2f {
-        // technically there is 2 perpendiculars for now I'm working with this
-        return Vector2f.from(self.y, -self.x);
-        // return Vector2f.from(-self.y, self.x);
-    }
-};
+pub const Vector2f = Vec2(f32);
+pub const Vector2i = Vec2(i32);
+pub const Vector3f = Vec3(f32);
+pub const Vector4f = Vec4(f32);
 
 pub fn Vec2(comptime T: type) type {
     return struct {
@@ -124,8 +17,25 @@ pub fn Vec2(comptime T: type) type {
             return Self { .x = x, .y = y };
         }
 
+        pub inline fn to(self: Self, comptime OtherType: type) Vec2(OtherType) {
+            const self_is_float = comptime std.meta.trait.isFloat(T);
+            const other_is_float = comptime std.meta.trait.isFloat(OtherType);
+            if (self_is_float) {
+                if (other_is_float) return Vec2(OtherType).from(@floatCast(self.x), @floatCast(self.y))
+                else return Vec2(OtherType).from(@intFromFloat(self.x), @intFromFloat(self.y));
+            }
+            else {
+                if (other_is_float) return Vec2(OtherType).from(@floatFromInt(self.x), @floatFromInt(self.y))
+                else return Vec2(OtherType).from(@intCast(self.x), @intCast(self.y));
+            }
+        }
+
         pub fn add(self: Self, other: Self) Self {
             return Self.from(self.x + other.x, self.y + other.y);
+        }
+
+        pub fn substract(self: Self, other: Self) Self {
+            return Self.from(self.x - other.x, self.y - other.y);
         }
 
         pub fn scale(self: Self, factor: T) Self {
@@ -145,7 +55,7 @@ pub fn Vec2(comptime T: type) type {
         }
         
         pub fn normalized(self: Self) Self {
-            if (std.meta.trait.isFloat(T)) {
+            if (comptime std.meta.trait.isFloat(T)) {
                 const mag = self.magnitude();
                 return Self.from(self.x / mag, self.y / mag);
             }
@@ -158,92 +68,126 @@ pub fn Vec2(comptime T: type) type {
     };
 }
 
-pub const Vector3f = struct {
-    x: f32,
-    y: f32,
-    z: f32,
+pub fn Vec3(comptime T: type) type {
+    return struct {
 
-    pub fn from(x: f32, y: f32, z: f32) Vector3f { return Vector3f {.x = x, .y = y, .z = z };}
+        const Self = @This();
 
-    pub fn add(self: Vector3f, other: Vector3f) Vector3f {
-        return Vector3f { .x = self.x + other.x, .y = self.y + other.y, .z = self.z + other.z };
-    }
+        x: T,
+        y: T,
+        z: T,
+        
+        pub inline fn from(x: T, y: T, z: T) Self {
+            return Self { .x = x, .y = y, .z = z };
+        }
 
-    pub fn substract(self: Vector3f, other: Vector3f) Vector3f {
-        return Vector3f { .x = self.x - other.x, .y = self.y - other.y, .z = self.z - other.z };
-    }
+        pub inline fn to(self: Self, comptime OtherType: type) Vec3(OtherType) {
+            const self_is_float = comptime std.meta.trait.isFloat(T);
+            const other_is_float = comptime std.meta.trait.isFloat(OtherType);
+            if (self_is_float) {
+                if (other_is_float) return Vec3(OtherType).from(@floatCast(self.x), @floatCast(self.y), @floatCast(self.z))
+                else return Vec3(OtherType).from(@intFromFloat(self.x), @intFromFloat(self.y), @intFromFloat(self.z));
+            }
+            else {
+                if (other_is_float) return Vec3(OtherType).from(@floatFromInt(self.x), @floatFromInt(self.y), @floatFromInt(self.z))
+                else return Vec3(OtherType).from(@intCast(self.x), @intCast(self.y), @intCast(self.z));
+            }
+        }
 
-    pub fn dot(self: Vector3f, other: Vector3f) f32 {
-        return self.x * other.x + self.y * other.y + self.z * other.z;
-    }
+        pub fn add(self: Self, other: Self) Self {
+            return Self.from(self.x + other.x, self.y + other.y, self.z + other.z );
+        }
 
-    pub fn magnitude(self: Vector3f) f32 {
-        return std.math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z);
-    }
+        pub fn substract(self: Self, other: Self) Self {
+            return Self.from(self.x - other.x, self.y - other.y, self.z - other.z );
+        }
 
-    pub fn normalized(self: Vector3f) Vector3f {
-        const mag = self.magnitude();
-        return Vector3f { .x = self.x / mag, .y = self.y / mag, .z = self.z / mag };
-    }
+        pub fn scale(self: Self, factor: T) Self {
+            return Self.from(self.x * factor, self.y * factor, self.z * factor);
+        }
 
-    pub fn normalize(self: *Vector3f) void {
-        const mag = self.magnitude();
-        self.x = self.x / mag;
-        self.y = self.y / mag;
-        self.z = self.z / mag;
-    }
+        pub fn scale_vec(self: Self, other: Self) Self {
+            return Self.from(self.x * other.x, self.y * other.y, self.z * other.z);
+        }
 
-    pub fn cross_product(self: Vector3f, other: Vector3f) Vector3f {
-        return Vector3f {
-            .x = self.y * other.z - self.z * other.y,
-            .y = self.z * other.x - self.x * other.z,
-            .z = self.x * other.y - self.y * other.x,
-        };
-    }
+        pub fn dot(self: Self, other: Self) T {
+            return self.x * other.x + self.y * other.y + self.z * other.z;
+        }
 
-    pub fn scale(self: Vector3f, factor: f32) Vector3f {
-        return Vector3f { .x = self.x * factor, .y = self.y * factor, .z = self.z * factor };
-    }
+        pub fn cross_product(self: Self, other: Self) Self {
+            return Self.from(
+                self.y * other.z - self.z * other.y,
+                self.z * other.x - self.x * other.z,
+                self.x * other.y - self.y * other.x,
+            );
+        }
 
-    pub fn perspective_division(self: Vector3f) Vector2f {
-        return Vector2f {
-            .x = self.x / self.z,
-            .y = self.y / self.z,
-        };
-    }
+        pub fn magnitude(self: Self) T {
+            return std.math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z);
+        }
+        
+        pub fn normalized(self: Self) Self {
+            if (comptime std.meta.trait.isFloat(T)) {
+                const mag = self.magnitude();
+                return Self.from(self.x / mag, self.y / mag, self.z / mag);
+            }
+            else @compileError("type " ++ @typeName(T) ++ " is not a floating point number");
+        }
 
-};
+        pub fn perspective_division(self: Self) Vec2(T) {
+            return Vec2(T).from(self.x / self.z, self.y / self.z);
+        }
+    };
+}
 
-pub const Vector4f = struct {
-    x: f32,
-    y: f32,
-    z: f32,
-    w: f32,
+pub fn Vec4(comptime T: type) type {
+    return struct {
 
-    pub fn add(self: Vector4f, other: Vector4f) Vector4f {
-        return Vector4f { .x = self.x + other.x, .y = self.y + other.y, .z = self.z + other.z, .w = self.w + other.w };
-    }
+        const Self = @This();
 
-    pub fn scale(self: Vector4f, factor: f32) Vector4f {
-        return Vector4f { .x = self.x * factor, .y = self.y * factor, .z = self.z * factor, .w = self.w * factor };
-    }
+        x: T,
+        y: T,
+        z: T,
+        w: T,
+        
+        pub inline fn from(x: T, y: T, z: T, w: T) Self {
+            return Self { .x = x, .y = y, .z = z, .w = w };
+        }
 
-    pub fn discard_w(self: Vector4f) Vector3f {
-        return Vector3f {
-            .x = self.x,
-            .y = self.y,
-            .z = self.z,
-        };
-    }
+        pub inline fn to(self: Self, comptime OtherType: type) Vec4(OtherType) {
+            const self_is_float = comptime std.meta.trait.isFloat(T);
+            const other_is_float = comptime std.meta.trait.isFloat(OtherType);
+            if (self_is_float) {
+                if (other_is_float) return Vec4(OtherType).from(@floatCast(self.x), @floatCast(self.y), @floatCast(self.z), @floatCast(self.w))
+                else return Vec4(OtherType).from(@intFromFloat(self.x), @intFromFloat(self.y), @intFromFloat(self.z), @intFromFloat(self.w));
+            }
+            else {
+                if (other_is_float) return Vec4(OtherType).from(@floatFromInt(self.x), @floatFromInt(self.y), @floatFromInt(self.z), @floatFromInt(self.w))
+                else return Vec4(OtherType).from(@intCast(self.x), @intCast(self.y), @intCast(self.z), @intCast(self.w));
+            }
+        }
 
-    pub fn perspective_division(self: Vector4f) Vector3f {
-        return Vector3f {
-            .x = self.x / self.w,
-            .y = self.y / self.w,
-            .z = self.z / self.w,
-        };
-    }
-};
+        pub fn add(self: Self, other: Self) Self {
+            return Self.from(self.x + other.x, self.y + other.y, self.z + other.z, self.w + other.w);
+        }
+
+        pub fn scale(self: Self, factor: T) Self {
+            return Self.from(self.x * factor, self.y * factor, self.z * factor, self.w * factor);
+        }
+
+        pub fn scale_vec(self: Self, other: Self) Self {
+            return Self.from(self.x * other.x, self.y * other.y, self.z * other.z, self.w * other.w);
+        }
+
+        pub fn dot(self: Self, other: Self) T {
+            return self.x * other.x + self.y * other.y + self.z * other.z + self.w * other.w;
+        }
+
+        pub fn perspective_division(self: Self) Vec3(T) {
+            return Vec3(T).from(self.x / self.w, self.y / self.w, self.z / self.w);
+        }
+    };
+}
 
 /// column major 3x3 matrix
 /// meaning its stored like in a contiguous array like this:
@@ -1010,6 +954,10 @@ pub fn BoundingBox(comptime T: type) type {
 
         pub inline fn from_tl_br(tl: anytype, br: anytype) Self {
             return from(tl.y, br.y, tl.x, br.x);
+        }
+
+        pub inline fn from_br_size(br: anytype, size: anytype) Self {
+            return from(br.y+size.y, br.y, br.x, br.x+size.x);
         }
 
         /// `point` can be anything that has fields `x: T` and `y: T`
