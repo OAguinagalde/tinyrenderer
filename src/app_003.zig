@@ -49,9 +49,8 @@ const State = struct {
     debug_text_renderer: TextRenderer(platform.OutPixelType, 1024, text_scale),
     text_renderer: TextRenderer(platform.OutPixelType, 1024, text_scale),
     renderer: tic80.Renderer(platform.OutPixelType, tic80.Shader(platform.OutPixelType)),
-    renderer_quads: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType)),
-    // TODO the blending renderer still uses the 3d pipeline, change to the 2d quad pipeline instead
-    renderer_blending: tic80.Renderer(platform.OutPixelType, tic80.ShaderWithBlendAndKeyColor(platform.OutPixelType, 0)),
+    renderer_quads: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, null)),
+    renderer_blending: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, 0)),
     renderer_shapes: ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)),
     level_background: Assets.LevelBackgroundDescriptor,
     rng_engine: std.rand.DefaultPrng,
@@ -63,8 +62,6 @@ const State = struct {
     camera: Camera,
     resources: Resources,
     resource_file_name: []const u8,
-    level_being_modified: ? struct { index: u8, side: math.BoundingBoxSide },
-    junction_being_modified: ? struct { index: u8, a: bool },
 };
 
 var state: State = undefined;
@@ -73,8 +70,8 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.debug_text_renderer = try TextRenderer(platform.OutPixelType, 1024, text_scale).init(allocator);
     state.text_renderer = try TextRenderer(platform.OutPixelType, 1024, text_scale).init(allocator);
     state.renderer = try tic80.Renderer(platform.OutPixelType, tic80.Shader(platform.OutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    state.renderer_quads = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    state.renderer_blending = try tic80.Renderer(platform.OutPixelType, tic80.ShaderWithBlendAndKeyColor(platform.OutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    state.renderer_quads = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, null)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    state.renderer_blending = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
     state.renderer_shapes = try ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)).init(allocator);
     state.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
     state.rng_engine = std.rand.DefaultPrng.init(@intCast(platform.timestamp()));
@@ -89,8 +86,6 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
         std.log.debug("err: failed to load from file: {any}", .{err});
         try state.resources.load_from_embedded();
     };
-    state.level_being_modified = null;
-    state.junction_being_modified = null;
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
@@ -113,13 +108,18 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     // and that the coordinate 0, 0 is the bottom left pixel of the tile 0, 0
     const mouse_tile = Vector2f.from(@floor(mouse_world.x/8), @floor(mouse_world.y/8));
     const mouse_tile_in_map = mouse_tile.add(Vector2f.from(@floatFromInt(state.level_background.bb.left), @floatFromInt(state.level_background.bb.bottom)));
-    const map_editor_bb = blk: {
+    const map_editor_world_coords_bb = blk: {
         var bb = state.level_background.bb;
         bb.top += 1;
         bb.right += 1;
         break :blk bb.scale(Vec2(usize).from(8,8)).to(f32);
     };
-    const mouse_is_in_map_editor = map_editor_bb.contains(mouse_world);
+    _ = map_editor_world_coords_bb;
+    const mouse_is_in_map_editor = state.level_background.bb.to(f32).contains(mouse_tile);
+    
+    const MouseState = struct {
+        var busy = false;
+    };
 
     const pan_speed = 5;
     if (ud.key_pressed('L')) try state.resources.load_from_file(state.resource_file_name);
@@ -137,12 +137,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
 
-    // const view_matrix_m44 = M44.lookat_left_handed(app.camera.pos, app.camera.pos.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
-    const projection_matrix_m44 = M44.orthographic_projection(0, w, h, 0, 0, 2);
-    const viewport_matrix_m44 = M44.viewport(0, 0, w, h, 255);
-    // const mvp_matrix_m44 = projection_matrix_m44.multiply(view_matrix_m44.multiply(M44.translation(Vector3f.from(0, 0, 1))));
-    const mvp_matrix_m44 = projection_matrix_m44.multiply(M44.translation(Vector3f.from(0, 0, 1)));
-    
     const view_matrix = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
     const projection_matrix = M33.orthographic_projection(0, w, h, 0);
     const mvp_matrix = projection_matrix.multiply(view_matrix);
@@ -158,8 +152,27 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         viewport_matrix
     );
 
-    // draw a white rectangle around the map
+    // level bounding boxes
     {
+        const LevelModifyState = struct {
+            var index: u8 = undefined;
+            var side: math.BoundingBoxSide = undefined;
+            var active = false;
+            fn unset() void {
+                std.debug.assert(active);
+                std.debug.assert(MouseState.busy);
+                MouseState.busy = false;
+                active = false;
+            }
+            fn set(_index: u8, _side: math.BoundingBoxSide) void {
+                std.debug.assert(!active);
+                std.debug.assert(!MouseState.busy);
+                MouseState.busy = true;
+                active = true;
+                index = _index;
+                side = _side;
+            }
+        };
         for (state.resources.levels.items, 0..) |*l, i| {
             const level_index: u8 = @intCast(i);
             const level_bb_f32 = l.bb.to(f32);
@@ -170,38 +183,34 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             const color: RGBA = if (level_bb.contains(mouse_world)) @bitCast(@as(u32,0xff00ffff)) else @bitCast(@as(u32,0xffffffff));
             try state.renderer_shapes.add_quad_border(level_bb, 1, color);
             
-            // This handles the ability to modify the bounding boxes of levels when pressing the key 'E' near the bounding box of a level
-            if (state.level_being_modified) |level_being_modified| {
-                if (level_being_modified.index == level_index) {
-                    if (!ud.key_pressing('E')) {
-                        state.level_being_modified = null;
-                        continue;
+            // conditions to start modifying the level bb
+            if (!MouseState.busy and !LevelModifyState.active and ud.mouse_left_down) {
+                if (@abs(level_bb.left - mouse_world.x) < 4 and mouse_world.y > level_bb.bottom and mouse_world.y < level_bb.top) LevelModifyState.set(level_index, .left)
+                else if (@abs(level_bb.right - mouse_world.x) < 4 and mouse_world.y > level_bb.bottom and mouse_world.y < level_bb.top) LevelModifyState.set(level_index, .right)
+                else if (@abs(level_bb.top - mouse_world.y) < 4 and mouse_world.x > level_bb.left and mouse_world.x < level_bb.right) LevelModifyState.set(level_index, .top)
+                else if (@abs(level_bb.bottom - mouse_world.y) < 4 and mouse_world.x > level_bb.left and mouse_world.x < level_bb.right) LevelModifyState.set(level_index, .bottom);
+            }
+            
+            if (LevelModifyState.active and LevelModifyState.index == level_index) {
+                // conditions to stop modifying the level bb 
+                if (!ud.mouse_left_down) LevelModifyState.unset()
+                else {
+                    // change the level bb
+                    if (!level_bb.contains(mouse_world)) switch (LevelModifyState.side) {
+                        .top => if (mouse_tile_in_map.y < 136 and mouse_tile_in_map.y>level_bb_f32.top) { l.bb.top = @intFromFloat(mouse_tile_in_map.y); },
+                        .bottom => if (mouse_tile_in_map.y >= 0 and mouse_tile_in_map.y<level_bb_f32.bottom) { l.bb.bottom = @intFromFloat(mouse_tile_in_map.y); },
+                        .left => if (mouse_tile_in_map.x >= 0 and mouse_tile_in_map.x<level_bb_f32.left) { l.bb.left = @intFromFloat(mouse_tile_in_map.x); },
+                        .right => if (mouse_tile_in_map.x < 240 and mouse_tile_in_map.x>level_bb_f32.right) { l.bb.right = @intFromFloat(mouse_tile_in_map.x); },
                     }
-                    else {
-                        if (!level_bb.contains(mouse_world)) switch (level_being_modified.side) {
-                            .top => if (mouse_tile_in_map.y < 136 and mouse_tile_in_map.y>level_bb_f32.top) { l.bb.top = @intFromFloat(mouse_tile_in_map.y); },
-                            .bottom => if (mouse_tile_in_map.y >= 0 and mouse_tile_in_map.y<level_bb_f32.bottom) { l.bb.bottom = @intFromFloat(mouse_tile_in_map.y); },
-                            .left => if (mouse_tile_in_map.x >= 0 and mouse_tile_in_map.x<level_bb_f32.left) { l.bb.left = @intFromFloat(mouse_tile_in_map.x); },
-                            .right => if (mouse_tile_in_map.x < 240 and mouse_tile_in_map.x>level_bb_f32.right) { l.bb.right = @intFromFloat(mouse_tile_in_map.x); },
-                        }
-                        else switch (level_being_modified.side) {
-                            .top => if (mouse_tile_in_map.y < 136 and mouse_tile_in_map.y<level_bb_f32.top) { l.bb.top = @intFromFloat(mouse_tile_in_map.y); },
-                            .bottom => if (mouse_tile_in_map.y >= 0 and mouse_tile_in_map.y>level_bb_f32.bottom) { l.bb.bottom = @intFromFloat(mouse_tile_in_map.y); },
-                            .left => if (mouse_tile_in_map.x >= 0 and mouse_tile_in_map.x>level_bb_f32.left) { l.bb.left = @intFromFloat(mouse_tile_in_map.x); },
-                            .right => if (mouse_tile_in_map.x < 240 and mouse_tile_in_map.x<level_bb_f32.right) { l.bb.right = @intFromFloat(mouse_tile_in_map.x); },
-                        }
+                    else switch (LevelModifyState.side) {
+                        .top => if (mouse_tile_in_map.y < 136 and mouse_tile_in_map.y<level_bb_f32.top) { l.bb.top = @intFromFloat(mouse_tile_in_map.y); },
+                        .bottom => if (mouse_tile_in_map.y >= 0 and mouse_tile_in_map.y>level_bb_f32.bottom) { l.bb.bottom = @intFromFloat(mouse_tile_in_map.y); },
+                        .left => if (mouse_tile_in_map.x >= 0 and mouse_tile_in_map.x>level_bb_f32.left) { l.bb.left = @intFromFloat(mouse_tile_in_map.x); },
+                        .right => if (mouse_tile_in_map.x < 240 and mouse_tile_in_map.x<level_bb_f32.right) { l.bb.right = @intFromFloat(mouse_tile_in_map.x); },
                     }
                 }
             }
-            else if (ud.key_pressing('E')) {
-                // this is the condition for modifying the bounding box of a level
-                if (@abs(level_bb.left - mouse_world.x) < 4 and mouse_world.y > level_bb.bottom and mouse_world.y < level_bb.top) state.level_being_modified = .{ .index = level_index, .side = .left };
-                if (@abs(level_bb.right - mouse_world.x) < 4 and mouse_world.y > level_bb.bottom and mouse_world.y < level_bb.top) state.level_being_modified = .{ .index = level_index, .side = .right };
-                if (@abs(level_bb.top - mouse_world.y) < 4 and mouse_world.x > level_bb.left and mouse_world.x < level_bb.right) state.level_being_modified = .{ .index = level_index, .side = .top };
-                if (@abs(level_bb.bottom - mouse_world.y) < 4 and mouse_world.x > level_bb.left and mouse_world.x < level_bb.right) state.level_being_modified = .{ .index = level_index, .side = .bottom };
-            }
         }
-
         var map_tile_bb = state.level_background.bb.to(f32);
         map_tile_bb.right += 1;
         map_tile_bb.top += 1;
@@ -212,10 +221,29 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     // draw the level junctions
     {
+        const JunctionModifyState = struct {
+            var active = false;
+            var ix: u8 = undefined;
+            var a: bool = undefined;
+            fn set(_ix: u8, _a: bool) void {
+                std.debug.assert(!active);
+                std.debug.assert(!MouseState.busy);
+                MouseState.busy = true;
+                active = true;
+                ix = _ix;
+                a = _a;
+            }
+            fn unset() void {
+                std.debug.assert(active);
+                std.debug.assert(MouseState.busy);
+                MouseState.busy = false;
+                active = false;
+            }
+        };
         for (state.resources.junctions.items, 0..) |*junction, i| {
             const index: u8 = @intCast(i);
             
-            // TODO add button to add extra junction
+            // TODO add way to remove junction
 
             var hover: i32 = 0;
             if (state.level_background.bb.to(f32).contains(mouse_tile)) {
@@ -230,27 +258,30 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 }
             }
 
-            if (state.junction_being_modified) |junction_being_modified| {
-                if (!ud.mouse_left_down) state.junction_being_modified = null
-                else if (junction_being_modified.index == index) {
-                    if (mouse_is_in_map_editor and junction_being_modified.a) {
+            if (JunctionModifyState.active) {
+                if (!ud.mouse_left_down) JunctionModifyState.unset()
+                else if (JunctionModifyState.ix == index) {
+                    if (mouse_is_in_map_editor and JunctionModifyState.a) {
                         junction.a = mouse_tile.to(u8);
                     }
-                    else if (mouse_is_in_map_editor and !junction_being_modified.a) {
+                    else if (mouse_is_in_map_editor and !JunctionModifyState.a) {
                         junction.b = mouse_tile.to(u8);
                     }
                 }
             }
             else {
-                if (hover > 0 and ud.mouse_left_down) state.junction_being_modified = .{.index = index, .a = hover == 1};
+                // condition to start modifying a junction
+                if (hover > 0 and ud.mouse_left_down and !MouseState.busy) {
+                    JunctionModifyState.set(index, hover == 1);
+                }
             }
 
             const exist_sprite_id = 143;
             try state.renderer_quads.add_sprite_from_atlas_index(exist_sprite_id, junction.a.to(f32).scale(8), .{});
             try state.renderer_quads.add_sprite_from_atlas_index(exist_sprite_id, junction.b.to(f32).scale(8), .{});
             if (hover != 0) {
-                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(junction.b.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xff0000aa)));
-                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(junction.a.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xff0000aa)));
+                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(junction.b.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xff000066)));
+                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(junction.a.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xff000066)));
             }
             
             // TODO add line renderer pipeline, which batches lines and renders them all together I guess?
@@ -262,6 +293,49 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
     }
     
+    // things related to entity spawners
+    {
+        const EntitySpawnerModifyState = struct {
+            var active = false;
+            var index: u8 = undefined;
+            fn set(_ix: u8) void {
+                std.debug.assert(!active);
+                std.debug.assert(!MouseState.busy);
+                MouseState.busy = true;
+                active = true;
+                index = _ix;
+            }
+            fn unset() void {
+                std.debug.assert(active);
+                std.debug.assert(MouseState.busy);
+                MouseState.busy = false;
+                active = false;
+            }
+        };
+        for (state.resources.entity_spawners.items, 0..) |*entity_spawner, i| {
+            const index: u8 = @intCast(i);
+            const hovering: bool = mouse_is_in_map_editor and mouse_tile.to(u8).equal(entity_spawner.pos);
+            
+            if (!MouseState.busy and !EntitySpawnerModifyState.active and hovering and ud.mouse_left_down) EntitySpawnerModifyState.set(index);
+            
+            if (EntitySpawnerModifyState.active) {
+                if (!ud.mouse_left_down) EntitySpawnerModifyState.unset()
+                else if (EntitySpawnerModifyState.index == index) {
+                    if (mouse_is_in_map_editor) entity_spawner.pos = mouse_tile.to(u8);
+                }
+            }
+
+            // use the first sprite of the default animation as the sprite of the spawner
+            const spawner_sprite_id = Assets.EntityDescriptor.from(@enumFromInt(entity_spawner.entity_type)).default_animation.sprites[0];
+            try state.renderer_quads.add_sprite_from_atlas_index(spawner_sprite_id, entity_spawner.pos.to(f32).scale(8), .{});
+            if (hovering) {
+                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(entity_spawner.pos.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xffffffff)));
+            }
+        }
+        state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+        state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+    }
+
     // list all the levels and if a level is clicked, change the value of `app.level_background`
     const level_list_top_left = Vector2f.from(1, h - h/5);
     const level_names_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
@@ -280,68 +354,43 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
     }
 
-    const sprites_top = 16*8 + 10;
-    const sprite_selection_bb = BoundingBox(f32).from(sprites_top, 10, 10, 10+16*8);
-    try state.renderer_shapes.add_quad_from_bb(sprite_selection_bb, RGBA.from(BGR, @bitCast(Assets.palette[0])));
-    state.renderer_shapes.render(
-        ud.pixel_buffer,
-        projection_matrix_screen,
-        viewport_matrix
-    );
-    // draw a white rectangle around the sprite slection box
+    // map painting stuff
     {
-        try state.renderer_shapes.add_quad_border(sprite_selection_bb, 1, @bitCast(@as(u32,0xffffffff)));
-        state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-    }
-    for (0..16) |j| {
-        for (0..16) |i| {
-            const jj: f32 = @floatFromInt(j);
-            const ii: f32 = @floatFromInt(i);
-            const pos = Vector2f.from(10 + ii*8, 10 + jj*8);
-            try state.renderer_blending.add_sprite_from_atlas_index(@intCast(i + j*16), pos, .{});
-        }
-    }
-    if (state.quick_select_sprite[0]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 0*8, 10 + 16*8), .{});
-    if (state.quick_select_sprite[1]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 1*8, 10 + 16*8), .{});
-    if (state.quick_select_sprite[2]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 2*8, 10 + 16*8), .{});
-    if (state.quick_select_sprite[3]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 3*8, 10 + 16*8), .{});
-    state.renderer_blending.render(
-        ud.pixel_buffer,
-        mvp_matrix_m44,
-        viewport_matrix_m44
-    );
-
-    if (sprite_selection_bb.contains(mouse_window)) {
-        const mouse_with_offset = mouse_window.add(Vector2f.from(-10,-10));
-        const sprite_selected = Vector2f.from(@floor(mouse_with_offset.x/8), @floor(mouse_with_offset.y/8));
-        const sprite_selected_index: u8 = @intFromFloat(sprite_selected.x + sprite_selected.y*16);
-        if (ud.mouse_left_clicked) state.selected_sprite = sprite_selected_index;
-        if (ud.key_pressed('1')) state.quick_select_sprite[0] = sprite_selected_index;
-        if (ud.key_pressed('2')) state.quick_select_sprite[1] = sprite_selected_index;
-        if (ud.key_pressed('3')) state.quick_select_sprite[2] = sprite_selected_index;
-        if (ud.key_pressed('4')) state.quick_select_sprite[3] = sprite_selected_index;
-        // highlight the hover-ed over sprite
-        try state.renderer_shapes.add_quad(sprite_selected.scale(8).add(Vector2f.from(10,10)), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
-        state.renderer_shapes.render(
-            ud.pixel_buffer,
-            projection_matrix_screen,
-            viewport_matrix
-        );
-    }
-    else {
-
-        if (ud.key_pressed('1')) if (state.quick_select_sprite[0]) |spr| { state.selected_sprite = spr; };
-        if (ud.key_pressed('2')) if (state.quick_select_sprite[1]) |spr| { state.selected_sprite = spr; };
-        if (ud.key_pressed('3')) if (state.quick_select_sprite[2]) |spr| { state.selected_sprite = spr; };
-        if (ud.key_pressed('4')) if (state.quick_select_sprite[3]) |spr| { state.selected_sprite = spr; };
-
-        // figure out which map tile the mouse is on
+        const MapPaintState = struct {
+            var active = false;
+            fn set() void {
+                std.debug.assert(!active);
+                std.debug.assert(!MouseState.busy);
+                MouseState.busy = true;
+                active = true;
+            }
+            fn unset() void {
+                std.debug.assert(active);
+                std.debug.assert(MouseState.busy);
+                MouseState.busy = false;
+                active = false;
+            }
+        };
+        // the bounding box of the full map, used to know whether the mouse is in it or not
         const map_tiles_bb = blk: {
             var bb = state.level_background.bb.to(f32);
             break :blk bb.offset(Vec2(f32).from(-bb.left, -bb.bottom));
         };
-        if (map_tiles_bb.contains(mouse_tile)) {
-            if (ud.mouse_left_down) state.resources.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = state.selected_sprite;
+        
+        // conditions to start painting the map
+        if (!MouseState.busy and !MapPaintState.active and map_tiles_bb.contains(mouse_tile) and ud.mouse_left_down) MapPaintState.set();
+        
+        if (MapPaintState.active) {
+            // conditions to stop painting the map
+            if (!ud.mouse_left_down or !map_tiles_bb.contains(mouse_tile)) MapPaintState.unset()
+            else {
+                // paint the map
+                state.resources.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = state.selected_sprite;
+            }
+        }
+
+        // highlight the map cell the mouse is on        
+        if (!MouseState.busy and map_tiles_bb.contains(mouse_tile)) {
             try state.renderer_shapes.add_quad(mouse_tile.scale(8), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
             state.renderer_shapes.render(
                 ud.pixel_buffer,
@@ -351,17 +400,75 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
     }
 
-    // highlight the currently selected sprite
+    // sprite selection windows drawing and logic
     {
-        const sprite_selected = Vector2f.from(@floatFromInt(state.selected_sprite%16), @floatFromInt(@divFloor(state.selected_sprite,16))).scale(8).add(Vector2f.from(10, 10));
-        try state.renderer_shapes.add_quad(sprite_selected, Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0xBBBBBBBB))));
-        state.renderer_shapes.render(
+        const sprites_top = 16*8 + 10;
+        const sprite_selection_bb = BoundingBox(f32).from(sprites_top, 10, 10, 10+16*8);
+        // draw a black box to paint the sprites over
+        try state.renderer_shapes.add_quad_from_bb(sprite_selection_bb, RGBA.from(BGR, @bitCast(Assets.palette[0])));
+        // draw a white rectangle around the black box
+        try state.renderer_shapes.add_quad_border(sprite_selection_bb, 1, @bitCast(@as(u32,0xffffffff)));
+        // draw the sprites
+        for (0..16) |j| {
+            for (0..16) |i| {
+                const jj: f32 = @floatFromInt(j);
+                const ii: f32 = @floatFromInt(i);
+                const pos = Vector2f.from(10 + ii*8, 10 + jj*8);
+                try state.renderer_blending.add_sprite_from_atlas_index(@intCast(i + j*16), pos, .{});
+            }
+        }
+        // draw the currently selected quick selected sprites
+        if (state.quick_select_sprite[0]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 0*8, 10 + 16*8), .{});
+        if (state.quick_select_sprite[1]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 1*8, 10 + 16*8), .{});
+        if (state.quick_select_sprite[2]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 2*8, 10 + 16*8), .{});
+        if (state.quick_select_sprite[3]) |spr| try state.renderer_blending.add_sprite_from_atlas_index(spr, Vector2f.from(10 + 3*8, 10 + 16*8), .{});
+
+        // actually draw everything
+        state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+        state.renderer_blending.render(
             ud.pixel_buffer,
             projection_matrix_screen,
             viewport_matrix
         );
-    }
 
+        // logic of the sprite slection itself
+        if (sprite_selection_bb.contains(mouse_window)) {
+            const mouse_within_sprite_selection = mouse_window.add(Vector2f.from(-sprite_selection_bb.left,-sprite_selection_bb.bottom));
+            const sprite_selected_tile = Vector2f.from(@floor(mouse_within_sprite_selection.x/8), @floor(mouse_within_sprite_selection.y/8));
+            const sprite_selected_index: u8 = @intFromFloat(std.math.clamp(sprite_selected_tile.x + sprite_selected_tile.y*16, 0, 255));
+            if (ud.mouse_left_clicked) state.selected_sprite = sprite_selected_index;
+            if (ud.key_pressed('1')) state.quick_select_sprite[0] = sprite_selected_index;
+            if (ud.key_pressed('2')) state.quick_select_sprite[1] = sprite_selected_index;
+            if (ud.key_pressed('3')) state.quick_select_sprite[2] = sprite_selected_index;
+            if (ud.key_pressed('4')) state.quick_select_sprite[3] = sprite_selected_index;
+            // highlight the hover-ed over sprite
+            try state.renderer_shapes.add_quad(sprite_selected_tile.scale(8).add(Vector2f.from(10,10)), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
+            state.renderer_shapes.render(
+                ud.pixel_buffer,
+                projection_matrix_screen,
+                viewport_matrix
+            );
+        }
+        else {
+            // if mouse not on the sprite selection box, pressing 1-4 changes the currently selected sprite
+            if (ud.key_pressed('1')) if (state.quick_select_sprite[0]) |spr| { state.selected_sprite = spr; };
+            if (ud.key_pressed('2')) if (state.quick_select_sprite[1]) |spr| { state.selected_sprite = spr; };
+            if (ud.key_pressed('3')) if (state.quick_select_sprite[2]) |spr| { state.selected_sprite = spr; };
+            if (ud.key_pressed('4')) if (state.quick_select_sprite[3]) |spr| { state.selected_sprite = spr; };
+        }
+
+        // highlight the currently selected sprite
+        {
+            const sprite_selected = Vector2f.from(@floatFromInt(state.selected_sprite%16), @floatFromInt(@divFloor(state.selected_sprite,16))).scale(8).add(Vector2f.from(10, 10));
+            try state.renderer_shapes.add_quad(sprite_selected, Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0xBBBBBBBB))));
+            state.renderer_shapes.render(
+                ud.pixel_buffer,
+                projection_matrix_screen,
+                viewport_matrix
+            );
+        }
+    }
+    
     if (state.debug) {
         const color = RGBA.from(BGR, @bitCast(Assets.palette[3]));
         const height_text = state.debug_text_renderer.height()+1;
@@ -375,6 +482,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*8 )), "zoom {}", .{state.zoom}, color);
         try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*9 )), "selected_sprite {}", .{state.selected_sprite}, color);
         try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*10)), "l click {}", .{ud.mouse_left_clicked}, color);
+        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*11)), "mouse busy {}", .{MouseState.busy}, color);
     }
     state.debug_text_renderer.render_all(
         ud.pixel_buffer,
@@ -384,95 +492,12 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     return true;
 }
 
-const AppMode = enum {
-    Edit,
-    Play
-};
-
-fn key_pressing(ud: *platform.UpdateData, key: usize) bool {
-    return ud.keys[key];
-}
-fn key_pressed(ud: *platform.UpdateData, key: usize) bool {
-    return ud.keys[key] and !ud.keys_old[key];
-}
-
-fn tile_to_grounded_position(tile: Vector2i) Vector2f {
-    return Vector2f.from(@floatFromInt(tile.x*8+4), (@floatFromInt(correct_y(tile.y)*8)));
-}
-
-const Physics = blk: {
-    const granularity = 1;
-    const config = physics.PhysicsConfig {
-        // barely no air friction, but enough for it to be there
-        .friction_air = 0.85,
-        // strong friction on the floor to make movement less floaty
-        .friction_floor = 0.85,
-        .granularity = granularity,
-        // strong gravity to prevent the player from jumping too much
-        .gravity = 0.004 * granularity,
-        .pad_bottom = 0.01,
-        .pad_top = 0.6,
-        .pad_left = 0.2,
-        .pad_right = 0.8,
-        .tile_size = 8
-    };
-    break :blk physics.PhysicalWorld(config, collision_checker);
-};
-
-inline fn collision_checker(tile: Vector2i) bool {
-    if (tile.x < 0 or tile.y < 0) return true;
-    const level_bb = BoundingBox(i32).from(correct_y(state.level_background.tl.y), correct_y(state.level_background.br.y)-1, state.level_background.tl.x, state.level_background.br.x-1);
-    if (!level_bb.contains(tile)) return true;
-    const tile_index = Assets.map [@as(usize, @intCast(correct_y(tile.y)))] [@as(usize, @intCast(tile.x))];
-    const col = tile_index%16;
-    const row = @divFloor(tile_index, 16);
-    return Assets.map_flags[row + col*16] == 0x01;
-}
-
 const Camera = struct {
     pos: Vector3f,
-    bound_right: f32,
-    bound_left: f32,
-    bound_top: f32,
-    bound_bottom: f32,
-    
     pub fn init(pos: Vector3f) Camera {
         return Camera {
             .pos = pos,
-            .bound_right = undefined,
-            .bound_left = undefined,
-            .bound_top = undefined,
-            .bound_bottom = undefined,
         };
-    }
-
-    pub fn move_to(self: *Camera, pos: Vector2f, real_width: f32, real_height: f32) void {
-        const bound_width = self.bound_right - self.bound_left;
-        const bound_height = self.bound_top - self.bound_bottom;
-
-        // center the camera on the level bound
-        self.pos.x = self.bound_left - (real_width/2) + (bound_width/2);
-        if (bound_width > real_width) {
-            // if the level is bigger than the screen, pan it without showing the outside of the level
-            const half_diff = (bound_width - real_width)/2;
-            const c = self.pos.x;
-            self.pos.x = std.math.clamp(pos.x-(real_width/2), c-half_diff, c+half_diff);
-        }
-        
-        self.pos.y = self.bound_bottom - (real_height/2) + (bound_height/2);
-        if (bound_height > real_height) {
-            const half_diff = (bound_height - real_height)/2;
-            const c = self.pos.y;
-            self.pos.y = std.math.clamp(pos.y-(real_height/2), c-half_diff, c+half_diff);
-        }
-
-    }
-
-    pub fn set_bounds(self: *Camera, tl: Vector2i, br: Vector2i) void {
-        self.bound_left = @floatFromInt(tl.x*8); // the left border of the cell 
-        self.bound_right = @floatFromInt((br.x)*8); // the right border of the cell 
-        self.bound_top = @floatFromInt(correct_y(tl.y-1)*8); // the top border of the cell
-        self.bound_bottom = @floatFromInt(correct_y(br.y-1)*8); // the bottom border of the cell
     }
 };
 
@@ -728,6 +753,8 @@ pub const Resources = struct {
     map: [136][240]u8,
     levels: std.ArrayList(LevelDescriptor),
     junctions: std.ArrayList(LevelJunctionDescriptor),
+    entity_spawners: std.ArrayList(EntitySpawner),
+    environment_particle_emitters: std.ArrayList(EnvironmentParticleEmitter),
 
     pub fn init(allocator: std.mem.Allocator) Resources {
         return .{
@@ -736,6 +763,8 @@ pub const Resources = struct {
             .map = undefined,
             .levels = std.ArrayList(LevelDescriptor).init(allocator),
             .junctions = std.ArrayList(LevelJunctionDescriptor).init(allocator),
+            .entity_spawners = std.ArrayList(EntitySpawner).init(allocator),
+            .environment_particle_emitters = std.ArrayList(EnvironmentParticleEmitter).init(allocator),
         };
     }
 
@@ -743,6 +772,8 @@ pub const Resources = struct {
         self.strings.deinit();
         self.levels.deinit();
         self.junctions.deinit();
+        self.entity_spawners.deinit();
+        self.environment_particle_emitters.deinit();
     }
 
     pub fn save_to_file(self: *const Resources, allocator: std.mem.Allocator, file_name: []const u8) !void {
@@ -766,6 +797,7 @@ pub const Resources = struct {
             _ = try serialized_data.writer().writeByte(level.bb.left);
             _ = try serialized_data.writer().writeByte(level.bb.right);
         }
+        // junctions
         _ = try serialized_data.writer().writeByte(@intCast(self.junctions.items.len));
         for (self.junctions.items) |junction| {
             _ = try serialized_data.writer().writeByte(junction.a.x);
@@ -773,6 +805,21 @@ pub const Resources = struct {
             _ = try serialized_data.writer().writeByte(junction.b.x);
             _ = try serialized_data.writer().writeByte(junction.b.y);
         }
+        // enemy entity spawners
+        _ = try serialized_data.writer().writeByte(@intCast(self.entity_spawners.items.len));
+        for (self.entity_spawners.items) |spawner| {
+            _ = try serialized_data.writer().writeByte(spawner.pos.x);
+            _ = try serialized_data.writer().writeByte(spawner.pos.y);
+            _ = try serialized_data.writer().writeByte(spawner.entity_type);
+        }
+        // environment particle emitters
+        _ = try serialized_data.writer().writeByte(@intCast(self.environment_particle_emitters.items.len));
+        for (self.environment_particle_emitters.items) |emitter| {
+            _ = try serialized_data.writer().writeByte(emitter.pos.x);
+            _ = try serialized_data.writer().writeByte(emitter.pos.y);
+            _ = try serialized_data.writer().writeByte(emitter.particle_emitter_type);
+        }
+
         const file = try std.fs.cwd().createFile(file_name, .{});
         defer file.close();
         try file.writeAll(serialized_data.items);
@@ -813,6 +860,20 @@ pub const Resources = struct {
             const by = try file.reader().readByte();
             try new_resources.junctions.append(.{.a = Vec2(u8).from(ax, ay), .b = Vec2(u8).from(bx, by)});
         }
+        const entity_spawner_count: usize = @intCast(try file.reader().readByte());
+        for (0..entity_spawner_count) |_| {
+            const px = try file.reader().readByte();
+            const py = try file.reader().readByte();
+            const entity_type = try file.reader().readByte();
+            try new_resources.entity_spawners.append(.{.pos = Vec2(u8).from(px, py), .entity_type = entity_type});
+        }
+        const environment_particle_emitters_count: usize = @intCast(try file.reader().readByte());
+        for (0..environment_particle_emitters_count) |_| {
+            const px = try file.reader().readByte();
+            const py = try file.reader().readByte();
+            const emitter_type = try file.reader().readByte();
+            try new_resources.environment_particle_emitters.append(.{.pos = Vec2(u8).from(px, py), .particle_emitter_type = emitter_type});
+        }
         std.log.debug("resources from file {s} loaded!", .{file_name});
         self.deinit();
         self.* = new_resources;
@@ -831,6 +892,30 @@ pub const Resources = struct {
             });
             name_starting_index += field.name.len;
         }
+
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(131, correct_y(131)), .entity_type = @intFromEnum(Assets.EntityType.slime_king)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(71, correct_y(116)), .entity_type = @intFromEnum(Assets.EntityType.knight_1)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(77, correct_y(116)), .entity_type = @intFromEnum(Assets.EntityType.knight_2)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(68, correct_y(132)), .entity_type = @intFromEnum(Assets.EntityType.slime)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(72, correct_y(132)), .entity_type = @intFromEnum(Assets.EntityType.slime)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(81, correct_y(129)), .entity_type = @intFromEnum(Assets.EntityType.slime)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(36, correct_y(132)), .entity_type = @intFromEnum(Assets.EntityType.slime)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(48, correct_y(132)), .entity_type = @intFromEnum(Assets.EntityType.slime)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(7, correct_y(25)), .entity_type = @intFromEnum(Assets.EntityType.knight_1)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(13, correct_y(23)), .entity_type = @intFromEnum(Assets.EntityType.knight_2)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(15, correct_y(20)), .entity_type = @intFromEnum(Assets.EntityType.knight_1)});
+        try self.entity_spawners.append(.{.pos=Vec2(u8).from(21, correct_y(25)), .entity_type = @intFromEnum(Assets.EntityType.knight_2)});
+        
+        try self.environment_particle_emitters.append(.{.pos = Vec2(f32).from(275.0/8.0, 36.0/8.0).to(u8), .particle_emitter_type = @intFromEnum(Assets.ParticleEmitterType.fire)});
+        try self.environment_particle_emitters.append(.{.pos = Vec2(f32).from(539.0/8.0, 36.0/8.0).to(u8), .particle_emitter_type = @intFromEnum(Assets.ParticleEmitterType.fire)});
+        try self.environment_particle_emitters.append(.{.pos = Vec2(f32).from(643.0/8.0, 60.0/8.0).to(u8), .particle_emitter_type = @intFromEnum(Assets.ParticleEmitterType.fire)});
+        try self.environment_particle_emitters.append(.{.pos = Vec2(f32).from(515.0/8.0, 164.0/8.0).to(u8), .particle_emitter_type = @intFromEnum(Assets.ParticleEmitterType.fire)});
+        try self.environment_particle_emitters.append(.{.pos = Vec2(f32).from(548.0/8.0, 164.0/8.0).to(u8), .particle_emitter_type = @intFromEnum(Assets.ParticleEmitterType.fire)});
+        try self.environment_particle_emitters.append(.{.pos = Vec2(f32).from(580.0/8.0, 164.0/8.0).to(u8), .particle_emitter_type = @intFromEnum(Assets.ParticleEmitterType.fire)});
+        try self.environment_particle_emitters.append(.{.pos = Vec2(f32).from(619.0/8.0, 164.0/8.0).to(u8), .particle_emitter_type = @intFromEnum(Assets.ParticleEmitterType.fire)});
+        try self.environment_particle_emitters.append(.{.pos = Vec2(f32).from(1036.0/8.0, 44.0/8.0).to(u8), .particle_emitter_type = @intFromEnum(Assets.ParticleEmitterType.fire)});
+        try self.environment_particle_emitters.append(.{.pos = Vec2(f32).from(1003.0/8.0, 44.0/8.0).to(u8), .particle_emitter_type = @intFromEnum(Assets.ParticleEmitterType.fire)});
+
         try self.junctions.append(.{.a = Vec2(u8).from(19,2), .b = Vec2(u8).from(30,3) });
         std.log.debug("resources embedded loaded!", .{});
     }
@@ -856,10 +941,24 @@ pub const Resources = struct {
         b: Vec2(u8),
     };
 
+    pub const EntitySpawner = struct {
+        pos: Vec2(u8),
+        entity_type: u8
+    };
+
+    pub const EnvironmentParticleEmitter = struct {
+        pos: Vec2(u8),
+        particle_emitter_type: u8
+    };
+
 };
 
 pub const Assets = struct {
     
+    pub const ParticleEmitterType = enum(u8) {
+        fire,
+    };
+
     pub const Levels = enum {
         level_first,
         level_slime,
@@ -1135,7 +1234,7 @@ pub const Assets = struct {
     pub const entity_spawn_enemy_knight_4 = EntitySpawnDescriptor.from(Vector2i.from(15, 20), .knight_1);
     pub const entity_spawn_enemy_knight_5 = EntitySpawnDescriptor.from(Vector2i.from(21, 25), .knight_2);
 
-    const EntityType = enum {
+    const EntityType = enum(u8) {
         slime,
         knight_1,
         knight_2,
