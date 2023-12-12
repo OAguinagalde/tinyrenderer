@@ -338,6 +338,49 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
     }
 
+    // things related to particle emitters spawners
+    {
+        const ParticleEmitterModifyState = struct {
+            var active = false;
+            var index: u8 = undefined;
+            fn set(_ix: u8) void {
+                std.debug.assert(!active);
+                std.debug.assert(!MouseState.busy);
+                MouseState.busy = true;
+                active = true;
+                index = _ix;
+            }
+            fn unset() void {
+                std.debug.assert(active);
+                std.debug.assert(MouseState.busy);
+                MouseState.busy = false;
+                active = false;
+            }
+        };
+        for (state.resources.environment_particle_emitters.items, 0..) |*particle_emitter, i| {
+            const index: u8 = @intCast(i);
+            const hovering: bool = mouse_is_in_map_editor and mouse_tile.to(u8).equal(particle_emitter.pos);
+            
+            if (!MouseState.busy and !ParticleEmitterModifyState.active and hovering and ud.mouse_left_down) ParticleEmitterModifyState.set(index);
+            
+            if (ParticleEmitterModifyState.active) {
+                if (!ud.mouse_left_down) ParticleEmitterModifyState.unset()
+                else if (ParticleEmitterModifyState.index == index) {
+                    if (mouse_is_in_map_editor) particle_emitter.pos = mouse_tile.to(u8);
+                }
+            }
+
+            // use the first sprite of the default animation as the sprite of the spawner
+            const particle_emitter_sprite_id = 1;
+            try state.renderer_quads.add_sprite_from_atlas_index(particle_emitter_sprite_id, particle_emitter.pos.to(f32).scale(8), .{});
+            if (hovering) {
+                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(particle_emitter.pos.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xffffffff)));
+            }
+        }
+        state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+        state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+    }
+
     // map painting stuff
     {
         const MapPaintState = struct {
@@ -522,6 +565,120 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     }
     
+    // list all the particle emitter options and place on map if selected
+    {
+        const ParticleEmitterMenu = struct {
+            const text_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
+            const text_highlight_color = RGBA.from(BGR, @bitCast(Assets.palette[2]));
+            const options: []const []const u8 = blk: {
+                var opts: []const []const u8 = &[_][]const u8 {};
+                opts = opts ++ &[_][]const u8{};
+                for (@typeInfo(Assets.ParticleEmitterType).Enum.fields) |field| {
+                    opts = opts ++ &[_][]const u8{field.name};
+                }
+                opts = opts ++ &[_][]const u8{"delete"};
+                break :blk opts;
+            };
+            const menu_height = (1+options.len) * (state.text_renderer.height()+1);
+            const menu_width = state.text_renderer.width()*24;
+            const initial_position = Vec2(f32).from(10, 140);
+            var menu_bb: BoundingBox(f32) = BoundingBox(f32).from(initial_position.y + menu_height, initial_position.y, initial_position.x, initial_position.x + menu_width);
+
+            var dragging = false;
+            var previous_position: Vec2(f32) = undefined;
+            fn drag(pos: Vec2(f32)) Vec2(f32) {
+                if (dragging) {
+                    const movement = pos.substract(previous_position);
+                    previous_position = pos;
+                    menu_bb = menu_bb.offset(movement);
+                    return movement;
+                }
+                else {
+                    dragging = true;
+                    MouseState.busy = true;
+                    previous_position = pos;
+                    return Vec2(f32).from(0,0);
+                }
+            }
+            fn stop_drag() void {
+                dragging = false;
+                MouseState.busy = false;
+            }
+
+            var placing_entities = false;
+            var entity_selected: u8 = undefined;
+            fn start_placing_entities(index: u8) void {
+                entity_selected = index;
+                placing_entities = true;
+                MouseState.busy = true;
+            }
+            fn stop_placing_entities() void {
+                placing_entities = false;
+                MouseState.busy = false;
+            }
+        };
+
+        // dragg menu logic
+        var menu_title_bb = BoundingBox(f32).from(ParticleEmitterMenu.menu_bb.top, ParticleEmitterMenu.menu_bb.top - state.text_renderer.height()-1, ParticleEmitterMenu.menu_bb.left, ParticleEmitterMenu.menu_bb.right);
+        const menu_title_hovered = menu_title_bb.contains(mouse_window);
+        if (menu_title_hovered and !MouseState.busy and ud.mouse_left_down) menu_title_bb = menu_title_bb.offset(ParticleEmitterMenu.drag(mouse_window));
+        if (ParticleEmitterMenu.dragging) {
+            if (!ud.mouse_left_down) ParticleEmitterMenu.stop_drag()
+            else menu_title_bb = menu_title_bb.offset(ParticleEmitterMenu.drag(mouse_window));
+        }
+        
+        // draw menu logic
+        try state.renderer_shapes.add_quad_from_bb(ParticleEmitterMenu.menu_bb, RGBA.make(0, 0, 0, 255));
+        for (ParticleEmitterMenu.options,  0..) |option, i| {
+            const ii: f32 = @floatFromInt(i);
+            const iii: u8 = @intCast(i);
+            const option_bottom = ii*(state.text_renderer.height()+1);
+            try state.text_renderer.print(Vec2(f32).from(ParticleEmitterMenu.menu_bb.left, ParticleEmitterMenu.menu_bb.bottom + option_bottom), "{s}", .{option}, ParticleEmitterMenu.text_color);
+            const ith_option_bb = BoundingBox(f32).from(ParticleEmitterMenu.menu_bb.bottom + option_bottom+state.text_renderer.height(), ParticleEmitterMenu.menu_bb.bottom + option_bottom, ParticleEmitterMenu.menu_bb.left, ParticleEmitterMenu.menu_bb.right);
+            const ith_option_hovered = ith_option_bb.contains(mouse_window);
+            
+            // selection of entity spawners
+            if (ith_option_hovered and ud.mouse_left_clicked) {
+                if (!MouseState.busy) ParticleEmitterMenu.start_placing_entities(iii)
+                else if (ParticleEmitterMenu.placing_entities) {
+                    if (ParticleEmitterMenu.entity_selected == iii) ParticleEmitterMenu.stop_placing_entities()
+                    else ParticleEmitterMenu.start_placing_entities(iii);
+                }
+            }
+
+            if (ParticleEmitterMenu.placing_entities and ParticleEmitterMenu.entity_selected == iii) try state.renderer_shapes.add_quad_from_bb(ith_option_bb, RGBA.make(200, 200, 200, 255))
+            else if (ith_option_hovered) try state.renderer_shapes.add_quad_from_bb(ith_option_bb, RGBA.make(130, 130, 130, 255));
+        }
+        if (menu_title_hovered) {
+            try state.renderer_shapes.add_quad_from_bb(menu_title_bb, RGBA.make(130, 130, 130, 255));
+        }
+        try state.text_renderer.print(Vec2(f32).from(ParticleEmitterMenu.menu_bb.left, ParticleEmitterMenu.menu_bb.top - state.text_renderer.height()-1), "particle emitters", .{}, ParticleEmitterMenu.text_highlight_color);
+        state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+        state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+
+        // place entities on the map
+        if (ParticleEmitterMenu.placing_entities and state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
+            // NOTE the first entity in the list is hardcoded to be "delete" which is the only way of deleting entity spawners currently
+            if (ParticleEmitterMenu.entity_selected == ParticleEmitterMenu.options.len-1) {
+                const pos_to_delete = mouse_tile.to(u8);
+                for (state.resources.environment_particle_emitters.items, 0..) |pe, i| {
+                    if (pe.pos.equal(pos_to_delete)) {
+                        const removed = state.resources.environment_particle_emitters.orderedRemove(i);
+                        std.log.debug("removed particle emitter {any}", .{removed});
+                        break;
+                    }
+                }
+            }
+            else {
+                try state.resources.environment_particle_emitters.append(.{
+                    .pos = mouse_tile.to(u8),
+                    .particle_emitter_type = ParticleEmitterMenu.entity_selected
+                });
+            }
+        }
+
+    }
+
     // sprite selection windows drawing and logic
     {
         const sprites_top = 16*8 + 10;
