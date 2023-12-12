@@ -145,12 +145,14 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const projection_matrix_screen = M33.orthographic_projection(0, w, h, 0);
     
     // render the map
-    try state.renderer_quads.add_map(state.resources.map, state.level_background.bb, Vector2f.from(0,0));
-    state.renderer_quads.render(
-        ud.pixel_buffer,
-        mvp_matrix,
-        viewport_matrix
-    );
+    {
+        try state.renderer_quads.add_map(state.resources.map, state.level_background.bb, Vector2f.from(0,0));
+        state.renderer_quads.render(
+            ud.pixel_buffer,
+            mvp_matrix,
+            viewport_matrix
+        );
+    }
 
     // level bounding boxes
     {
@@ -336,24 +338,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
     }
 
-    // list all the levels and if a level is clicked, change the value of `app.level_background`
-    const level_list_top_left = Vector2f.from(1, h - h/5);
-    const level_names_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
-    const level_names_highlight_color = RGBA.from(BGR, @bitCast(Assets.palette[2]));
-    for (state.resources.levels.items, 0..) |l, i| {
-        const height_text = state.debug_text_renderer.height()+1;
-        const top = level_list_top_left.y - height_text * @as(f32,@floatFromInt(i));
-        const bottom = top - height_text;
-        const left = level_list_top_left.x;
-        const right = level_list_top_left.x + 4*state.debug_text_renderer.width();
-        const selection_bb = BoundingBox(f32).from(top, bottom, left, right);
-        const level_name = state.resources.get_string(l.name);
-        try state.debug_text_renderer.print(Vector2f.from(left, bottom), "[{}]: {s} bb {} {} {} {}", .{i,level_name, l.bb.top, l.bb.bottom, l.bb.left, l.bb.right}, level_names_color);
-        if (selection_bb.contains(mouse_window)) {
-            try state.renderer_shapes.add_quad_from_bb(selection_bb, level_names_highlight_color);
-        }
-    }
-
     // map painting stuff
     {
         const MapPaintState = struct {
@@ -400,6 +384,144 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
     }
 
+    // list all the levels and if a level is clicked, change the value of `app.level_background`
+    {
+        const level_list_top_left = Vector2f.from(1, h - h/5);
+        const level_names_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
+        const level_names_highlight_color = RGBA.from(BGR, @bitCast(Assets.palette[2]));
+        for (state.resources.levels.items, 0..) |l, i| {
+            const height_text = state.debug_text_renderer.height()+1;
+            const top = level_list_top_left.y - height_text * @as(f32,@floatFromInt(i));
+            const bottom = top - height_text;
+            const left = level_list_top_left.x;
+            const right = level_list_top_left.x + 4*state.debug_text_renderer.width();
+            const selection_bb = BoundingBox(f32).from(top, bottom, left, right);
+            const level_name = state.resources.get_string(l.name);
+            try state.debug_text_renderer.print(Vector2f.from(left, bottom), "[{}]: {s} bb {} {} {} {}", .{i,level_name, l.bb.top, l.bb.bottom, l.bb.left, l.bb.right}, level_names_color);
+            if (selection_bb.contains(mouse_window)) {
+                try state.renderer_shapes.add_quad_from_bb(selection_bb, level_names_highlight_color);
+            }
+        }
+    }
+
+    // list all the entity spawner options and place on map if selected
+    {
+        const EntitySpawnerMenu = struct {
+            const text_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
+            const text_highlight_color = RGBA.from(BGR, @bitCast(Assets.palette[2]));
+            const options: []const []const u8 = blk: {
+                var opts: []const []const u8 = &[_][]const u8 {};
+                opts = opts ++ &[_][]const u8{};
+                for (@typeInfo(Assets.EntityType).Enum.fields) |field| {
+                    opts = opts ++ &[_][]const u8{field.name};
+                }
+                opts = opts ++ &[_][]const u8{"delete"};
+                break :blk opts;
+            };
+            const menu_height = (1+options.len) * (state.text_renderer.height()+1);
+            const menu_width = state.text_renderer.width()*24;
+            const initial_position = Vec2(f32).from(10, 200);
+            var menu_bb: BoundingBox(f32) = BoundingBox(f32).from(initial_position.y + menu_height, initial_position.y, initial_position.x, initial_position.x + menu_width);
+
+            var dragging = false;
+            var previous_position: Vec2(f32) = undefined;
+            fn drag(pos: Vec2(f32)) Vec2(f32) {
+                if (dragging) {
+                    const movement = pos.substract(previous_position);
+                    previous_position = pos;
+                    menu_bb = menu_bb.offset(movement);
+                    return movement;
+                }
+                else {
+                    dragging = true;
+                    MouseState.busy = true;
+                    previous_position = pos;
+                    return Vec2(f32).from(0,0);
+                }
+            }
+            fn stop_drag() void {
+                dragging = false;
+                MouseState.busy = false;
+            }
+
+            var placing_entities = false;
+            var entity_selected: u8 = undefined;
+            fn start_placing_entities(index: u8) void {
+                entity_selected = index;
+                placing_entities = true;
+                MouseState.busy = true;
+            }
+            fn stop_placing_entities() void {
+                placing_entities = false;
+                MouseState.busy = false;
+            }
+
+            fn menu_is_hovered(_mouse_window: Vec2(f32)) bool {
+                return menu_bb.contains(_mouse_window);
+            }
+        };
+
+        // dragg menu logic
+        var menu_title_bb = BoundingBox(f32).from(EntitySpawnerMenu.menu_bb.top, EntitySpawnerMenu.menu_bb.top - state.text_renderer.height()-1, EntitySpawnerMenu.menu_bb.left, EntitySpawnerMenu.menu_bb.right);
+        const menu_title_hovered = menu_title_bb.contains(mouse_window);
+        if (menu_title_hovered and !MouseState.busy and ud.mouse_left_down) menu_title_bb = menu_title_bb.offset(EntitySpawnerMenu.drag(mouse_window));
+        if (EntitySpawnerMenu.dragging) {
+            if (!ud.mouse_left_down) EntitySpawnerMenu.stop_drag()
+            else menu_title_bb = menu_title_bb.offset(EntitySpawnerMenu.drag(mouse_window));
+        }
+        
+        // draw menu logic
+        try state.renderer_shapes.add_quad_from_bb(EntitySpawnerMenu.menu_bb, RGBA.make(0, 0, 0, 255));
+        for (EntitySpawnerMenu.options,  0..) |option, i| {
+            const ii: f32 = @floatFromInt(i);
+            const iii: u8 = @intCast(i);
+            const option_bottom = ii*(state.text_renderer.height()+1);
+            try state.text_renderer.print(Vec2(f32).from(EntitySpawnerMenu.menu_bb.left, EntitySpawnerMenu.menu_bb.bottom + option_bottom), "{s}", .{option}, EntitySpawnerMenu.text_color);
+            const ith_option_bb = BoundingBox(f32).from(EntitySpawnerMenu.menu_bb.bottom + option_bottom+state.text_renderer.height(), EntitySpawnerMenu.menu_bb.bottom + option_bottom, EntitySpawnerMenu.menu_bb.left, EntitySpawnerMenu.menu_bb.right);
+            const ith_option_hovered = ith_option_bb.contains(mouse_window);
+            
+            // selection of entity spawners
+            if (ith_option_hovered and ud.mouse_left_clicked) {
+                if (!MouseState.busy) EntitySpawnerMenu.start_placing_entities(iii)
+                else if (EntitySpawnerMenu.placing_entities) {
+                    if (EntitySpawnerMenu.entity_selected == iii) EntitySpawnerMenu.stop_placing_entities()
+                    else EntitySpawnerMenu.start_placing_entities(iii);
+                }
+            }
+
+            if (EntitySpawnerMenu.placing_entities and EntitySpawnerMenu.entity_selected == iii) try state.renderer_shapes.add_quad_from_bb(ith_option_bb, RGBA.make(200, 200, 200, 255))
+            else if (ith_option_hovered) try state.renderer_shapes.add_quad_from_bb(ith_option_bb, RGBA.make(130, 130, 130, 255));
+        }
+        if (menu_title_hovered) {
+            try state.renderer_shapes.add_quad_from_bb(menu_title_bb, RGBA.make(130, 130, 130, 255));
+        }
+        try state.text_renderer.print(Vec2(f32).from(EntitySpawnerMenu.menu_bb.left, EntitySpawnerMenu.menu_bb.top - state.text_renderer.height()-1), "Entity Spawners", .{}, EntitySpawnerMenu.text_highlight_color);
+        state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+        state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+
+        // place entities on the map
+        if (EntitySpawnerMenu.placing_entities and state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
+            // NOTE the first entity in the list is hardcoded to be "delete" which is the only way of deleting entity spawners currently
+            if (EntitySpawnerMenu.entity_selected == EntitySpawnerMenu.options.len-1) {
+                const pos_to_delete = mouse_tile.to(u8);
+                for (state.resources.entity_spawners.items, 0..) |es, i| {
+                    if (es.pos.equal(pos_to_delete)) {
+                        const removed = state.resources.entity_spawners.orderedRemove(i);
+                        std.log.debug("removed entity spawner {any}", .{removed});
+                        break;
+                    }
+                }
+            }
+            else {
+                try state.resources.entity_spawners.append(.{
+                    .pos = mouse_tile.to(u8),
+                    .entity_type = EntitySpawnerMenu.entity_selected
+                });
+            }
+        }
+
+    }
+    
     // sprite selection windows drawing and logic
     {
         const sprites_top = 16*8 + 10;
@@ -469,26 +591,30 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
     }
     
-    if (state.debug) {
-        const color = RGBA.from(BGR, @bitCast(Assets.palette[3]));
-        const height_text = state.debug_text_renderer.height()+1;
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*1 )), "ms {d: <9.2}", .{ud.ms}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*2 )), "frame {}", .{ud.frame}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*3 )), "camera {d:.4}, {d:.4}", .{state.camera.pos.x, state.camera.pos.y}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*4 )), "mouse_world {d:.4} {d:.4}", .{mouse_world.x, mouse_world.y}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*5 )), "mouse_window {d:.4} {d:.4}", .{mouse_window.x, mouse_window.y}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*6 )), "mouse_tile {d:.4} {d:.4}", .{mouse_tile.x, mouse_tile.y}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*7 )), "buffer dimensions {d:.4} {d:.4}", .{w, h}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*8 )), "zoom {}", .{state.zoom}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*9 )), "selected_sprite {}", .{state.selected_sprite}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*10)), "l click {}", .{ud.mouse_left_clicked}, color);
-        try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*11)), "mouse busy {}", .{MouseState.busy}, color);
+    // debug overlay
+    {
+        if (state.debug) {
+            const color = RGBA.from(BGR, @bitCast(Assets.palette[3]));
+            const height_text = state.debug_text_renderer.height()+1;
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*1 )), "ms {d: <9.2}", .{ud.ms}, color);
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*2 )), "frame {}", .{ud.frame}, color);
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*3 )), "camera {d:.4}, {d:.4}", .{state.camera.pos.x, state.camera.pos.y}, color);
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*4 )), "mouse_world {d:.4} {d:.4}", .{mouse_world.x, mouse_world.y}, color);
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*5 )), "mouse_window {d:.4} {d:.4}", .{mouse_window.x, mouse_window.y}, color);
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*6 )), "mouse_tile {d:.4} {d:.4}", .{mouse_tile.x, mouse_tile.y}, color);
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*7 )), "buffer dimensions {d:.4} {d:.4}", .{w, h}, color);
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*8 )), "zoom {}", .{state.zoom}, color);
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*9 )), "selected_sprite {}", .{state.selected_sprite}, color);
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*10)), "l click {}", .{ud.mouse_left_clicked}, color);
+            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*11)), "mouse busy {}", .{MouseState.busy}, color);
+        }
+        state.debug_text_renderer.render_all(
+            ud.pixel_buffer,
+            projection_matrix_screen,
+            viewport_matrix
+        );
     }
-    state.debug_text_renderer.render_all(
-        ud.pixel_buffer,
-        projection_matrix_screen,
-        viewport_matrix
-    );
+    
     return true;
 }
 
