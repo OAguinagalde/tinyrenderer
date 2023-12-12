@@ -58,9 +58,8 @@ const State = struct {
     debug_text_renderer: TextRenderer(platform.OutPixelType, 1024, text_scale),
     text_renderer: TextRenderer(platform.OutPixelType, 1024, text_scale),
     renderer: tic80.Renderer(platform.OutPixelType, tic80.Shader(platform.OutPixelType)),
-    renderer_quads: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType)),
-    // TODO the blending renderer still uses the 3d pipeline, change to the 2d quad pipeline instead
-    renderer_blending: tic80.Renderer(platform.OutPixelType, tic80.ShaderWithBlendAndKeyColor(platform.OutPixelType, 0)),
+    renderer_quads: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, null)),
+    renderer_blending: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, 0)),
     renderer_shapes: ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)),
     entities: EntitySystem,
     level_background: BoundingBox(usize),
@@ -71,6 +70,7 @@ const State = struct {
     rng_engine: std.rand.DefaultPrng,
     random: std.rand.Random,
     doors: std.ArrayList(Door),
+    particle_emitters: std.ArrayList(ParticleEmitter),
     texts: []const *const Assets.StaticTextDescriptor,
     entities_damage_dealers: HitboxSystem,
     player_damage_dealers: HitboxSystem,
@@ -79,14 +79,15 @@ const State = struct {
     resource_file_name: []const u8,
 };
 const Door = struct{pos:Vec2(u8), index:usize};
+const ParticleEmitter = struct{pos:Vec2(u8), emitter_type:Assets.ParticleEmitterType};
 var state: State = undefined;
 
 pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.debug_text_renderer = try TextRenderer(platform.OutPixelType, 1024, text_scale).init(allocator);
     state.text_renderer = try TextRenderer(platform.OutPixelType, 1024, text_scale).init(allocator);
     state.renderer = try tic80.Renderer(platform.OutPixelType, tic80.Shader(platform.OutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    state.renderer_quads = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    state.renderer_blending = try tic80.Renderer(platform.OutPixelType, tic80.ShaderWithBlendAndKeyColor(platform.OutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    state.renderer_quads = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, null)).init(allocator, Assets.palette, Assets.atlas_tiles);
+    state.renderer_blending = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
     state.renderer_shapes = try ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)).init(allocator);
     state.entities = try EntitySystem.init(allocator);
     state.player = Player.init(0);
@@ -98,6 +99,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.entities_damage_dealers = try HitboxSystem.init(allocator);
     state.player_damage_dealers = try HitboxSystem.init(allocator);
     state.doors = std.ArrayList(Door).init(allocator); // doors are set on load_level
+    state.particle_emitters = std.ArrayList(ParticleEmitter).init(allocator); // doors are set on load_level
     state.texts = undefined; // texts are set on load_level
     state.debug = true;
     state.resource_file_name = "resources.bin";
@@ -167,15 +169,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         try state.entities_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, ud.frame);
     }
 
-    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(275, 36)));
-    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(539, 36)));
-    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(643, 60)));
-    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(515, 164)));
-    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(548, 164)));
-    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(580, 164)));
-    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(619, 164)));
-    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(1036, 44)));
-    if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(Vector2f.from(1003, 44)));
     if (state.random.float(f32)>0.8) {
         const height = 21;
         const from: f32 = 304;
@@ -202,6 +195,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             if (junction.a.x == door.pos.x and junction.a.y == door.pos.y) try load_level(junction.b, ud.frame) else try load_level(junction.a, ud.frame);
             return true;
         }
+    }
+    
+    for (state.particle_emitters.items) |particle_emitter| {
+        if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(particle_emitter.pos.to(f32).scale(8).add(Vec2(f32).from(4,4))));
     }
 
     try state.entities.entities_update(state.player.pos, ud.frame);
@@ -230,11 +227,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     try update_animations_in_place(&state.animations_in_place, ud.frame);
     try particles_update(&state.particles);
 
-    const view_matrix = M44.lookat_left_handed(state.camera.pos, state.camera.pos.add(Vector3f.from(0, 0, 1)), Vector3f.from(0, 1, 0));
-    const projection_matrix = M44.orthographic_projection(0, w, h, 0, 0, 2);
-    const viewport_matrix = M44.viewport(0, 0, w, h, 255);
-    const mvp_matrix = projection_matrix.multiply(view_matrix.multiply(M44.translation(Vector3f.from(0, 0, 1))));
-    
     const view_matrix_m33 = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
     const projection_matrix_m33 = M33.orthographic_projection(0, w, h, 0);
     const viewport_matrix_m33 = M33.viewport(0, 0, w, h);
@@ -287,8 +279,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     }
     state.renderer_blending.render(
         ud.pixel_buffer,
-        mvp_matrix,
-        viewport_matrix
+        mvp_matrix_33,
+        viewport_matrix_m33
     );
     
     // render particles
@@ -357,6 +349,7 @@ pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
     state.particles.deleteAll();
     state.player.reset_soft(frame);
     state.doors.clearRetainingCapacity();
+    state.particle_emitters.clearRetainingCapacity();
 
     var found = false;
     for (state.resources.levels.items) |level| {
@@ -372,6 +365,17 @@ pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
             bb.right += 1;
             state.camera.set_bounds(bb.scale(Vec2(usize).from(8, 8)).to(f32));
 
+            for (state.resources.environment_particle_emitters.items) |particle_emitter| {
+                if (level.bb.contains(particle_emitter.pos)) try state.particle_emitters.append(.{.pos = particle_emitter.pos, .emitter_type = @enumFromInt(particle_emitter.particle_emitter_type)});
+            }
+
+            for (state.resources.entity_spawners.items) |entity_spawn| {
+                std.log.debug("{} entity {s} spawn at {} {}", .{level.bb.contains(entity_spawn.pos), @tagName(@as(Assets.EntityType, @enumFromInt(entity_spawn.entity_type))), entity_spawn.pos.x, entity_spawn.pos.y});
+                if (level.bb.contains(entity_spawn.pos)) {
+                    try state.entities.spawn(@enumFromInt(entity_spawn.entity_type), tile_to_grounded_position(entity_spawn.pos.to(i32)), frame);
+                }
+            }
+
             for (state.resources.junctions.items, 0..) |junction, i| {
                 if (level.bb.contains(junction.a)) try state.doors.append(.{.pos=junction.a, .index=i});
                 if (level.bb.contains(junction.b)) try state.doors.append(.{.pos=junction.b, .index=i});
@@ -385,15 +389,12 @@ pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
     
     // TODO
     // state.texts = level.static_texts;
-    // for (level.entity_spawns) |entity_spawn| {
-    //     try state.entities.spawn(entity_spawn.entity, tile_to_grounded_position(entity_spawn.pos), frame);
-    // }
     
     state.player.spawn(spawn.to(i32));
 }
 
 fn tile_to_grounded_position(tile: Vector2i) Vector2f {
-    return Vector2f.from(@floatFromInt(tile.x*8+4), (@floatFromInt(correct_y(tile.y)*8)));
+    return Vector2f.from(@floatFromInt(tile.x*8+4), (@floatFromInt(tile.y*8)));
 }
 
 const Physics = blk: {
@@ -1335,6 +1336,8 @@ inline fn correct_y(thing: anytype) @TypeOf(thing) {
 
 pub const Assets = struct {
     
+    pub const ParticleEmitterType = enum { fire };
+
     pub const Levels = enum {
         level_first,
         level_slime,

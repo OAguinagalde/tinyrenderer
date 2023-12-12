@@ -280,7 +280,7 @@ pub fn QuadShader(comptime output_pixel_type: type, comptime key_color: ?Palette
         };
 
         pub const pipeline_configuration = GraphicsPipelineQuads2DConfiguration {
-            .blend_with_background = false,
+            .blend_with_background = key_color != null,
             .do_quad_clipping = true,
             .do_scissoring = false,
             .trace = false
