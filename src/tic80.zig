@@ -261,7 +261,7 @@ pub fn ShaderWithBlendAndKeyColor(comptime output_pixel_type: type, comptime key
     };
 }
 
-pub fn QuadShader(comptime output_pixel_type: type) type {
+pub fn QuadShader(comptime output_pixel_type: type, comptime key_color: ?PaletteIndex) type {
     return struct {
 
         pub const Context = struct {
@@ -301,6 +301,10 @@ pub fn QuadShader(comptime output_pixel_type: type) type {
             struct {
                 inline fn fragment_shader(context: Context, invariants: Invariant) output_pixel_type {
                     const palette_index = context.texture.point_sample(false, invariants.texture_uv);
+                    const key_color_enabled = comptime key_color != null;
+                    if (key_color_enabled) {
+                        if (palette_index == key_color.?) return output_pixel_type.from(RGBA, RGBA.make(0,0,0,0));
+                    }
                     const bgr = context.palette[palette_index];
                     return output_pixel_type.from(BGR, @bitCast(bgr));
                 }
