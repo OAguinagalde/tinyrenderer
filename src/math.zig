@@ -34,6 +34,10 @@ pub fn Vec2(comptime T: type) type {
             return Self.from(self.x + other.x, self.y + other.y);
         }
 
+        pub inline fn equal(self: Self, other: Self) bool {
+            return self.x == other.x and self.y == other.y;
+        }
+
         pub fn substract(self: Self, other: Self) Self {
             return Self.from(self.x - other.x, self.y - other.y);
         }
