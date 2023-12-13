@@ -134,6 +134,114 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     if (ud.key_pressed('J') and mouse_is_in_map_editor) try state.resources.junctions.append(.{.a = mouse_tile_in_map.to(u8), .b = mouse_tile_in_map.to(u8) });    
 
+    const ParticleEmitterMenu = struct {
+        var state = GuiMenuFromEnum("particle emitters", Assets.ParticleEmitterType, &[_][]const u8{"delete emitter"}).init(
+            Vec2(f32).from(50, 140),
+            RGBA.from(BGR, @bitCast(Assets.palette[1])),
+            RGBA.from(BGR, @bitCast(Assets.palette[2])),
+            RGBA.from(BGR, @bitCast(Assets.palette[3])),
+            RGBA.make(0, 0, 0, 255)
+        );
+    };
+
+    const EntitySpawnerMenu = struct {
+        var state = GuiMenuFromEnum("entity spawners", Assets.EntityType, &[_][]const u8{"delete spawner"}).init(
+            Vec2(f32).from(50, 200),
+            RGBA.from(BGR, @bitCast(Assets.palette[1])),
+            RGBA.from(BGR, @bitCast(Assets.palette[2])),
+            RGBA.from(BGR, @bitCast(Assets.palette[3])),
+            RGBA.make(0, 0, 0, 255)
+        );
+    };
+
+    // logic of particle emitter menu
+    {
+        // handle dragging
+        if (ParticleEmitterMenu.state.get_header_bb().contains(mouse_window) and !MouseState.busy and ud.mouse_left_down) ParticleEmitterMenu.state.drag(mouse_window);
+        if (ParticleEmitterMenu.state.draggable_previous_position) |_| {
+            if (!ud.mouse_left_down) ParticleEmitterMenu.state.stop_drag()
+            else ParticleEmitterMenu.state.drag(mouse_window);
+        }
+
+        // handle selecting
+        if (ud.mouse_left_clicked) if (ParticleEmitterMenu.state.get_hovered_option(mouse_window)) |hovered_option| {
+            if (ParticleEmitterMenu.state.get_selected_option()) |selected_option| {
+                if (selected_option == hovered_option) ParticleEmitterMenu.state.clear_selection()
+                else ParticleEmitterMenu.state.select(hovered_option);
+            }
+            else {
+                if (!MouseState.busy) ParticleEmitterMenu.state.select(hovered_option);
+            }
+        };
+
+        // implement the functionality of the menu in the map editor itself
+        if (ParticleEmitterMenu.state.selectable_option_selected) |option_selected| {
+            if(state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
+                // NOTE the first entity in the list is hardcoded to be "delete" which is the only way of deleting entity spawners currently
+                if (option_selected == ParticleEmitterMenu.state.get_option_count()-1) {
+                    const pos_to_delete = mouse_tile.to(u8);
+                    for (state.resources.environment_particle_emitters.items, 0..) |pe, i| {
+                        if (pe.pos.equal(pos_to_delete)) {
+                            const removed = state.resources.environment_particle_emitters.orderedRemove(i);
+                            std.log.debug("removed particle emitter {any}", .{removed});
+                            break;
+                        }
+                    }
+                }
+                else {
+                    try state.resources.environment_particle_emitters.append(.{
+                        .pos = mouse_tile.to(u8),
+                        .particle_emitter_type = option_selected
+                    });
+                }
+            }
+        }
+    }
+
+    // logic of entity spawner menu
+    {
+        // handle dragging
+        if (EntitySpawnerMenu.state.get_header_bb().contains(mouse_window) and !MouseState.busy and ud.mouse_left_down) EntitySpawnerMenu.state.drag(mouse_window);
+        if (EntitySpawnerMenu.state.draggable_previous_position) |_| {
+            if (!ud.mouse_left_down) EntitySpawnerMenu.state.stop_drag()
+            else EntitySpawnerMenu.state.drag(mouse_window);
+        }
+
+        // handle selecting
+        if (ud.mouse_left_clicked) if (EntitySpawnerMenu.state.get_hovered_option(mouse_window)) |hovered_option| {
+            if (EntitySpawnerMenu.state.get_selected_option()) |selected_option| {
+                if (selected_option == hovered_option) EntitySpawnerMenu.state.clear_selection()
+                else EntitySpawnerMenu.state.select(hovered_option);
+            }
+            else {
+                if (!MouseState.busy) EntitySpawnerMenu.state.select(hovered_option);
+            }
+        };
+
+        // the logic which handles editing the resources with the currently selected option in the menu
+        if (EntitySpawnerMenu.state.selectable_option_selected) |option_selected| {
+            if(state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
+                // NOTE the first entity in the list is hardcoded to be "delete" which is the only way of deleting entity spawners currently
+                if (option_selected == EntitySpawnerMenu.state.get_option_count()-1) {
+                    const pos_to_delete = mouse_tile.to(u8);
+                    for (state.resources.entity_spawners.items, 0..) |pe, i| {
+                        if (pe.pos.equal(pos_to_delete)) {
+                            const removed = state.resources.entity_spawners.orderedRemove(i);
+                            std.log.debug("removed entity spawner {any}", .{removed});
+                            break;
+                        }
+                    }
+                }
+                else {
+                    try state.resources.entity_spawners.append(.{
+                        .pos = mouse_tile.to(u8),
+                        .entity_type = option_selected
+                    });
+                }
+            }
+        }
+    }
+
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
 
@@ -447,237 +555,15 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
     }
 
-    // list all the entity spawner options and place on map if selected
-    {
-        const EntitySpawnerMenu = struct {
-            const text_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
-            const text_highlight_color = RGBA.from(BGR, @bitCast(Assets.palette[2]));
-            const options: []const []const u8 = blk: {
-                var opts: []const []const u8 = &[_][]const u8 {};
-                opts = opts ++ &[_][]const u8{};
-                for (@typeInfo(Assets.EntityType).Enum.fields) |field| {
-                    opts = opts ++ &[_][]const u8{field.name};
-                }
-                opts = opts ++ &[_][]const u8{"delete"};
-                break :blk opts;
-            };
-            const menu_height = (1+options.len) * (state.text_renderer.height()+1);
-            const menu_width = state.text_renderer.width()*24;
-            const initial_position = Vec2(f32).from(10, 200);
-            var menu_bb: BoundingBox(f32) = BoundingBox(f32).from(initial_position.y + menu_height, initial_position.y, initial_position.x, initial_position.x + menu_width);
+    // draw the entity spawner menu
+    try EntitySpawnerMenu.state.draw_data(mouse_window);
+    state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+    state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
 
-            var dragging = false;
-            var previous_position: Vec2(f32) = undefined;
-            fn drag(pos: Vec2(f32)) Vec2(f32) {
-                if (dragging) {
-                    const movement = pos.substract(previous_position);
-                    previous_position = pos;
-                    menu_bb = menu_bb.offset(movement);
-                    return movement;
-                }
-                else {
-                    dragging = true;
-                    MouseState.busy = true;
-                    previous_position = pos;
-                    return Vec2(f32).from(0,0);
-                }
-            }
-            fn stop_drag() void {
-                dragging = false;
-                MouseState.busy = false;
-            }
-
-            var placing_entities = false;
-            var entity_selected: u8 = undefined;
-            fn start_placing_entities(index: u8) void {
-                entity_selected = index;
-                placing_entities = true;
-                MouseState.busy = true;
-            }
-            fn stop_placing_entities() void {
-                placing_entities = false;
-                MouseState.busy = false;
-            }
-
-            fn menu_is_hovered(_mouse_window: Vec2(f32)) bool {
-                return menu_bb.contains(_mouse_window);
-            }
-        };
-
-        // dragg menu logic
-        var menu_title_bb = BoundingBox(f32).from(EntitySpawnerMenu.menu_bb.top, EntitySpawnerMenu.menu_bb.top - state.text_renderer.height()-1, EntitySpawnerMenu.menu_bb.left, EntitySpawnerMenu.menu_bb.right);
-        const menu_title_hovered = menu_title_bb.contains(mouse_window);
-        if (menu_title_hovered and !MouseState.busy and ud.mouse_left_down) menu_title_bb = menu_title_bb.offset(EntitySpawnerMenu.drag(mouse_window));
-        if (EntitySpawnerMenu.dragging) {
-            if (!ud.mouse_left_down) EntitySpawnerMenu.stop_drag()
-            else menu_title_bb = menu_title_bb.offset(EntitySpawnerMenu.drag(mouse_window));
-        }
-        
-        // draw menu logic
-        try state.renderer_shapes.add_quad_from_bb(EntitySpawnerMenu.menu_bb, RGBA.make(0, 0, 0, 255));
-        for (EntitySpawnerMenu.options,  0..) |option, i| {
-            const ii: f32 = @floatFromInt(i);
-            const iii: u8 = @intCast(i);
-            const option_bottom = ii*(state.text_renderer.height()+1);
-            try state.text_renderer.print(Vec2(f32).from(EntitySpawnerMenu.menu_bb.left, EntitySpawnerMenu.menu_bb.bottom + option_bottom), "{s}", .{option}, EntitySpawnerMenu.text_color);
-            const ith_option_bb = BoundingBox(f32).from(EntitySpawnerMenu.menu_bb.bottom + option_bottom+state.text_renderer.height(), EntitySpawnerMenu.menu_bb.bottom + option_bottom, EntitySpawnerMenu.menu_bb.left, EntitySpawnerMenu.menu_bb.right);
-            const ith_option_hovered = ith_option_bb.contains(mouse_window);
-            
-            // selection of entity spawners
-            if (ith_option_hovered and ud.mouse_left_clicked) {
-                if (!MouseState.busy) EntitySpawnerMenu.start_placing_entities(iii)
-                else if (EntitySpawnerMenu.placing_entities) {
-                    if (EntitySpawnerMenu.entity_selected == iii) EntitySpawnerMenu.stop_placing_entities()
-                    else EntitySpawnerMenu.start_placing_entities(iii);
-                }
-            }
-
-            if (EntitySpawnerMenu.placing_entities and EntitySpawnerMenu.entity_selected == iii) try state.renderer_shapes.add_quad_from_bb(ith_option_bb, RGBA.make(200, 200, 200, 255))
-            else if (ith_option_hovered) try state.renderer_shapes.add_quad_from_bb(ith_option_bb, RGBA.make(130, 130, 130, 255));
-        }
-        if (menu_title_hovered) {
-            try state.renderer_shapes.add_quad_from_bb(menu_title_bb, RGBA.make(130, 130, 130, 255));
-        }
-        try state.text_renderer.print(Vec2(f32).from(EntitySpawnerMenu.menu_bb.left, EntitySpawnerMenu.menu_bb.top - state.text_renderer.height()-1), "Entity Spawners", .{}, EntitySpawnerMenu.text_highlight_color);
-        state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-        state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-
-        // place entities on the map
-        if (EntitySpawnerMenu.placing_entities and state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
-            // NOTE the first entity in the list is hardcoded to be "delete" which is the only way of deleting entity spawners currently
-            if (EntitySpawnerMenu.entity_selected == EntitySpawnerMenu.options.len-1) {
-                const pos_to_delete = mouse_tile.to(u8);
-                for (state.resources.entity_spawners.items, 0..) |es, i| {
-                    if (es.pos.equal(pos_to_delete)) {
-                        const removed = state.resources.entity_spawners.orderedRemove(i);
-                        std.log.debug("removed entity spawner {any}", .{removed});
-                        break;
-                    }
-                }
-            }
-            else {
-                try state.resources.entity_spawners.append(.{
-                    .pos = mouse_tile.to(u8),
-                    .entity_type = EntitySpawnerMenu.entity_selected
-                });
-            }
-        }
-
-    }
-    
-    // list all the particle emitter options and place on map if selected
-    {
-        const ParticleEmitterMenu = struct {
-            const text_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
-            const text_highlight_color = RGBA.from(BGR, @bitCast(Assets.palette[2]));
-            const options: []const []const u8 = blk: {
-                var opts: []const []const u8 = &[_][]const u8 {};
-                opts = opts ++ &[_][]const u8{};
-                for (@typeInfo(Assets.ParticleEmitterType).Enum.fields) |field| {
-                    opts = opts ++ &[_][]const u8{field.name};
-                }
-                opts = opts ++ &[_][]const u8{"delete"};
-                break :blk opts;
-            };
-            const menu_height = (1+options.len) * (state.text_renderer.height()+1);
-            const menu_width = state.text_renderer.width()*24;
-            const initial_position = Vec2(f32).from(10, 140);
-            var menu_bb: BoundingBox(f32) = BoundingBox(f32).from(initial_position.y + menu_height, initial_position.y, initial_position.x, initial_position.x + menu_width);
-
-            var dragging = false;
-            var previous_position: Vec2(f32) = undefined;
-            fn drag(pos: Vec2(f32)) Vec2(f32) {
-                if (dragging) {
-                    const movement = pos.substract(previous_position);
-                    previous_position = pos;
-                    menu_bb = menu_bb.offset(movement);
-                    return movement;
-                }
-                else {
-                    dragging = true;
-                    MouseState.busy = true;
-                    previous_position = pos;
-                    return Vec2(f32).from(0,0);
-                }
-            }
-            fn stop_drag() void {
-                dragging = false;
-                MouseState.busy = false;
-            }
-
-            var placing_entities = false;
-            var entity_selected: u8 = undefined;
-            fn start_placing_entities(index: u8) void {
-                entity_selected = index;
-                placing_entities = true;
-                MouseState.busy = true;
-            }
-            fn stop_placing_entities() void {
-                placing_entities = false;
-                MouseState.busy = false;
-            }
-        };
-
-        // dragg menu logic
-        var menu_title_bb = BoundingBox(f32).from(ParticleEmitterMenu.menu_bb.top, ParticleEmitterMenu.menu_bb.top - state.text_renderer.height()-1, ParticleEmitterMenu.menu_bb.left, ParticleEmitterMenu.menu_bb.right);
-        const menu_title_hovered = menu_title_bb.contains(mouse_window);
-        if (menu_title_hovered and !MouseState.busy and ud.mouse_left_down) menu_title_bb = menu_title_bb.offset(ParticleEmitterMenu.drag(mouse_window));
-        if (ParticleEmitterMenu.dragging) {
-            if (!ud.mouse_left_down) ParticleEmitterMenu.stop_drag()
-            else menu_title_bb = menu_title_bb.offset(ParticleEmitterMenu.drag(mouse_window));
-        }
-        
-        // draw menu logic
-        try state.renderer_shapes.add_quad_from_bb(ParticleEmitterMenu.menu_bb, RGBA.make(0, 0, 0, 255));
-        for (ParticleEmitterMenu.options,  0..) |option, i| {
-            const ii: f32 = @floatFromInt(i);
-            const iii: u8 = @intCast(i);
-            const option_bottom = ii*(state.text_renderer.height()+1);
-            try state.text_renderer.print(Vec2(f32).from(ParticleEmitterMenu.menu_bb.left, ParticleEmitterMenu.menu_bb.bottom + option_bottom), "{s}", .{option}, ParticleEmitterMenu.text_color);
-            const ith_option_bb = BoundingBox(f32).from(ParticleEmitterMenu.menu_bb.bottom + option_bottom+state.text_renderer.height(), ParticleEmitterMenu.menu_bb.bottom + option_bottom, ParticleEmitterMenu.menu_bb.left, ParticleEmitterMenu.menu_bb.right);
-            const ith_option_hovered = ith_option_bb.contains(mouse_window);
-            
-            // selection of entity spawners
-            if (ith_option_hovered and ud.mouse_left_clicked) {
-                if (!MouseState.busy) ParticleEmitterMenu.start_placing_entities(iii)
-                else if (ParticleEmitterMenu.placing_entities) {
-                    if (ParticleEmitterMenu.entity_selected == iii) ParticleEmitterMenu.stop_placing_entities()
-                    else ParticleEmitterMenu.start_placing_entities(iii);
-                }
-            }
-
-            if (ParticleEmitterMenu.placing_entities and ParticleEmitterMenu.entity_selected == iii) try state.renderer_shapes.add_quad_from_bb(ith_option_bb, RGBA.make(200, 200, 200, 255))
-            else if (ith_option_hovered) try state.renderer_shapes.add_quad_from_bb(ith_option_bb, RGBA.make(130, 130, 130, 255));
-        }
-        if (menu_title_hovered) {
-            try state.renderer_shapes.add_quad_from_bb(menu_title_bb, RGBA.make(130, 130, 130, 255));
-        }
-        try state.text_renderer.print(Vec2(f32).from(ParticleEmitterMenu.menu_bb.left, ParticleEmitterMenu.menu_bb.top - state.text_renderer.height()-1), "particle emitters", .{}, ParticleEmitterMenu.text_highlight_color);
-        state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-        state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-
-        // place entities on the map
-        if (ParticleEmitterMenu.placing_entities and state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
-            // NOTE the first entity in the list is hardcoded to be "delete" which is the only way of deleting entity spawners currently
-            if (ParticleEmitterMenu.entity_selected == ParticleEmitterMenu.options.len-1) {
-                const pos_to_delete = mouse_tile.to(u8);
-                for (state.resources.environment_particle_emitters.items, 0..) |pe, i| {
-                    if (pe.pos.equal(pos_to_delete)) {
-                        const removed = state.resources.environment_particle_emitters.orderedRemove(i);
-                        std.log.debug("removed particle emitter {any}", .{removed});
-                        break;
-                    }
-                }
-            }
-            else {
-                try state.resources.environment_particle_emitters.append(.{
-                    .pos = mouse_tile.to(u8),
-                    .particle_emitter_type = ParticleEmitterMenu.entity_selected
-                });
-            }
-        }
-
-    }
+    // draw the particle emitter menu
+    try ParticleEmitterMenu.state.draw_data(mouse_window);
+    state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+    state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
 
     // sprite selection windows drawing and logic
     {
@@ -774,6 +660,149 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     
     return true;
 }
+
+
+/// `extra_options` &[_][]const u8{"something", "extra"}
+fn GuiMenuFromEnum(comptime name: []const u8, comptime enumeration: type, comptime extra_options: []const []const u8) type {
+    return struct {
+    
+        const Self = @This();
+        const EnumTagType = @typeInfo(enumeration).Enum.tag_type;
+        const options: []const []const u8 = blk: {
+            var opts: []const []const u8 = &[_][]const u8 {};
+            opts = opts ++ &[_][]const u8{};
+            for (@typeInfo(enumeration).Enum.fields) |field| {
+                opts = opts ++ &[_][]const u8{field.name};
+            }
+            opts = opts ++ extra_options;
+            break :blk opts;
+        };
+    
+        text_color: RGBA,
+        text_highlight_color_1: RGBA,
+        text_highlight_color_2: RGBA,
+        menu_background_color: RGBA,
+        menu_in_screen_bb: BoundingBox(f32),
+        draggable_previous_position: ?Vec2(f32),
+        selectable_option_selected: ?EnumTagType,
+
+        fn init(initial_position: Vec2(f32), text_color: RGBA, text_highlight_color_1: RGBA, text_highlight_color_2: RGBA, menu_background_color: RGBA) Self {
+            const text_line_height = state.text_renderer.height() + 1;
+            const text_line_width = state.text_renderer.width();
+            return .{
+                .text_color = text_color,
+                .text_highlight_color_1 = text_highlight_color_1,
+                .text_highlight_color_2 = text_highlight_color_2,
+                .menu_background_color = menu_background_color,
+                .menu_in_screen_bb = BoundingBox(f32).from(initial_position.y + text_line_height*(options.len+1), initial_position.y, initial_position.x, initial_position.x + text_line_width*25),
+                .draggable_previous_position = null,
+                .selectable_option_selected = null,
+            };
+        }
+
+        fn get_header_bb(self: *const Self) BoundingBox(f32) {
+            const text_line_height = state.text_renderer.height() + 1;
+            return BoundingBox(f32).from(
+                self.menu_in_screen_bb.top,
+                self.menu_in_screen_bb.top - text_line_height,
+                self.menu_in_screen_bb.left,
+                self.menu_in_screen_bb.right,
+            );
+        }
+
+        fn get_hovered_option(self: *const Self, mouse_position_window: Vec2(f32)) ?EnumTagType {
+            const text_line_height = state.text_renderer.height() + 1;
+            const options_bb = BoundingBox(f32).from(
+                self.menu_in_screen_bb.top - text_line_height - 1,
+                self.menu_in_screen_bb.bottom,
+                self.menu_in_screen_bb.left,
+                self.menu_in_screen_bb.right,
+            );
+            if (options_bb.contains(mouse_position_window)) {
+                const height_in_menu = mouse_position_window.y - self.menu_in_screen_bb.bottom;
+                const current_line: EnumTagType = @intFromFloat(@floor(height_in_menu / text_line_height));
+                std.debug.assert(current_line >= 0 and current_line < options.len);
+                return current_line;
+            }
+            else return null;
+        }
+
+        fn get_selected_option(self: *const Self) ?EnumTagType {
+            return self.selectable_option_selected;
+        }
+
+        fn get_option_count(self: *const Self) EnumTagType {
+            _ = self;
+            return @intCast(options.len);
+        }
+
+        fn get_options(self: *const Self) []const[]const u8 {
+            _ = self;
+            return options;
+        }
+
+        fn draw_data(self: *const Self, mouse_position_window: Vec2(f32)) !void {
+            const hovered_option = self.get_hovered_option(mouse_position_window);
+            const text_line_height = state.text_renderer.height() + 1;
+            
+            // background
+            try state.renderer_shapes.add_quad_from_bb(self.menu_in_screen_bb, self.menu_background_color);
+            
+            // content
+            for (options, 0..) |option, i| {
+                const i_f32: f32 = @floatFromInt(i);
+                const i_enum: EnumTagType = @intCast(i);
+                
+                const option_bottom_absolute = self.menu_in_screen_bb.bottom + i_f32*text_line_height;
+                const option_top_absolute = option_bottom_absolute + text_line_height;
+                const option_left_absolute = self.menu_in_screen_bb.left;
+                const option_right_absolute = self.menu_in_screen_bb.right;
+                const option_bb = BoundingBox(f32).from(option_top_absolute, option_bottom_absolute, option_left_absolute, option_right_absolute);
+
+                try state.text_renderer.print(Vec2(f32).from(option_left_absolute, option_bottom_absolute), "{s}", .{option}, self.text_color);
+                
+                if (self.selectable_option_selected) |selected_option| {
+                    if (selected_option == i_enum) try state.renderer_shapes.add_quad_from_bb(option_bb, self.text_highlight_color_1);
+                }
+                
+                if (hovered_option) |option_index| {
+                    if (option_index == i_enum) try state.renderer_shapes.add_quad_from_bb(option_bb, self.text_highlight_color_2);
+                }
+            }
+            
+            // header
+            const header_bb = self.get_header_bb();
+            if (header_bb.contains(mouse_position_window)) try state.renderer_shapes.add_quad_from_bb(header_bb, self.text_highlight_color_2);
+            try state.text_renderer.print(Vec2(f32).from(header_bb.left, header_bb.bottom), name, .{}, self.text_highlight_color_1);            
+        }
+
+        // draggable
+        fn drag(self: *Self, new_pos: Vec2(f32)) void {
+            if (self.draggable_previous_position) |previous_position| {
+                const movement = new_pos.substract(previous_position);
+                self.draggable_previous_position = new_pos;
+                self.menu_in_screen_bb = self.menu_in_screen_bb.offset(movement);
+            }
+            else {
+                self.draggable_previous_position = new_pos;
+            }
+        }
+        fn stop_drag(self: *Self) void {
+            self.draggable_previous_position = null;
+        }
+
+        // selectable logic
+        fn select(self: *Self, option_index: EnumTagType) void {
+            self.selectable_option_selected = option_index;
+        }
+        fn clear_selection(self: *Self) void {
+            self.selectable_option_selected = null;
+        }
+        
+    };
+}
+
+
 
 const Camera = struct {
     pos: Vector3f,
