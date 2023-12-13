@@ -565,6 +565,38 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
     state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
 
+    // TODO implement internal persistent state for arbitrary number of buttons identified by the label
+    // TODO find a good way to handle errors without needing to try on every call
+    // TODO stack based API so that I dont rely on comptime generated static lifetime structs
+    const static = struct {
+        var active = false;
+    };
+    const c0 = Container("0");
+    if (try c0.begin(ud.allocator, "This is my container!", Vec2(f32).from(50, 200), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+        try c0.text_line("- Make my own Immediate Mode GUI library");
+        if (try c0.button("- Add buttons to the library", &static.active)) {
+            try c0.text_line("(The button can be closed as well ofcourse)");
+        }
+        try c0.separator(2);
+        try c0.text_line("- Also add separator lines!");
+        try c0.text_line("- Surprisingly it works, pretty cool :D");
+    }
+    
+    const c1 = Container("1");
+    if (try c1.begin(ud.allocator, "another window", Vec2(f32).from(10, 230), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+        try c1.text_line("not much to see here...");
+        try c1.separator(2);
+        try c1.text_line("really");
+    }
+
+    // TODO make it so that every container is automatically rendered
+    const containers = .{c0, c1};
+    inline for (@typeInfo(@TypeOf(containers)).Struct.fields) |field| {
+        try @field(containers, field.name).draw();
+        state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+        state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+    }
+
     // sprite selection windows drawing and logic
     {
         const sprites_top = 16*8 + 10;
@@ -660,7 +692,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     
     return true;
 }
-
 
 /// `extra_options` &[_][]const u8{"something", "extra"}
 fn GuiMenuFromEnum(comptime name: []const u8, comptime enumeration: type, comptime extra_options: []const []const u8) type {
@@ -802,6 +833,230 @@ fn GuiMenuFromEnum(comptime name: []const u8, comptime enumeration: type, compti
     };
 }
 
+fn Container(comptime id: []const u8) type {
+    return struct {
+    
+        const ElementType = GuiElementType.container;
+        const Self = @This();
+
+        const text_line_height = state.text_renderer.height()+3;
+        const char_width = state.text_renderer.width()+1;
+
+        var initialized: bool = false;
+        var text_color: RGBA = undefined;
+        var background_color_a: RGBA = undefined;
+        var background_color_b: RGBA = undefined;
+        var background_color_c: RGBA = undefined;
+        var strings: Strings = undefined;
+        var draggable_previous_position: ?Vec2(f32) = null;
+        var dragged_frames: usize = 0;
+        
+        var name_hover: bool = false;
+        var name: ?[]const u8 = null;
+        var bb: BoundingBox(f32) = undefined;
+        var elements: std.ArrayList(GuiElement) = undefined;
+        var elements_text_lines: std.ArrayList(String) = undefined;
+        var elements_buttons: std.ArrayList(Button) = undefined;
+
+        var container_active: bool = true;
+        var pos: Vec2(f32) = undefined;
+        var mouse_position: Vec2(f32) = undefined;
+        var mouse_click: bool = undefined;
+        var mouse_down: bool = undefined;
+
+        fn begin(allocator: std.mem.Allocator, _name: []const u8, _pos: Vec2(f32), _mouse_position: Vec2(f32), _mouse_click: bool, _mouse_down: bool) !bool {
+            _ = id;
+            if (!initialized) {
+                initialized = true;
+                strings = Strings.init(allocator);
+                elements = std.ArrayList(GuiElement).init(allocator);
+                elements_text_lines = std.ArrayList(String).init(allocator);
+                elements_buttons = std.ArrayList(Button).init(allocator);
+                background_color_a = RGBA.make(0,0,0,255);
+                background_color_b = RGBA.make(100,100,100,255);
+                background_color_c = RGBA.make(200,200,200,255);
+                text_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
+                bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, pos.x);
+                pos = _pos;
+            }
+            // reset the data for a new frame
+            name = null;
+            name_hover = false;
+            bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, pos.x + bb.width());
+            elements_text_lines.clearRetainingCapacity();
+            elements.clearRetainingCapacity();
+            elements_buttons.clearRetainingCapacity();
+            mouse_position = _mouse_position;
+            mouse_click = _mouse_click and dragged_frames<8;
+            mouse_down = _mouse_down;
+
+            const header_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(_name.len)) * char_width);
+            name = strings.to_slice(try strings.get_or_create(_name));
+            
+            if (header_bb.contains(mouse_position)) {
+                name_hover = true;
+                if (mouse_click)  {
+                    container_active = !container_active;
+                }
+            }
+            else name_hover = false;
+
+            if (draggable_previous_position) |previous_position| {
+                if (!mouse_down) {
+                    draggable_previous_position = null;
+                    dragged_frames = 0;
+                }
+                else {
+                    const movement = mouse_position.substract(previous_position);
+                    draggable_previous_position = mouse_position;
+                    pos = pos.add(movement);
+                    bb = bb.offset(movement);
+                    dragged_frames += 1;
+                }
+            }
+            else {
+                if (mouse_down and header_bb.contains(mouse_position)) draggable_previous_position = mouse_position;
+            }
+            
+            return container_active;
+        }
+
+        fn increment_bb(added_height: f32, minimum_width: f32) BoundingBox(f32) {
+            bb.bottom = bb.bottom - added_height;
+            bb.right = @max(bb.left + minimum_width, bb.right);
+            return BoundingBox(f32).from(bb.bottom + added_height, bb.bottom, bb.left, bb.right);
+        } 
+
+        fn button(text: []const u8, pressed: *bool) !bool {
+            const button_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
+            const string = try strings.get_or_create(text);
+            const buttons_index = elements_buttons.items.len;
+            try elements.append(.{.index = buttons_index, .element_type = .button, .height = button_bb.height()});
+
+            var hover = false;
+            if (button_bb.contains(mouse_position)) {
+                hover = true;
+                if (mouse_click)  {
+                    pressed.* = !pressed.*;
+                }
+            }
+            
+            try elements_buttons.append(.{
+                .string = string,
+                .bb = button_bb,
+                .hover = hover,
+            });
+
+            return pressed.*;
+        }
+
+        fn text_line(text: []const u8) !void {
+            const string = try strings.get_or_create(text);
+            const text_lines_index = elements_text_lines.items.len;
+            try elements_text_lines.append(string);
+            try elements.append(.{.index = text_lines_index, .element_type = .text_line, .height = text_line_height});
+            _ = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
+        }
+
+        fn separator(extra_width: f32) !void {
+            try elements.append(.{.index = 0, .element_type = .separator, .height = extra_width+2});
+            _ = increment_bb(extra_width+2, 0);
+        }
+
+        fn draw() !void {
+            var working_bb = bb;
+            try state.renderer_shapes.add_quad_from_bb(bb, background_color_a);
+            if (name) |n| {
+                const header_bb = BoundingBox(f32).from(
+                    bb.top,
+                    bb.top - text_line_height,
+                    bb.left,
+                    bb.right,
+                );
+                try state.renderer_shapes.add_quad_from_bb(header_bb, if (name_hover) background_color_c else background_color_b);
+                try state.text_renderer.print(Vec2(f32).from(header_bb.left, header_bb.bottom+1), "{s}", .{n}, text_color);
+                working_bb.top -= header_bb.height();
+            }
+            for (elements.items) |element| {
+                switch (element.element_type) {
+                    .text_line => {
+                        const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
+                        try state.text_renderer.print(text_pos, "{s}", .{ strings.to_slice(elements_text_lines.items[element.index]) }, text_color);
+                        working_bb.top -= element.height;
+                    },
+                    .button => {
+                        try state.renderer_shapes.add_quad_from_bb(elements_buttons.items[element.index].bb, if (elements_buttons.items[element.index].hover) background_color_b else background_color_c);
+                        const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
+                        try state.text_renderer.print(text_pos, "{s}", .{ strings.to_slice(elements_buttons.items[element.index].string) }, text_color);
+                        working_bb.top -= element.height;
+                    },
+                    .separator => {
+                        const width = element.height-2;
+                        const separator_line_bb = BoundingBox(f32).from(working_bb.top-1, working_bb.top-1-width, working_bb.left + 2, working_bb.right - 2);
+                        try state.renderer_shapes.add_quad_from_bb(separator_line_bb, background_color_b);
+                        working_bb.top -= element.height;
+                    },
+                    // else => unreachable
+                }
+            }
+            try state.renderer_shapes.add_quad_border(bb, 1, background_color_b);
+        }
+
+    };
+}
+
+const String = struct {
+    index: usize,
+    length: usize
+};
+const Strings = struct {
+    
+    storage: std.ArrayList(u8),
+    map: std.StringArrayHashMap(String),
+
+    pub fn init(allocator: std.mem.Allocator) Strings {
+        return .{
+            .storage = std.ArrayList(u8).init(allocator),
+            .map = std.StringArrayHashMap(String).init(allocator)
+        };
+    }
+
+    pub fn get_or_create(self: *Strings, string: []const u8) !String {
+        if (self.map.get(string)) |existing_string| {
+            return existing_string;
+        }
+        else {
+            const index = self.storage.items.len;
+            _ = try self.storage.appendSlice(string);
+            const new_string: String = .{
+                .index = index,
+                .length = string.len,
+            };
+            try self.map.put(string, new_string);
+            return new_string;
+        }
+    }
+    
+    pub fn to_slice(self: *Strings, string: String) []const u8 {
+        return self.storage.items[string.index..string.index+string.length];
+    }
+
+};
+const Button = struct {
+    string: String,
+    bb: BoundingBox(f32),
+    hover: bool,
+};
+const GuiElement = struct {
+    index: usize,
+    element_type: GuiElementType,
+    height: f32,
+};
+const GuiElementType = enum {
+    text_line,
+    button,
+    separator,
+};
 
 
 const Camera = struct {
@@ -1002,8 +1257,12 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
         pub fn print(self: *Self, pos: Vector2f, comptime fmt: []const u8, args: anytype, tint: RGBA) !void {
             var buff: [max_size_per_print]u8 = undefined;
             const str = try std.fmt.bufPrint(&buff, fmt, args);
-            for (str, 0..) |c, i| {
-
+            for (str, 0..) |_c, i| {
+                const c = switch (_c) {
+                    // 97...122 => _c-32,
+                    65...90 => _c+32,
+                    else => _c
+                };
                 // x and y are the bottom left of the quad
                 const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width + @as(f32, @floatFromInt(i));
                 const y: f32 = pos.y;
@@ -1236,10 +1495,10 @@ pub const Resources = struct {
         return self.strings.items[string.index..string.index+string.length];
     }
 
-    const String = struct {
-        index: usize,
-        length: usize
-    };
+    // const String = struct {
+    //     index: usize,
+    //     length: usize
+    // };
 
     const LevelIndex = u8;
 
