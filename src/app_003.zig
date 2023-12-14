@@ -144,15 +144,26 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         );
     };
 
-    const EntitySpawnerMenu = struct {
-        var state = GuiMenuFromEnum("entity spawners", Assets.EntityType, &[_][]const u8{"delete spawner"}).init(
-            Vec2(f32).from(50, 200),
-            RGBA.from(BGR, @bitCast(Assets.palette[1])),
-            RGBA.from(BGR, @bitCast(Assets.palette[2])),
-            RGBA.from(BGR, @bitCast(Assets.palette[3])),
-            RGBA.make(0, 0, 0, 255)
-        );
+    const entity_spawner_menu_data = struct {
+        var option_selected: ?usize = null;
+        var option_hovered: ?usize = null;
+        const options: []const []const u8 = blk: {
+            var opts: []const []const u8 = &[_][]const u8 {};
+            opts = opts ++ &[_][]const u8{};
+            for (@typeInfo(Assets.EntityType).Enum.fields) |field| {
+                opts = opts ++ &[_][]const u8{field.name};
+            }
+            opts = opts ++ &[_][]const u8{"delete spawner"};
+            break :blk opts;
+        };
     };
+    
+    const entity_spawner_menu = Container("entity_spawner_menu");
+    if (try entity_spawner_menu.begin(ud.allocator, "entity spawner", Vec2(f32).from(50, 200), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+        if (entity_spawner_menu_data.option_selected) |selected| try entity_spawner_menu.text_line_fmt("Selected: {}", .{selected})
+        else try entity_spawner_menu.text_line("Select one...");
+        try entity_spawner_menu.option_selector(entity_spawner_menu_data.options, &entity_spawner_menu_data.option_selected, &entity_spawner_menu_data.option_hovered);
+    }
 
     // logic of particle emitter menu
     {
@@ -192,50 +203,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                     try state.resources.environment_particle_emitters.append(.{
                         .pos = mouse_tile.to(u8),
                         .particle_emitter_type = option_selected
-                    });
-                }
-            }
-        }
-    }
-
-    // logic of entity spawner menu
-    {
-        // handle dragging
-        if (EntitySpawnerMenu.state.get_header_bb().contains(mouse_window) and !MouseState.busy and ud.mouse_left_down) EntitySpawnerMenu.state.drag(mouse_window);
-        if (EntitySpawnerMenu.state.draggable_previous_position) |_| {
-            if (!ud.mouse_left_down) EntitySpawnerMenu.state.stop_drag()
-            else EntitySpawnerMenu.state.drag(mouse_window);
-        }
-
-        // handle selecting
-        if (ud.mouse_left_clicked) if (EntitySpawnerMenu.state.get_hovered_option(mouse_window)) |hovered_option| {
-            if (EntitySpawnerMenu.state.get_selected_option()) |selected_option| {
-                if (selected_option == hovered_option) EntitySpawnerMenu.state.clear_selection()
-                else EntitySpawnerMenu.state.select(hovered_option);
-            }
-            else {
-                if (!MouseState.busy) EntitySpawnerMenu.state.select(hovered_option);
-            }
-        };
-
-        // the logic which handles editing the resources with the currently selected option in the menu
-        if (EntitySpawnerMenu.state.selectable_option_selected) |option_selected| {
-            if(state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
-                // NOTE the first entity in the list is hardcoded to be "delete" which is the only way of deleting entity spawners currently
-                if (option_selected == EntitySpawnerMenu.state.get_option_count()-1) {
-                    const pos_to_delete = mouse_tile.to(u8);
-                    for (state.resources.entity_spawners.items, 0..) |pe, i| {
-                        if (pe.pos.equal(pos_to_delete)) {
-                            const removed = state.resources.entity_spawners.orderedRemove(i);
-                            std.log.debug("removed entity spawner {any}", .{removed});
-                            break;
-                        }
-                    }
-                }
-                else {
-                    try state.resources.entity_spawners.append(.{
-                        .pos = mouse_tile.to(u8),
-                        .entity_type = option_selected
                     });
                 }
             }
@@ -403,47 +370,72 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
     }
     
-    // things related to entity spawners
+    // Entity Spawners in the map editor
     {
-        const EntitySpawnerModifyState = struct {
-            var active = false;
-            var index: u8 = undefined;
-            fn set(_ix: u8) void {
-                std.debug.assert(!active);
-                std.debug.assert(!MouseState.busy);
-                MouseState.busy = true;
-                active = true;
-                index = _ix;
-            }
-            fn unset() void {
-                std.debug.assert(active);
-                std.debug.assert(MouseState.busy);
-                MouseState.busy = false;
-                active = false;
-            }
-        };
-        for (state.resources.entity_spawners.items, 0..) |*entity_spawner, i| {
-            const index: u8 = @intCast(i);
-            const hovering: bool = mouse_is_in_map_editor and mouse_tile.to(u8).equal(entity_spawner.pos);
-            
-            if (!MouseState.busy and !EntitySpawnerModifyState.active and hovering and ud.mouse_left_down) EntitySpawnerModifyState.set(index);
-            
-            if (EntitySpawnerModifyState.active) {
-                if (!ud.mouse_left_down) EntitySpawnerModifyState.unset()
-                else if (EntitySpawnerModifyState.index == index) {
-                    if (mouse_is_in_map_editor) entity_spawner.pos = mouse_tile.to(u8);
+        // Create and Delete entity spawners in the map
+        if (entity_spawner_menu_data.option_selected) |option_selected| {
+            if (state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
+                // NOTE the last option is hardcoded to be "delete" which is the only way of deleting entity spawners currently
+                if (option_selected == entity_spawner_menu_data.options.len-1) {
+                    const pos_to_delete = mouse_tile.to(u8);
+                    for (state.resources.entity_spawners.items, 0..) |pe, i| {
+                        if (pe.pos.equal(pos_to_delete)) {
+                            const removed = state.resources.entity_spawners.orderedRemove(i);
+                            std.log.debug("removed entity spawner {any}", .{removed});
+                            break;
+                        }
+                    }
+                }
+                else {
+                    try state.resources.entity_spawners.append(.{
+                        .pos = mouse_tile.to(u8),
+                        .entity_type = @intCast(option_selected)
+                    });
                 }
             }
-
-            // use the first sprite of the default animation as the sprite of the spawner
-            const spawner_sprite_id = Assets.EntityDescriptor.from(@enumFromInt(entity_spawner.entity_type)).default_animation.sprites[0];
-            try state.renderer_quads.add_sprite_from_atlas_index(spawner_sprite_id, entity_spawner.pos.to(f32).scale(8), .{});
-            if (hovering) {
-                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(entity_spawner.pos.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xffffffff)));
-            }
         }
-        state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
-        state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+        // things related to entity spawners
+        {
+            const EntitySpawnerModifyState = struct {
+                var active = false;
+                var index: u8 = undefined;
+                fn set(_ix: u8) void {
+                    std.debug.assert(!active);
+                    std.debug.assert(!MouseState.busy);
+                    MouseState.busy = true;
+                    active = true;
+                    index = _ix;
+                }
+                fn unset() void {
+                    std.debug.assert(active);
+                    std.debug.assert(MouseState.busy);
+                    MouseState.busy = false;
+                    active = false;
+                }
+            };
+            for (state.resources.entity_spawners.items, 0..) |*entity_spawner, i| {
+                const index: u8 = @intCast(i);
+                const hovering: bool = mouse_is_in_map_editor and mouse_tile.to(u8).equal(entity_spawner.pos);
+                
+                if (!MouseState.busy and !EntitySpawnerModifyState.active and hovering and ud.mouse_left_down) EntitySpawnerModifyState.set(index);
+                
+                if (EntitySpawnerModifyState.active) {
+                    if (!ud.mouse_left_down) EntitySpawnerModifyState.unset()
+                    else if (EntitySpawnerModifyState.index == index) {
+                        if (mouse_is_in_map_editor) entity_spawner.pos = mouse_tile.to(u8);
+                    } 
+                }
+
+                // use the first sprite of the default animation as the sprite of the spawner
+                const spawner_sprite_id = Assets.EntityDescriptor.from(@enumFromInt(entity_spawner.entity_type)).default_animation.sprites[0];
+                try state.renderer_quads.add_sprite_from_atlas_index(spawner_sprite_id, entity_spawner.pos.to(f32).scale(8), .{});
+                if (hovering) {
+                    try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(entity_spawner.pos.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xffffffff)));
+                }
+            }
+            state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+            state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+        }
     }
 
     // things related to particle emitters spawners
@@ -535,31 +527,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
     }
 
-    // list all the levels and if a level is clicked, change the value of `app.level_background`
-    {
-        const level_list_top_left = Vector2f.from(1, h - h/5);
-        const level_names_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
-        const level_names_highlight_color = RGBA.from(BGR, @bitCast(Assets.palette[2]));
-        for (state.resources.levels.items, 0..) |l, i| {
-            const height_text = state.debug_text_renderer.height()+1;
-            const top = level_list_top_left.y - height_text * @as(f32,@floatFromInt(i));
-            const bottom = top - height_text;
-            const left = level_list_top_left.x;
-            const right = level_list_top_left.x + 4*state.debug_text_renderer.width();
-            const selection_bb = BoundingBox(f32).from(top, bottom, left, right);
-            const level_name = state.resources.get_string(l.name);
-            try state.debug_text_renderer.print(Vector2f.from(left, bottom), "[{}]: {s} bb {} {} {} {}", .{i,level_name, l.bb.top, l.bb.bottom, l.bb.left, l.bb.right}, level_names_color);
-            if (selection_bb.contains(mouse_window)) {
-                try state.renderer_shapes.add_quad_from_bb(selection_bb, level_names_highlight_color);
-            }
-        }
-    }
-
-    // draw the entity spawner menu
-    try EntitySpawnerMenu.state.draw_data(mouse_window);
-    state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-    state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-
     // draw the particle emitter menu
     try ParticleEmitterMenu.state.draw_data(mouse_window);
     state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
@@ -581,16 +548,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         try c0.text_line("- Also add separator lines!");
         try c0.text_line("- Surprisingly it works, pretty cool :D");
     }
-    
-    const c1 = Container("1");
-    if (try c1.begin(ud.allocator, "another window", Vec2(f32).from(10, 230), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
-        try c1.text_line("not much to see here...");
-        try c1.separator(2);
-        try c1.text_line("really");
-    }
 
-    // TODO make it so that every container is automatically rendered
-    const containers = .{c0, c1};
+    const containers = .{c0, entity_spawner_menu};
     inline for (@typeInfo(@TypeOf(containers)).Struct.fields) |field| {
         try @field(containers, field.name).draw();
         state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
@@ -843,10 +802,10 @@ fn Container(comptime id: []const u8) type {
         const char_width = state.text_renderer.width()+1;
 
         var initialized: bool = false;
+        var background_color: RGBA = undefined;
+        var highlight_color_a: RGBA = undefined;
+        var highlight_color_b: RGBA = undefined;
         var text_color: RGBA = undefined;
-        var background_color_a: RGBA = undefined;
-        var background_color_b: RGBA = undefined;
-        var background_color_c: RGBA = undefined;
         var strings: Strings = undefined;
         var draggable_previous_position: ?Vec2(f32) = null;
         var dragged_frames: usize = 0;
@@ -857,6 +816,7 @@ fn Container(comptime id: []const u8) type {
         var elements: std.ArrayList(GuiElement) = undefined;
         var elements_text_lines: std.ArrayList(String) = undefined;
         var elements_buttons: std.ArrayList(Button) = undefined;
+        var selectable_options: std.ArrayList(SelectableOptions) = undefined;
 
         var container_active: bool = true;
         var pos: Vec2(f32) = undefined;
@@ -864,18 +824,24 @@ fn Container(comptime id: []const u8) type {
         var mouse_click: bool = undefined;
         var mouse_down: bool = undefined;
 
-        fn begin(allocator: std.mem.Allocator, _name: []const u8, _pos: Vec2(f32), _mouse_position: Vec2(f32), _mouse_click: bool, _mouse_down: bool) !bool {
+        var allocator: std.mem.Allocator = undefined;
+
+        fn begin(_allocator: std.mem.Allocator, _name: []const u8, _pos: Vec2(f32), _mouse_position: Vec2(f32), _mouse_click: bool, _mouse_down: bool) !bool {
             _ = id;
+            allocator = _allocator;
             if (!initialized) {
                 initialized = true;
                 strings = Strings.init(allocator);
                 elements = std.ArrayList(GuiElement).init(allocator);
                 elements_text_lines = std.ArrayList(String).init(allocator);
                 elements_buttons = std.ArrayList(Button).init(allocator);
-                background_color_a = RGBA.make(0,0,0,255);
-                background_color_b = RGBA.make(100,100,100,255);
-                background_color_c = RGBA.make(200,200,200,255);
+                selectable_options = std.ArrayList(SelectableOptions).init(allocator);
+                
                 text_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
+                highlight_color_a = RGBA.from(BGR, @bitCast(Assets.palette[2]));
+                highlight_color_b = RGBA.from(BGR, @bitCast(Assets.palette[3]));
+                background_color = RGBA.make(0,0,0,255);
+
                 bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, pos.x);
                 pos = _pos;
             }
@@ -886,6 +852,7 @@ fn Container(comptime id: []const u8) type {
             elements_text_lines.clearRetainingCapacity();
             elements.clearRetainingCapacity();
             elements_buttons.clearRetainingCapacity();
+            selectable_options.clearRetainingCapacity();
             mouse_position = _mouse_position;
             mouse_click = _mouse_click and dragged_frames<8;
             mouse_down = _mouse_down;
@@ -958,6 +925,48 @@ fn Container(comptime id: []const u8) type {
             _ = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
         }
 
+        fn text_line_fmt(comptime fmt: []const u8, args: anytype) !void {
+            const text = try std.fmt.allocPrint(allocator, fmt, args);
+            defer allocator.free(text);
+            const string = try strings.get_or_create(text);
+            const text_lines_index = elements_text_lines.items.len;
+            try elements_text_lines.append(string);
+            try elements.append(.{.index = text_lines_index, .element_type = .text_line, .height = text_line_height});
+            _ = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
+        }
+
+        fn option_selector(options: []const []const u8, selected: *?usize, hovered: *?usize) !void {
+            // TODO calculate minimal max width of every option
+            const options_bb = increment_bb(text_line_height*@as(f32, @floatFromInt(options.len)), 0);
+            
+            // find out if any option is hovered
+            if (options_bb.contains_exclusive(mouse_position)) {
+                const mouse_in_options_bb = mouse_position.substract(options_bb.bl());
+                const option_index: usize = @intFromFloat(@floor(mouse_in_options_bb.y / text_line_height));
+                std.debug.assert(option_index >= 0 and option_index < options.len);
+                hovered.* = option_index;
+            }
+            else hovered.* = null;
+
+            // selecting and selection-clear logic
+            if (mouse_click) if (hovered.*) |hovered_index| {
+                if (selected.*) |selected_index| {
+                    if (selected_index == hovered_index) selected.* = null
+                    else selected.* = hovered_index;
+                }
+                else {
+                    selected.* = hovered_index;
+                }
+            };
+            const index = selectable_options.items.len;
+            try selectable_options.append(SelectableOptions {
+                .options = options,
+                .hover_index = hovered.*,
+                .select_index = selected.*,
+            });
+            try elements.append(.{.index = index, .element_type = .selectable_options, .height = options_bb.height()});
+        }
+
         fn separator(extra_width: f32) !void {
             try elements.append(.{.index = 0, .element_type = .separator, .height = extra_width+2});
             _ = increment_bb(extra_width+2, 0);
@@ -965,7 +974,7 @@ fn Container(comptime id: []const u8) type {
 
         fn draw() !void {
             var working_bb = bb;
-            try state.renderer_shapes.add_quad_from_bb(bb, background_color_a);
+            try state.renderer_shapes.add_quad_from_bb(bb, background_color);
             if (name) |n| {
                 const header_bb = BoundingBox(f32).from(
                     bb.top,
@@ -973,7 +982,7 @@ fn Container(comptime id: []const u8) type {
                     bb.left,
                     bb.right,
                 );
-                try state.renderer_shapes.add_quad_from_bb(header_bb, if (name_hover) background_color_c else background_color_b);
+                try state.renderer_shapes.add_quad_from_bb(header_bb, if (name_hover) highlight_color_a else highlight_color_b);
                 try state.text_renderer.print(Vec2(f32).from(header_bb.left, header_bb.bottom+1), "{s}", .{n}, text_color);
                 working_bb.top -= header_bb.height();
             }
@@ -985,7 +994,7 @@ fn Container(comptime id: []const u8) type {
                         working_bb.top -= element.height;
                     },
                     .button => {
-                        try state.renderer_shapes.add_quad_from_bb(elements_buttons.items[element.index].bb, if (elements_buttons.items[element.index].hover) background_color_b else background_color_c);
+                        try state.renderer_shapes.add_quad_from_bb(elements_buttons.items[element.index].bb, if (elements_buttons.items[element.index].hover) highlight_color_a else highlight_color_b);
                         const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
                         try state.text_renderer.print(text_pos, "{s}", .{ strings.to_slice(elements_buttons.items[element.index].string) }, text_color);
                         working_bb.top -= element.height;
@@ -993,13 +1002,49 @@ fn Container(comptime id: []const u8) type {
                     .separator => {
                         const width = element.height-2;
                         const separator_line_bb = BoundingBox(f32).from(working_bb.top-1, working_bb.top-1-width, working_bb.left + 2, working_bb.right - 2);
-                        try state.renderer_shapes.add_quad_from_bb(separator_line_bb, background_color_b);
+                        try state.renderer_shapes.add_quad_from_bb(separator_line_bb, highlight_color_a);
                         working_bb.top -= element.height;
                     },
+                    .selectable_options => {
+                        const options_bb_bottom = working_bb.top - element.height;
+                        const data = selectable_options.items[element.index];
+                        for (data.options, 0..) |option, i| {
+                            const if32: f32 = @floatFromInt(i);
+                            // The bounding box of the i-th selectable option
+                            const option_bb = BoundingBox(f32).from(
+                                options_bb_bottom + (if32+1) * text_line_height,
+                                options_bb_bottom + (if32+0) * text_line_height,
+                                working_bb.left,
+                                working_bb.right
+                            );
+                            try state.text_renderer.print(option_bb.bl(), "{s}", .{option}, text_color);
+                        }
+                        if (data.select_index) |selected_option| {
+                            const if32: f32 = @floatFromInt(selected_option);
+                            const option_bb = BoundingBox(f32).from(
+                                options_bb_bottom + (if32+1) * text_line_height,
+                                options_bb_bottom + (if32+0) * text_line_height,
+                                working_bb.left,
+                                working_bb.right
+                            );
+                            try state.renderer_shapes.add_quad_from_bb(option_bb, highlight_color_b);
+                        }
+                        if (data.hover_index) |hover_index| {
+                            const if32: f32 = @floatFromInt(hover_index);
+                            const option_bb = BoundingBox(f32).from(
+                                options_bb_bottom + (if32+1) * text_line_height,
+                                options_bb_bottom + (if32+0) * text_line_height,
+                                working_bb.left,
+                                working_bb.right
+                            );
+                            try state.renderer_shapes.add_quad_from_bb(option_bb, highlight_color_a);
+                        }
+                        working_bb.top -= element.height;
+                    }
                     // else => unreachable
                 }
             }
-            try state.renderer_shapes.add_quad_border(bb, 1, background_color_b);
+            try state.renderer_shapes.add_quad_border(bb, 1, highlight_color_a);
         }
 
     };
@@ -1010,7 +1055,7 @@ const String = struct {
     length: usize
 };
 const Strings = struct {
-    
+
     storage: std.ArrayList(u8),
     map: std.StringArrayHashMap(String),
 
@@ -1042,6 +1087,11 @@ const Strings = struct {
     }
 
 };
+const SelectableOptions = struct {
+    options: []const []const u8,
+    hover_index: ?usize,
+    select_index: ?usize,
+};
 const Button = struct {
     string: String,
     bb: BoundingBox(f32),
@@ -1056,6 +1106,10 @@ const GuiElementType = enum {
     text_line,
     button,
     separator,
+    selectable_options
+};
+const HighlightType = enum {
+    none, highlighted_a, highlighted_b
 };
 
 

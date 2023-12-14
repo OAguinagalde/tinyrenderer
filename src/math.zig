@@ -956,6 +956,10 @@ pub fn BoundingBox(comptime T: type) type {
             return self.top - self.bottom;
         }
 
+        pub inline fn bl(self: Self) Vec2(T) {
+            return Vec2(T).from(self.left, self.bottom);
+        }
+
         pub inline fn from_tl_br(tl: anytype, br: anytype) Self {
             return from(tl.y, br.y, tl.x, br.x);
         }
@@ -967,6 +971,10 @@ pub fn BoundingBox(comptime T: type) type {
         /// `point` can be anything that has fields `x: T` and `y: T`
         pub inline fn contains(self: Self, point: anytype) bool {
             return point.x >= self.left and point.x <= self.right and point.y >= self.bottom and point.y <= self.top;
+        }
+
+        pub inline fn contains_exclusive(self: Self, point: anytype) bool {
+            return point.x >= self.left and point.x < self.right and point.y >= self.bottom and point.y < self.top;
         }
 
         pub inline fn overlaps(self: Self, other: Self) bool {
