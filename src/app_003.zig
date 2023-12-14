@@ -748,6 +748,11 @@ fn Container(comptime id: []const u8) type {
             else {
                 if (mouse_down and header_bb.contains(mouse_position)) draggable_previous_position = mouse_position;
             }
+
+            if (name) |n| {
+                try renderer.add_quad_from_bb(header_bb, if (name_hover) highlight_color_a else highlight_color_b);
+                try renderer.add_text(Vec2(f32).from(header_bb.left, header_bb.bottom+1), "{s}", .{n}, text_color);
+            }
             
             return container_active;
         }
@@ -760,9 +765,6 @@ fn Container(comptime id: []const u8) type {
 
         fn button(text: []const u8, pressed: *bool) !bool {
             const button_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
-            const string = try strings.get_or_create(text);
-            const buttons_index = elements_buttons.items.len;
-            try elements.append(.{.index = buttons_index, .element_type = .button, .height = button_bb.height()});
 
             var hover = false;
             if (button_bb.contains(mouse_position)) {
@@ -772,31 +774,22 @@ fn Container(comptime id: []const u8) type {
                 }
             }
             
-            try elements_buttons.append(.{
-                .string = string,
-                .bb = button_bb,
-                .hover = hover,
-            });
-
+            try renderer.add_quad_from_bb(button_bb, if (hover) highlight_color_a else highlight_color_b);
+            try renderer.add_text(button_bb.bl(), "{s}", .{text}, text_color);
+            
             return pressed.*;
         }
 
         fn text_line(text: []const u8) !void {
-            const string = try strings.get_or_create(text);
-            const text_lines_index = elements_text_lines.items.len;
-            try elements_text_lines.append(string);
-            try elements.append(.{.index = text_lines_index, .element_type = .text_line, .height = text_line_height});
-            _ = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
+            const text_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
+            try renderer.add_text(text_bb.bl(), "{s}", .{text}, text_color);
         }
 
         fn text_line_fmt(comptime fmt: []const u8, args: anytype) !void {
             const text = try std.fmt.allocPrint(allocator, fmt, args);
             defer allocator.free(text);
-            const string = try strings_ephemeral.get_or_create(text);
-            const text_lines_index = elements_text_lines.items.len;
-            try elements_text_lines.append(string);
-            try elements.append(.{.index = text_lines_index, .element_type = .text_line_ephemeral, .height = text_line_height});
-            _ = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
+            const text_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);           
+            try renderer.add_text(text_bb.bl(), "{s}", .{text}, text_color);
         }
 
         fn option_selector(options: []const []const u8, selected: *?usize, hovered: *?usize) !void {
@@ -822,13 +815,39 @@ fn Container(comptime id: []const u8) type {
                     selected.* = hovered_index;
                 }
             };
-            const index = selectable_options.items.len;
-            try selectable_options.append(SelectableOptions {
-                .options = options,
-                .hover_index = hovered.*,
-                .select_index = selected.*,
-            });
-            try elements.append(.{.index = index, .element_type = .selectable_options, .height = options_bb.height()});
+
+            // draw
+            for (options, 0..) |option, i| {
+                const if32: f32 = @floatFromInt(i);
+                // The bounding box of the i-th selectable option
+                const option_bb = BoundingBox(f32).from(
+                    options_bb.bottom + (if32+1) * text_line_height,
+                    options_bb.bottom + (if32+0) * text_line_height,
+                    options_bb.left,
+                    options_bb.right
+                );
+                try renderer.add_text(option_bb.bl(), "{s}", .{option}, text_color);
+            }
+            if (selected.*) |selected_option| {
+                const if32: f32 = @floatFromInt(selected_option);
+                const option_bb = BoundingBox(f32).from(
+                    options_bb.bottom + (if32+1) * text_line_height,
+                    options_bb.bottom + (if32+0) * text_line_height,
+                    options_bb.left,
+                    options_bb.right
+                );
+                try renderer.add_quad_from_bb(option_bb, highlight_color_b);
+            }
+            if (hovered.*) |hover_index| {
+                const if32: f32 = @floatFromInt(hover_index);
+                const option_bb = BoundingBox(f32).from(
+                    options_bb.bottom + (if32+1) * text_line_height,
+                    options_bb.bottom + (if32+0) * text_line_height,
+                    options_bb.left,
+                    options_bb.right
+                );
+                try renderer.add_quad_from_bb(option_bb, highlight_color_a);
+            }
         }
 
         fn surface_grid_selector(comptime surface_pixel_type: type, comptime surface_grid_dimensions: Vec2(usize), surface: Buffer2D(surface_pixel_type), selected: *?usize, hovered: *?usize) !void {
@@ -857,145 +876,54 @@ fn Container(comptime id: []const u8) type {
                 }
             };
 
-            const index = surface_with_grids.items.len;
-            try surface_with_grids.append(SurfaceWithSelectableGridElement(surface_pixel_type) {
-                .surface = surface,
-                .hover_index = hovered.*,
-                .select_index = selected.*,
-                .padding = padding,
-                .grid_dimensions = surface_grid_dimensions,
-            });
-            try elements.append(.{.index = index, .element_type = .surface_grid_selectable, .height = element_bb.height()});
+            // draw
+            try renderer.add_blit_texture_to_bb(surface_bb, surface);
+            // render the highlight for the hover
+            if (selected.*) |selected_option| {
+                const col: f32 = @floatFromInt(selected_option%surface_grid_dimensions.x);
+                const row: f32 = @floatFromInt(@divFloor(selected_option,surface_grid_dimensions.y));
+                const option_bb = BoundingBox(f32).from(
+                    surface_bb.bottom + row*8 + 8,
+                    surface_bb.bottom + row*8,
+                    surface_bb.left + col*8,
+                    surface_bb.left + col*8 + 8
+                );
+                var color = highlight_color_b;
+                color.a = 50;
+                try renderer.add_quad_from_bb(option_bb, color);
+            }
+            // render the highlight for the selected
+            if (hovered.*) |hover_index| {
+                const col: f32 = @floatFromInt(hover_index%surface_grid_dimensions.x);
+                const row: f32 = @floatFromInt(@divFloor(hover_index,surface_grid_dimensions.y));
+                const option_bb = BoundingBox(f32).from(
+                    surface_bb.bottom + row*8 + 8,
+                    surface_bb.bottom + row*8,
+                    surface_bb.left + col*8,
+                    surface_bb.left + col*8 + 8
+                );
+                var color = highlight_color_a;
+                color.a = 50;
+                try renderer.add_quad_from_bb(option_bb, color);
+            }
         }
 
         fn separator(extra_width: f32) !void {
+            const padding = 1;
             try elements.append(.{.index = 0, .element_type = .separator, .height = extra_width+2});
-            _ = increment_bb(extra_width+2, 0);
-        }
-
-        fn draw() !void {
-            var working_bb = bb;
-            try renderer.add_quad_from_bb(bb, background_color);
-            if (name) |n| {
-                const header_bb = BoundingBox(f32).from(
-                    bb.top,
-                    bb.top - text_line_height,
-                    bb.left,
-                    bb.right,
-                );
-                try renderer.add_quad_from_bb(header_bb, if (name_hover) highlight_color_a else highlight_color_b);
-                try renderer.add_text(Vec2(f32).from(header_bb.left, header_bb.bottom+1), "{s}", .{n}, text_color);
-                working_bb.top -= header_bb.height();
-            }
-            for (elements.items) |element| {
-                switch (element.element_type) {
-                    .text_line => {
-                        const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
-                        try renderer.add_text(text_pos, "{s}", .{ strings.to_slice(elements_text_lines.items[element.index]) }, text_color);
-                        working_bb.top -= element.height;
-                    },
-                    .text_line_ephemeral => {
-                        const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
-                        try renderer.add_text(text_pos, "{s}", .{ strings_ephemeral.to_slice(elements_text_lines.items[element.index]) }, text_color);
-                        working_bb.top -= element.height;
-                    },
-                    .button => {
-                        try renderer.add_quad_from_bb(elements_buttons.items[element.index].bb, if (elements_buttons.items[element.index].hover) highlight_color_a else highlight_color_b);
-                        const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
-                        try renderer.add_text(text_pos, "{s}", .{ strings.to_slice(elements_buttons.items[element.index].string) }, text_color);
-                        working_bb.top -= element.height;
-                    },
-                    .separator => {
-                        const width = element.height-2;
-                        const separator_line_bb = BoundingBox(f32).from(working_bb.top-1, working_bb.top-1-width, working_bb.left + 2, working_bb.right - 2);
-                        try renderer.add_quad_from_bb(separator_line_bb, highlight_color_a);
-                        working_bb.top -= element.height;
-                    },
-                    .selectable_options => {
-                        const options_bb_bottom = working_bb.top - element.height;
-                        const data = selectable_options.items[element.index];
-                        for (data.options, 0..) |option, i| {
-                            const if32: f32 = @floatFromInt(i);
-                            // The bounding box of the i-th selectable option
-                            const option_bb = BoundingBox(f32).from(
-                                options_bb_bottom + (if32+1) * text_line_height,
-                                options_bb_bottom + (if32+0) * text_line_height,
-                                working_bb.left,
-                                working_bb.right
-                            );
-                            try renderer.add_text(option_bb.bl(), "{s}", .{option}, text_color);
-                        }
-                        if (data.select_index) |selected_option| {
-                            const if32: f32 = @floatFromInt(selected_option);
-                            const option_bb = BoundingBox(f32).from(
-                                options_bb_bottom + (if32+1) * text_line_height,
-                                options_bb_bottom + (if32+0) * text_line_height,
-                                working_bb.left,
-                                working_bb.right
-                            );
-                            try renderer.add_quad_from_bb(option_bb, highlight_color_b);
-                        }
-                        if (data.hover_index) |hover_index| {
-                            const if32: f32 = @floatFromInt(hover_index);
-                            const option_bb = BoundingBox(f32).from(
-                                options_bb_bottom + (if32+1) * text_line_height,
-                                options_bb_bottom + (if32+0) * text_line_height,
-                                working_bb.left,
-                                working_bb.right
-                            );
-                            try renderer.add_quad_from_bb(option_bb, highlight_color_a);
-                        }
-                        working_bb.top -= element.height;
-                    },
-                    .surface_grid_selectable => {
-                        const data = surface_with_grids.items[element.index];
-                        // render the surface itself
-                        const padding = data.padding;
-                        const surface = data.surface;
-                        const surface_bb = BoundingBox(f32).from(working_bb.top - padding, working_bb.top - element.height + padding, working_bb.left + padding, working_bb.left + padding + @as(f32,@floatFromInt(surface.width)));
-                        try renderer.add_blit_texture_to_bb(surface_bb, surface);
-
-                        const grid_dimensions = data.grid_dimensions;
-                        // render the highlight for the hover
-                        if (data.select_index) |selected_option| {
-                            const col: f32 = @floatFromInt(selected_option%grid_dimensions.x);
-                            const row: f32 = @floatFromInt(@divFloor(selected_option,grid_dimensions.y));
-                            const option_bb = BoundingBox(f32).from(
-                                surface_bb.bottom + row*8 + 8,
-                                surface_bb.bottom + row*8,
-                                surface_bb.left + col*8,
-                                surface_bb.left + col*8 + 8
-                            );
-                            var color = highlight_color_b;
-                            color.a = 50;
-                            try renderer.add_quad_from_bb(option_bb, color);
-                        }
-                        // render the highlight for the selected
-                        if (data.hover_index) |hover_index| {
-                            const col: f32 = @floatFromInt(hover_index%grid_dimensions.x);
-                            const row: f32 = @floatFromInt(@divFloor(hover_index,grid_dimensions.y));
-                            const option_bb = BoundingBox(f32).from(
-                                surface_bb.bottom + row*8 + 8,
-                                surface_bb.bottom + row*8,
-                                surface_bb.left + col*8,
-                                surface_bb.left + col*8 + 8
-                            );
-                            var color = highlight_color_a;
-                            color.a = 50;
-                            try renderer.add_quad_from_bb(option_bb, color);
-                        }
-
-                        working_bb.top -= element.height;
-                    }
-                    // else => unreachable
-                }
-            }
-            try renderer.add_quad_border(bb, 1, highlight_color_a);
-            try renderer.flush_all();
+            const separator_bb = increment_bb(extra_width + 2*padding, 0);
+            const separator_line_bb = BoundingBox(f32).from(separator_bb.top-padding, separator_bb.bottom+padding, separator_bb.left + padding, separator_bb.right - padding);
+            try renderer.add_quad_from_bb(separator_line_bb, highlight_color_a);
         }
 
         fn end() !void {
-            try draw();
+            
+            // TODO render in background layer
+            // try renderer.add_quad_from_bb(bb, background_color);
+
+            try renderer.add_quad_border(bb, 1, highlight_color_a);
+            try renderer.flush_all();
+            // try draw();
         }
 
     };
@@ -1573,6 +1501,7 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
 }
 
 // TODO allow to continue batches if not explicitly asked to use a different batch, or if the continuation is just imposible (for example, when textures used are different)
+// TODO add layers!
 pub fn Renderer(comptime output_pixel_type: type) type {
     return struct {
 
