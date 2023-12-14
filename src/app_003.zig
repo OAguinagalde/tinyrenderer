@@ -721,6 +721,11 @@ fn Container(comptime id: []const u8) type {
             mouse_down = _mouse_down;
             renderer.set_context(pixel_buffer, mvp_matrix, viewport_matrix);
 
+            // NOTE this is a hack until I have layers in the renderer. Since I dont know the full size of the container yet
+            // once I know it later on the call to `end()` I will then alter these values here for the correct ones.
+            // TODO fix this hack
+            try renderer.add_quad_from_bb(BoundingBox(f32).from(0,0,0,0), background_color);
+
             const header_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(_name.len)) * char_width);
             name = strings.to_slice(try strings.get_or_create(_name));
             
@@ -750,8 +755,8 @@ fn Container(comptime id: []const u8) type {
             }
 
             if (name) |n| {
-                try renderer.add_quad_from_bb(header_bb, if (name_hover) highlight_color_a else highlight_color_b);
-                try renderer.add_text(Vec2(f32).from(header_bb.left, header_bb.bottom+1), "{s}", .{n}, text_color);
+                try renderer.add_quad_from_bb(bb, if (name_hover) highlight_color_a else highlight_color_b);
+                try renderer.add_text(Vec2(f32).from(bb.left, bb.bottom+1), "{s}", .{n}, text_color);
             }
             
             return container_active;
@@ -836,7 +841,9 @@ fn Container(comptime id: []const u8) type {
                     options_bb.left,
                     options_bb.right
                 );
-                try renderer.add_quad_from_bb(option_bb, highlight_color_b);
+                var color = highlight_color_b;
+                color.a = 50;
+                try renderer.add_quad_from_bb(option_bb, color);
             }
             if (hovered.*) |hover_index| {
                 const if32: f32 = @floatFromInt(hover_index);
@@ -846,7 +853,9 @@ fn Container(comptime id: []const u8) type {
                     options_bb.left,
                     options_bb.right
                 );
-                try renderer.add_quad_from_bb(option_bb, highlight_color_a);
+                var color = highlight_color_a;
+                color.a = 50;
+                try renderer.add_quad_from_bb(option_bb, color);
             }
         }
 
@@ -919,7 +928,13 @@ fn Container(comptime id: []const u8) type {
         fn end() !void {
             
             // TODO render in background layer
-            // try renderer.add_quad_from_bb(bb, background_color);
+            // For now this is a huge hack lol dont do this
+            try renderer.batches_shapes.items[0].add_quad_from_bb(bb, background_color);
+            renderer.batches_shapes.items[0].vertex_buffer.items[3] = renderer.batches_shapes.items[0].vertex_buffer.pop();
+            renderer.batches_shapes.items[0].vertex_buffer.items[2] = renderer.batches_shapes.items[0].vertex_buffer.pop();
+            renderer.batches_shapes.items[0].vertex_buffer.items[1] = renderer.batches_shapes.items[0].vertex_buffer.pop();
+            renderer.batches_shapes.items[0].vertex_buffer.items[0] = renderer.batches_shapes.items[0].vertex_buffer.pop();
+            
 
             try renderer.add_quad_border(bb, 1, highlight_color_a);
             try renderer.flush_all();
