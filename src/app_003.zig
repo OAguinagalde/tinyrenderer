@@ -52,6 +52,7 @@ const State = struct {
     renderer_quads: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, null)),
     renderer_blending: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, 0)),
     renderer_shapes: ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)),
+    renderer_surfaces: StandardQuadRenderer(platform.OutPixelType),
     level_background: Assets.LevelBackgroundDescriptor,
     rng_engine: std.rand.DefaultPrng,
     random: std.rand.Random,
@@ -73,6 +74,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.renderer_quads = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, null)).init(allocator, Assets.palette, Assets.atlas_tiles);
     state.renderer_blending = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
     state.renderer_shapes = try ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)).init(allocator);
+    state.renderer_surfaces = try StandardQuadRenderer(platform.OutPixelType).init(allocator);
     state.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
     state.rng_engine = std.rand.DefaultPrng.init(@intCast(platform.timestamp()));
     state.random = state.rng_engine.random();
@@ -134,16 +136,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     if (ud.key_pressed('J') and mouse_is_in_map_editor) try state.resources.junctions.append(.{.a = mouse_tile_in_map.to(u8), .b = mouse_tile_in_map.to(u8) });    
 
-    const ParticleEmitterMenu = struct {
-        var state = GuiMenuFromEnum("particle emitters", Assets.ParticleEmitterType, &[_][]const u8{"delete emitter"}).init(
-            Vec2(f32).from(50, 140),
-            RGBA.from(BGR, @bitCast(Assets.palette[1])),
-            RGBA.from(BGR, @bitCast(Assets.palette[2])),
-            RGBA.from(BGR, @bitCast(Assets.palette[3])),
-            RGBA.make(0, 0, 0, 255)
-        );
-    };
-
     const entity_spawner_menu_data = struct {
         var option_selected: ?usize = null;
         var option_hovered: ?usize = null;
@@ -159,54 +151,74 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     };
     
     const entity_spawner_menu = Container("entity_spawner_menu");
-    if (try entity_spawner_menu.begin(ud.allocator, "entity spawner", Vec2(f32).from(50, 200), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+    if (try entity_spawner_menu.begin(ud.allocator, "entity spawner", Vec2(f32).from(10, 250), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
         if (entity_spawner_menu_data.option_selected) |selected| try entity_spawner_menu.text_line_fmt("Selected: {}", .{selected})
         else try entity_spawner_menu.text_line("Select one...");
         try entity_spawner_menu.option_selector(entity_spawner_menu_data.options, &entity_spawner_menu_data.option_selected, &entity_spawner_menu_data.option_hovered);
     }
 
-    // logic of particle emitter menu
-    {
-        // handle dragging
-        if (ParticleEmitterMenu.state.get_header_bb().contains(mouse_window) and !MouseState.busy and ud.mouse_left_down) ParticleEmitterMenu.state.drag(mouse_window);
-        if (ParticleEmitterMenu.state.draggable_previous_position) |_| {
-            if (!ud.mouse_left_down) ParticleEmitterMenu.state.stop_drag()
-            else ParticleEmitterMenu.state.drag(mouse_window);
-        }
-
-        // handle selecting
-        if (ud.mouse_left_clicked) if (ParticleEmitterMenu.state.get_hovered_option(mouse_window)) |hovered_option| {
-            if (ParticleEmitterMenu.state.get_selected_option()) |selected_option| {
-                if (selected_option == hovered_option) ParticleEmitterMenu.state.clear_selection()
-                else ParticleEmitterMenu.state.select(hovered_option);
+    const particle_emitter_menu_data = struct {
+        var option_selected: ?usize = null;
+        var option_hovered: ?usize = null;
+        const options: []const []const u8 = blk: {
+            var opts: []const []const u8 = &[_][]const u8 {};
+            opts = opts ++ &[_][]const u8{};
+            for (@typeInfo(Assets.ParticleEmitterType).Enum.fields) |field| {
+                opts = opts ++ &[_][]const u8{field.name};
             }
-            else {
-                if (!MouseState.busy) ParticleEmitterMenu.state.select(hovered_option);
-            }
+            opts = opts ++ &[_][]const u8{"delete emitter"};
+            break :blk opts;
         };
+    };
 
-        // implement the functionality of the menu in the map editor itself
-        if (ParticleEmitterMenu.state.selectable_option_selected) |option_selected| {
-            if(state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
-                // NOTE the first entity in the list is hardcoded to be "delete" which is the only way of deleting entity spawners currently
-                if (option_selected == ParticleEmitterMenu.state.get_option_count()-1) {
-                    const pos_to_delete = mouse_tile.to(u8);
-                    for (state.resources.environment_particle_emitters.items, 0..) |pe, i| {
-                        if (pe.pos.equal(pos_to_delete)) {
-                            const removed = state.resources.environment_particle_emitters.orderedRemove(i);
-                            std.log.debug("removed particle emitter {any}", .{removed});
-                            break;
-                        }
-                    }
-                }
-                else {
-                    try state.resources.environment_particle_emitters.append(.{
-                        .pos = mouse_tile.to(u8),
-                        .particle_emitter_type = option_selected
-                    });
+    const particle_emitter_menu = Container("particle_emitter_menu");
+    if (try particle_emitter_menu.begin(ud.allocator, "particle emitter spawner", Vec2(f32).from(10, 300), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+        if (particle_emitter_menu_data.option_selected) |selected| try particle_emitter_menu.text_line_fmt("Selected: {}", .{selected})
+        else try particle_emitter_menu.text_line("Select one...");
+        try particle_emitter_menu.option_selector(particle_emitter_menu_data.options, &particle_emitter_menu_data.option_selected, &particle_emitter_menu_data.option_hovered);
+    }
+
+    const sprite_selector_window_data = struct {
+        var sprite_selected: ?usize = null;
+        var sprite_hovered: ?usize = null;
+        var init = false;
+        var surface: Buffer2D(platform.OutPixelType) = undefined;
+        // const surface: Buffer2D(platform.OutPixelType) = blk: {
+        //     var buffer = Buffer2D(platform.OutPixelType).from(ud.allocator.alloc(platform.OutPixelType, 16*16*8*8), 16*8);
+        //     // pre-render the sprite atlas into a surface
+        //     for (0..16) |j| {
+        //         for (0..16) |i| {
+        //             const jj: f32 = @floatFromInt(j);
+        //             const ii: f32 = @floatFromInt(i);
+        //             const pos = Vector2f.from(ii*8, jj*8);
+        //             state.renderer_blending.add_sprite_from_atlas_index(@intCast(i + j*16), pos, .{}) catch @panic("");
+        //         }
+        //     }
+        //     state.renderer_blending.render(buffer, M33.orthographic_projection(0, 16*8, 16*8, 0), M33.viewport(0, 0, 16*8, 16*8));
+        //     break :blk buffer;
+        // };
+    };
+    if (sprite_selector_window_data.init == false) {
+        sprite_selector_window_data.init = true;
+        sprite_selector_window_data.surface = blk: {
+            var buffer = Buffer2D(platform.OutPixelType).from(try ud.allocator.alloc(platform.OutPixelType, 16*16*8*8), 16*8);
+            buffer.clear(platform.OutPixelType.from(BGR, @bitCast(Assets.palette[0])));
+            // pre-render the sprite atlas into a surface
+            for (0..16) |j| {
+                for (0..16) |i| {
+                    const jj: f32 = @floatFromInt(j);
+                    const ii: f32 = @floatFromInt(i);
+                    const pos = Vector2f.from(ii*8, jj*8);
+                    state.renderer_blending.add_sprite_from_atlas_index(@intCast(i + j*16), pos, .{}) catch @panic("");
                 }
             }
-        }
+            state.renderer_blending.render(buffer, M33.orthographic_projection(0, 16*8, 16*8, 0), M33.viewport(0, 0, 16*8, 16*8));
+            break :blk buffer;
+        };
+    }
+    const sprite_selector_window = Container("sprite_selector");
+    if (try sprite_selector_window.begin(ud.allocator, "sprites", Vec2(f32).from (10, 10+16*8), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+        try sprite_selector_window.surface_grid_selector(platform.OutPixelType, Vec2(usize).from(16,16), sprite_selector_window_data.surface, &sprite_selector_window_data.sprite_selected, &sprite_selector_window_data.sprite_hovered);
     }
 
     const clear_color: BGR = @bitCast(Assets.palette[0]);
@@ -394,7 +406,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 }
             }
         }
-        // things related to entity spawners
+        // move spawners in the map
         {
             const EntitySpawnerModifyState = struct {
                 var active = false;
@@ -437,48 +449,76 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
         }
     }
-
-    // things related to particle emitters spawners
+    
+    // Particle Emitters in the map editor
     {
-        const ParticleEmitterModifyState = struct {
-            var active = false;
-            var index: u8 = undefined;
-            fn set(_ix: u8) void {
-                std.debug.assert(!active);
-                std.debug.assert(!MouseState.busy);
-                MouseState.busy = true;
-                active = true;
-                index = _ix;
-            }
-            fn unset() void {
-                std.debug.assert(active);
-                std.debug.assert(MouseState.busy);
-                MouseState.busy = false;
-                active = false;
-            }
-        };
-        for (state.resources.environment_particle_emitters.items, 0..) |*particle_emitter, i| {
-            const index: u8 = @intCast(i);
-            const hovering: bool = mouse_is_in_map_editor and mouse_tile.to(u8).equal(particle_emitter.pos);
-            
-            if (!MouseState.busy and !ParticleEmitterModifyState.active and hovering and ud.mouse_left_down) ParticleEmitterModifyState.set(index);
-            
-            if (ParticleEmitterModifyState.active) {
-                if (!ud.mouse_left_down) ParticleEmitterModifyState.unset()
-                else if (ParticleEmitterModifyState.index == index) {
-                    if (mouse_is_in_map_editor) particle_emitter.pos = mouse_tile.to(u8);
+        // Create and Delete emitters in the map
+        {
+            // implement the functionality of the menu in the map editor itself
+            if (particle_emitter_menu_data.option_selected) |option_selected| {
+                if(state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
+                    // NOTE the first entity in the list is hardcoded to be "delete" which is the only way of deleting entity spawners currently
+                    if (option_selected == particle_emitter_menu_data.options.len-1) {
+                        const pos_to_delete = mouse_tile.to(u8);
+                        for (state.resources.environment_particle_emitters.items, 0..) |pe, i| {
+                            if (pe.pos.equal(pos_to_delete)) {
+                                const removed = state.resources.environment_particle_emitters.orderedRemove(i);
+                                std.log.debug("removed particle emitter {any}", .{removed});
+                                break;
+                            }
+                        }
+                    }
+                    else {
+                        try state.resources.environment_particle_emitters.append(.{
+                            .pos = mouse_tile.to(u8),
+                            .particle_emitter_type = @intCast(option_selected)
+                        });
+                    }
                 }
             }
-
-            // use the first sprite of the default animation as the sprite of the spawner
-            const particle_emitter_sprite_id = 1;
-            try state.renderer_quads.add_sprite_from_atlas_index(particle_emitter_sprite_id, particle_emitter.pos.to(f32).scale(8), .{});
-            if (hovering) {
-                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(particle_emitter.pos.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xffffffff)));
-            }
         }
-        state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
-        state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+        // Move emitters in the map
+        {
+            const ParticleEmitterModifyState = struct {
+                var active = false;
+                var index: u8 = undefined;
+                fn set(_ix: u8) void {
+                    std.debug.assert(!active);
+                    std.debug.assert(!MouseState.busy);
+                    MouseState.busy = true;
+                    active = true;
+                    index = _ix;
+                }
+                fn unset() void {
+                    std.debug.assert(active);
+                    std.debug.assert(MouseState.busy);
+                    MouseState.busy = false;
+                    active = false;
+                }
+            };
+            for (state.resources.environment_particle_emitters.items, 0..) |*particle_emitter, i| {
+                const index: u8 = @intCast(i);
+                const hovering: bool = mouse_is_in_map_editor and mouse_tile.to(u8).equal(particle_emitter.pos);
+                
+                if (!MouseState.busy and !ParticleEmitterModifyState.active and hovering and ud.mouse_left_down) ParticleEmitterModifyState.set(index);
+                
+                if (ParticleEmitterModifyState.active) {
+                    if (!ud.mouse_left_down) ParticleEmitterModifyState.unset()
+                    else if (ParticleEmitterModifyState.index == index) {
+                        if (mouse_is_in_map_editor) particle_emitter.pos = mouse_tile.to(u8);
+                    }
+                }
+
+                // use the first sprite of the default animation as the sprite of the spawner
+                const particle_emitter_sprite_id = 1;
+                try state.renderer_quads.add_sprite_from_atlas_index(particle_emitter_sprite_id, particle_emitter.pos.to(f32).scale(8), .{});
+                if (hovering) {
+                    try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(particle_emitter.pos.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xffffffff)));
+                }
+            }
+            state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+            state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+        }
     }
 
     // map painting stuff
@@ -527,37 +567,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
     }
 
-    // draw the particle emitter menu
-    try ParticleEmitterMenu.state.draw_data(mouse_window);
-    state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-    state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-
-    // TODO implement internal persistent state for arbitrary number of buttons identified by the label
-    // TODO find a good way to handle errors without needing to try on every call
-    // TODO stack based API so that I dont rely on comptime generated static lifetime structs
-    const static = struct {
-        var active = false;
-    };
-    const c0 = Container("0");
-    if (try c0.begin(ud.allocator, "This is my container!", Vec2(f32).from(50, 200), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
-        try c0.text_line("- Make my own Immediate Mode GUI library");
-        if (try c0.button("- Add buttons to the library", &static.active)) {
-            try c0.text_line("(The button can be closed as well ofcourse)");
-        }
-        try c0.separator(2);
-        try c0.text_line("- Also add separator lines!");
-        try c0.text_line("- Surprisingly it works, pretty cool :D");
-    }
-
-    const containers = .{c0, entity_spawner_menu};
-    inline for (@typeInfo(@TypeOf(containers)).Struct.fields) |field| {
-        try @field(containers, field.name).draw();
-        state.renderer_shapes.render(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-        state.text_renderer.render_all(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-    }
-
     // sprite selection windows drawing and logic
-    {
+    if (false) {
         const sprites_top = 16*8 + 10;
         const sprite_selection_bb = BoundingBox(f32).from(sprites_top, 10, 10, 10+16*8);
         // draw a black box to paint the sprites over
@@ -625,30 +636,28 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
     }
     
-    // debug overlay
-    {
-        if (state.debug) {
-            const color = RGBA.from(BGR, @bitCast(Assets.palette[3]));
-            const height_text = state.debug_text_renderer.height()+1;
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*1 )), "ms {d: <9.2}", .{ud.ms}, color);
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*2 )), "frame {}", .{ud.frame}, color);
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*3 )), "camera {d:.4}, {d:.4}", .{state.camera.pos.x, state.camera.pos.y}, color);
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*4 )), "mouse_world {d:.4} {d:.4}", .{mouse_world.x, mouse_world.y}, color);
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*5 )), "mouse_window {d:.4} {d:.4}", .{mouse_window.x, mouse_window.y}, color);
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*6 )), "mouse_tile {d:.4} {d:.4}", .{mouse_tile.x, mouse_tile.y}, color);
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*7 )), "buffer dimensions {d:.4} {d:.4}", .{w, h}, color);
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*8 )), "zoom {}", .{state.zoom}, color);
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*9 )), "selected_sprite {}", .{state.selected_sprite}, color);
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*10)), "l click {}", .{ud.mouse_left_clicked}, color);
-            try state.debug_text_renderer.print(Vector2f.from(1, h - (height_text*11)), "mouse busy {}", .{MouseState.busy}, color);
-        }
-        state.debug_text_renderer.render_all(
-            ud.pixel_buffer,
-            projection_matrix_screen,
-            viewport_matrix
-        );
+    const containers = .{entity_spawner_menu, particle_emitter_menu, sprite_selector_window};
+    inline for (@typeInfo(@TypeOf(containers)).Struct.fields) |field| {
+        try @field(containers, field.name).draw(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
     }
-    
+
+    // debug overlay
+    const dw = Container("debug_window");
+    if (try dw.begin(ud.allocator, "debug", Vec2(f32).from(1, h-1), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+        try dw.text_line_fmt("ms {d: <9.2}", .{ud.ms});
+        try dw.text_line_fmt("frame {}", .{ud.frame});
+        try dw.text_line_fmt("camera {d:.4}, {d:.4}", .{state.camera.pos.x, state.camera.pos.y});
+        try dw.text_line_fmt("mouse_world {d:.4} {d:.4}", .{mouse_world.x, mouse_world.y});
+        try dw.text_line_fmt("mouse_window {d:.4} {d:.4}", .{mouse_window.x, mouse_window.y});
+        try dw.text_line_fmt("mouse_tile {d:.4} {d:.4}", .{mouse_tile.x, mouse_tile.y});
+        try dw.text_line_fmt("buffer dimensions {d:.4} {d:.4}", .{w, h});
+        try dw.text_line_fmt("zoom {}", .{state.zoom});
+        try dw.text_line_fmt("selected_sprite {}", .{state.selected_sprite});
+        try dw.text_line_fmt("l click {}", .{ud.mouse_left_clicked});
+        try dw.text_line_fmt("mouse busy {}", .{MouseState.busy});
+    }
+    try dw.draw(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+
     return true;
 }
 
@@ -792,10 +801,12 @@ fn GuiMenuFromEnum(comptime name: []const u8, comptime enumeration: type, compti
     };
 }
 
+// TODO implement internal persistent state for arbitrary number of buttons identified by the label
+// TODO find a good way to handle errors without needing to try on every call
+// TODO stack based API so that I dont rely on comptime generated static lifetime structs
 fn Container(comptime id: []const u8) type {
     return struct {
     
-        const ElementType = GuiElementType.container;
         const Self = @This();
 
         const text_line_height = state.text_renderer.height()+3;
@@ -807,6 +818,7 @@ fn Container(comptime id: []const u8) type {
         var highlight_color_b: RGBA = undefined;
         var text_color: RGBA = undefined;
         var strings: Strings = undefined;
+        var strings_ephemeral: Strings = undefined;
         var draggable_previous_position: ?Vec2(f32) = null;
         var dragged_frames: usize = 0;
         
@@ -817,6 +829,7 @@ fn Container(comptime id: []const u8) type {
         var elements_text_lines: std.ArrayList(String) = undefined;
         var elements_buttons: std.ArrayList(Button) = undefined;
         var selectable_options: std.ArrayList(SelectableOptions) = undefined;
+        var surface_with_grids: std.ArrayList(SurfaceWithSelectableGridElement(platform.OutPixelType)) = undefined;
 
         var container_active: bool = true;
         var pos: Vec2(f32) = undefined;
@@ -832,10 +845,12 @@ fn Container(comptime id: []const u8) type {
             if (!initialized) {
                 initialized = true;
                 strings = Strings.init(allocator);
+                strings_ephemeral = Strings.init(allocator);
                 elements = std.ArrayList(GuiElement).init(allocator);
                 elements_text_lines = std.ArrayList(String).init(allocator);
                 elements_buttons = std.ArrayList(Button).init(allocator);
                 selectable_options = std.ArrayList(SelectableOptions).init(allocator);
+                surface_with_grids = std.ArrayList(SurfaceWithSelectableGridElement(platform.OutPixelType)).init(allocator);
                 
                 text_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
                 highlight_color_a = RGBA.from(BGR, @bitCast(Assets.palette[2]));
@@ -853,6 +868,8 @@ fn Container(comptime id: []const u8) type {
             elements.clearRetainingCapacity();
             elements_buttons.clearRetainingCapacity();
             selectable_options.clearRetainingCapacity();
+            surface_with_grids.clearRetainingCapacity();
+            strings_ephemeral.clear();
             mouse_position = _mouse_position;
             mouse_click = _mouse_click and dragged_frames<8;
             mouse_down = _mouse_down;
@@ -892,7 +909,7 @@ fn Container(comptime id: []const u8) type {
             bb.bottom = bb.bottom - added_height;
             bb.right = @max(bb.left + minimum_width, bb.right);
             return BoundingBox(f32).from(bb.bottom + added_height, bb.bottom, bb.left, bb.right);
-        } 
+        }
 
         fn button(text: []const u8, pressed: *bool) !bool {
             const button_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
@@ -928,10 +945,10 @@ fn Container(comptime id: []const u8) type {
         fn text_line_fmt(comptime fmt: []const u8, args: anytype) !void {
             const text = try std.fmt.allocPrint(allocator, fmt, args);
             defer allocator.free(text);
-            const string = try strings.get_or_create(text);
+            const string = try strings_ephemeral.get_or_create(text);
             const text_lines_index = elements_text_lines.items.len;
             try elements_text_lines.append(string);
-            try elements.append(.{.index = text_lines_index, .element_type = .text_line, .height = text_line_height});
+            try elements.append(.{.index = text_lines_index, .element_type = .text_line_ephemeral, .height = text_line_height});
             _ = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
         }
 
@@ -967,12 +984,49 @@ fn Container(comptime id: []const u8) type {
             try elements.append(.{.index = index, .element_type = .selectable_options, .height = options_bb.height()});
         }
 
+        fn surface_grid_selector(comptime surface_pixel_type: type, comptime surface_grid_dimensions: Vec2(usize), surface: Buffer2D(surface_pixel_type), selected: *?usize, hovered: *?usize) !void {
+            const padding: f32 = 2;
+            const element_bb = increment_bb(@as(f32,@floatFromInt(surface.height)) + padding*2, @as(f32,@floatFromInt(surface.width)) + padding*2);
+            const surface_bb = BoundingBox(f32).from(element_bb.top-padding, element_bb.bottom+padding, element_bb.left+padding, element_bb.right-padding);
+
+            // find out if any option is hovered
+            if (surface_bb.contains_exclusive(mouse_position)) {
+                const mouse_in_surface = mouse_position.substract(surface_bb.bl()).to(usize);
+                const mouse_tile_in_surface = Vec2(usize).from(mouse_in_surface.x/surface_grid_dimensions.x, mouse_in_surface.y/surface_grid_dimensions.y);
+                const hovered_tile_index = mouse_tile_in_surface.x + mouse_tile_in_surface.y*surface_grid_dimensions.x;
+                std.debug.assert(hovered_tile_index >= 0 and hovered_tile_index < surface_grid_dimensions.x*surface_grid_dimensions.y);
+                hovered.* = hovered_tile_index;
+            }
+            else hovered.* = null;
+
+            // selecting and selection-clear logic
+            if (mouse_click) if (hovered.*) |hovered_index| {
+                if (selected.*) |selected_index| {
+                    if (selected_index == hovered_index) selected.* = null
+                    else selected.* = hovered_index;
+                }
+                else {
+                    selected.* = hovered_index;
+                }
+            };
+
+            const index = surface_with_grids.items.len;
+            try surface_with_grids.append(SurfaceWithSelectableGridElement(surface_pixel_type) {
+                .surface = surface,
+                .hover_index = hovered.*,
+                .select_index = selected.*,
+                .padding = padding,
+                .grid_dimensions = surface_grid_dimensions,
+            });
+            try elements.append(.{.index = index, .element_type = .surface_grid_selectable, .height = element_bb.height()});
+        }
+
         fn separator(extra_width: f32) !void {
             try elements.append(.{.index = 0, .element_type = .separator, .height = extra_width+2});
             _ = increment_bb(extra_width+2, 0);
         }
 
-        fn draw() !void {
+        fn draw(pixel_buffer: Buffer2D(platform.OutPixelType), mvp_matrix: M33, viewport_matrix: M33) !void {
             var working_bb = bb;
             try state.renderer_shapes.add_quad_from_bb(bb, background_color);
             if (name) |n| {
@@ -991,6 +1045,11 @@ fn Container(comptime id: []const u8) type {
                     .text_line => {
                         const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
                         try state.text_renderer.print(text_pos, "{s}", .{ strings.to_slice(elements_text_lines.items[element.index]) }, text_color);
+                        working_bb.top -= element.height;
+                    },
+                    .text_line_ephemeral => {
+                        const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
+                        try state.text_renderer.print(text_pos, "{s}", .{ strings_ephemeral.to_slice(elements_text_lines.items[element.index]) }, text_color);
                         working_bb.top -= element.height;
                     },
                     .button => {
@@ -1040,14 +1099,52 @@ fn Container(comptime id: []const u8) type {
                             try state.renderer_shapes.add_quad_from_bb(option_bb, highlight_color_a);
                         }
                         working_bb.top -= element.height;
+                    },
+                    .surface_grid_selectable => {
+                        const data = surface_with_grids.items[element.index];
+                        // render the surface itself
+                        const padding = data.padding;
+                        const surface = data.surface;
+                        const surface_bb = BoundingBox(f32).from(working_bb.top - padding, working_bb.top - element.height + padding, working_bb.left + padding, working_bb.left + padding + @as(f32,@floatFromInt(surface.width)));
+                        try state.renderer_surfaces.add_blit_texture_to_bb(surface_bb, surface);
+
+                        // const grid_dimensions = data.grid_dimensions;
+                        // // render the highlight for the hover
+                        // if (data.select_index) |selected_option| {
+                        //     const if32: f32 = @floatFromInt(selected_option);
+                        //     const option_bb = BoundingBox(f32).from(
+                        //         options_bb_bottom + (if32+1) * text_line_height,
+                        //         options_bb_bottom + (if32+0) * text_line_height,
+                        //         working_bb.left,
+                        //         working_bb.right
+                        //     );
+                        //     try state.renderer_shapes.add_quad_from_bb(option_bb, highlight_color_b);
+                        // }
+                        // // render the highlight for the selected
+                        // if (data.hover_index) |hover_index| {
+                        //     const if32: f32 = @floatFromInt(hover_index);
+                        //     const option_bb = BoundingBox(f32).from(
+                        //         options_bb_bottom + (if32+1) * text_line_height,
+                        //         options_bb_bottom + (if32+0) * text_line_height,
+                        //         working_bb.left,
+                        //         working_bb.right
+                        //     );
+                        //     try state.renderer_shapes.add_quad_from_bb(option_bb, highlight_color_a);
+                        // }
+
+                        working_bb.top -= element.height;
                     }
                     // else => unreachable
                 }
             }
             try state.renderer_shapes.add_quad_border(bb, 1, highlight_color_a);
+            state.renderer_shapes.render(pixel_buffer, mvp_matrix, viewport_matrix);
+            state.renderer_surfaces.render(pixel_buffer, mvp_matrix, viewport_matrix);
+            state.text_renderer.render_all(pixel_buffer, mvp_matrix, viewport_matrix);
         }
 
     };
+
 }
 
 const String = struct {
@@ -1081,6 +1178,11 @@ const Strings = struct {
             return new_string;
         }
     }
+
+    pub fn clear(self: *Strings) void {
+        self.map.clearRetainingCapacity();
+        self.storage.clearRetainingCapacity();
+    }
     
     pub fn to_slice(self: *Strings, string: String) []const u8 {
         return self.storage.items[string.index..string.index+string.length];
@@ -1097,6 +1199,15 @@ const Button = struct {
     bb: BoundingBox(f32),
     hover: bool,
 };
+fn SurfaceWithSelectableGridElement(comptime surface_pixel_type: type) type {
+    return struct {
+        surface: Buffer2D(surface_pixel_type),
+        hover_index: ?usize,
+        select_index: ?usize,
+        padding: f32,
+        grid_dimensions: Vec2(usize),
+    };
+}
 const GuiElement = struct {
     index: usize,
     element_type: GuiElementType,
@@ -1104,9 +1215,11 @@ const GuiElement = struct {
 };
 const GuiElementType = enum {
     text_line,
+    text_line_ephemeral,
     button,
     separator,
-    selectable_options
+    selectable_options,
+    surface_grid_selectable,
 };
 const HighlightType = enum {
     none, highlighted_a, highlighted_b
@@ -1217,6 +1330,93 @@ pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type
 
         pub fn render(self: *Self, pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
             const context = shader.Context {
+                .mvp_matrix = mvp_matrix,
+            };
+            shader.Pipeline.render(pixel_buffer, context, self.vertex_buffer.items, @divExact(self.vertex_buffer.items.len, 4), .{ .viewport_matrix = viewport_matrix, });
+            self.vertex_buffer.clearRetainingCapacity();
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.vertex_buffer.clearAndFree();
+        }
+    };
+}
+
+pub fn StandardQuadRenderer(comptime output_pixel_type: type) type {
+    return struct {
+
+        const shader = struct {
+
+            pub const Context = struct {
+                texture: Buffer2D(output_pixel_type),
+                mvp_matrix: M33,
+            };
+
+            pub const Invariant = struct {
+                uv: Vector2f,
+            };
+
+            pub const Vertex = struct {
+                pos: Vector2f,
+                uv: Vector2f,
+            };
+
+            pub const pipeline_configuration = graphics.GraphicsPipelineQuads2DConfiguration {
+                .blend_with_background = false,
+                .do_quad_clipping = true,
+                .do_scissoring = false,
+                .trace = false,
+            };
+
+            pub const Pipeline = graphics.GraphicsPipelineQuads2D(
+                output_pixel_type,
+                Context,
+                Invariant,
+                Vertex,
+                pipeline_configuration,
+                struct {
+                    inline fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector3f {
+                        out_invariant.uv = vertex.uv;
+                        return context.mvp_matrix.apply_to_vec2(vertex.pos);
+                    }
+                }.vertex_shader,
+                struct {
+                    inline fn fragment_shader(context: Context, invariants: Invariant) output_pixel_type {
+                        const sample = context.texture.point_sample(true, invariants.uv);
+                        return output_pixel_type.from(output_pixel_type, sample);
+                    }
+                }.fragment_shader,
+            );
+        };
+        
+        const Self = @This();
+
+        allocator: std.mem.Allocator,
+        vertex_buffer: std.ArrayList(shader.Vertex),
+        texture: Buffer2D(output_pixel_type),
+
+        pub fn init(allocator: std.mem.Allocator) !Self {
+            var self: Self = undefined;
+            self.allocator = allocator;
+            self.vertex_buffer = std.ArrayList(shader.Vertex).init(allocator);
+            self.texture = undefined;
+            return self;
+        }
+
+        pub fn add_blit_texture_to_bb(self: *Self, bb: BoundingBox(f32), texture: Buffer2D(output_pixel_type)) !void {
+            self.texture = texture;
+            const vertex_buffer = [4] shader.Vertex {
+                .{ .pos = bb.bl(), .uv = Vec2(f32).from(0, 1) }, // 0 - bottom left
+                .{ .pos = bb.br(), .uv = Vec2(f32).from(1, 1) }, // 1 - bottom right
+                .{ .pos = bb.tr(), .uv = Vec2(f32).from(1, 0) }, // 2 - top right
+                .{ .pos = bb.tl(), .uv = Vec2(f32).from(0, 0) }, // 3 - top left
+            };
+            try self.vertex_buffer.appendSlice(&vertex_buffer);
+        }
+
+        pub fn render(self: *Self, pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
+            const context = shader.Context {
+                .texture = self.texture,
                 .mvp_matrix = mvp_matrix,
             };
             shader.Pipeline.render(pixel_buffer, context, self.vertex_buffer.items, @divExact(self.vertex_buffer.items.len, 4), .{ .viewport_matrix = viewport_matrix, });

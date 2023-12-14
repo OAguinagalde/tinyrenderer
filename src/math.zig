@@ -960,12 +960,24 @@ pub fn BoundingBox(comptime T: type) type {
             return Vec2(T).from(self.left, self.bottom);
         }
 
-        pub inline fn from_tl_br(tl: anytype, br: anytype) Self {
-            return from(tl.y, br.y, tl.x, br.x);
+        pub inline fn br(self: Self) Vec2(T) {
+            return Vec2(T).from(self.right, self.bottom);
         }
 
-        pub inline fn from_br_size(br: anytype, size: anytype) Self {
-            return from(br.y+size.y, br.y, br.x, br.x+size.x);
+        pub inline fn tl(self: Self) Vec2(T) {
+            return Vec2(T).from(self.left, self.top);
+        }
+
+        pub inline fn tr(self: Self) Vec2(T) {
+            return Vec2(T).from(self.right, self.top);
+        }
+
+        pub inline fn from_tl_br(_tl: anytype, _br: anytype) Self {
+            return from(_tl.y, _br.y, _tl.x, _br.x);
+        }
+
+        pub inline fn from_br_size(_br: anytype, size: anytype) Self {
+            return from(_br.y+size.y, _br.y, _br.x, _br.x+size.x);
         }
 
         /// `point` can be anything that has fields `x: T` and `y: T`
