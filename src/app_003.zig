@@ -136,6 +136,15 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     if (ud.key_pressed('J') and mouse_is_in_map_editor) try state.resources.junctions.append(.{.a = mouse_tile_in_map.to(u8), .b = mouse_tile_in_map.to(u8) });    
 
+    const clear_color: BGR = @bitCast(Assets.palette[0]);
+    ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
+
+    const view_matrix = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
+    const projection_matrix = M33.orthographic_projection(0, w, h, 0);
+    const mvp_matrix = projection_matrix.multiply(view_matrix);
+    const viewport_matrix = M33.viewport(0, 0, w, h);
+    const projection_matrix_screen = M33.orthographic_projection(0, w, h, 0);
+
     const entity_spawner_menu_data = struct {
         var option_selected: ?usize = null;
         var option_hovered: ?usize = null;
@@ -151,11 +160,12 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     };
     
     const entity_spawner_menu = Container("entity_spawner_menu");
-    if (try entity_spawner_menu.begin(ud.allocator, "entity spawner", Vec2(f32).from(10, 250), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+    if (try entity_spawner_menu.begin(ud.allocator, "entity spawner", Vec2(f32).from(10, 250), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
         if (entity_spawner_menu_data.option_selected) |selected| try entity_spawner_menu.text_line_fmt("Selected: {}", .{selected})
         else try entity_spawner_menu.text_line("Select one...");
         try entity_spawner_menu.option_selector(entity_spawner_menu_data.options, &entity_spawner_menu_data.option_selected, &entity_spawner_menu_data.option_hovered);
     }
+    try entity_spawner_menu.end();
 
     const particle_emitter_menu_data = struct {
         var option_selected: ?usize = null;
@@ -172,31 +182,18 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     };
 
     const particle_emitter_menu = Container("particle_emitter_menu");
-    if (try particle_emitter_menu.begin(ud.allocator, "particle emitter spawner", Vec2(f32).from(10, 300), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+    if (try particle_emitter_menu.begin(ud.allocator, "particle emitter spawner", Vec2(f32).from(10, 300), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
         if (particle_emitter_menu_data.option_selected) |selected| try particle_emitter_menu.text_line_fmt("Selected: {}", .{selected})
         else try particle_emitter_menu.text_line("Select one...");
         try particle_emitter_menu.option_selector(particle_emitter_menu_data.options, &particle_emitter_menu_data.option_selected, &particle_emitter_menu_data.option_hovered);
     }
+    try particle_emitter_menu.end();
 
     const sprite_selector_window_data = struct {
         var sprite_selected: ?usize = null;
         var sprite_hovered: ?usize = null;
         var init = false;
         var surface: Buffer2D(platform.OutPixelType) = undefined;
-        // const surface: Buffer2D(platform.OutPixelType) = blk: {
-        //     var buffer = Buffer2D(platform.OutPixelType).from(ud.allocator.alloc(platform.OutPixelType, 16*16*8*8), 16*8);
-        //     // pre-render the sprite atlas into a surface
-        //     for (0..16) |j| {
-        //         for (0..16) |i| {
-        //             const jj: f32 = @floatFromInt(j);
-        //             const ii: f32 = @floatFromInt(i);
-        //             const pos = Vector2f.from(ii*8, jj*8);
-        //             state.renderer_blending.add_sprite_from_atlas_index(@intCast(i + j*16), pos, .{}) catch @panic("");
-        //         }
-        //     }
-        //     state.renderer_blending.render(buffer, M33.orthographic_projection(0, 16*8, 16*8, 0), M33.viewport(0, 0, 16*8, 16*8));
-        //     break :blk buffer;
-        // };
     };
     if (sprite_selector_window_data.init == false) {
         sprite_selector_window_data.init = true;
@@ -217,19 +214,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         };
     }
     const sprite_selector_window = Container("sprite_selector");
-    if (try sprite_selector_window.begin(ud.allocator, "sprites", Vec2(f32).from (10, 10+16*8), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+    if (try sprite_selector_window.begin(ud.allocator, "sprites", Vec2(f32).from (10, 10+16*8), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
         try sprite_selector_window.surface_grid_selector(platform.OutPixelType, Vec2(usize).from(16,16), sprite_selector_window_data.surface, &sprite_selector_window_data.sprite_selected, &sprite_selector_window_data.sprite_hovered);
     }
-
-    const clear_color: BGR = @bitCast(Assets.palette[0]);
-    ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
-
-    const view_matrix = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
-    const projection_matrix = M33.orthographic_projection(0, w, h, 0);
-    const mvp_matrix = projection_matrix.multiply(view_matrix);
-    const viewport_matrix = M33.viewport(0, 0, w, h);
-    
-    const projection_matrix_screen = M33.orthographic_projection(0, w, h, 0);
+    try sprite_selector_window.end();
     
     // render the map
     {
@@ -636,14 +624,9 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
     }
     
-    const containers = .{entity_spawner_menu, particle_emitter_menu, sprite_selector_window};
-    inline for (@typeInfo(@TypeOf(containers)).Struct.fields) |field| {
-        try @field(containers, field.name).draw(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
-    }
-
     // debug overlay
     const dw = Container("debug_window");
-    if (try dw.begin(ud.allocator, "debug", Vec2(f32).from(1, h-1), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down)) {
+    if (try dw.begin(ud.allocator, "debug", Vec2(f32).from(1, h-1), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
         try dw.text_line_fmt("ms {d: <9.2}", .{ud.ms});
         try dw.text_line_fmt("frame {}", .{ud.frame});
         try dw.text_line_fmt("camera {d:.4}, {d:.4}", .{state.camera.pos.x, state.camera.pos.y});
@@ -656,149 +639,9 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         try dw.text_line_fmt("l click {}", .{ud.mouse_left_clicked});
         try dw.text_line_fmt("mouse busy {}", .{MouseState.busy});
     }
-    try dw.draw(ud.pixel_buffer, projection_matrix_screen, viewport_matrix);
+    try dw.end();
 
     return true;
-}
-
-/// `extra_options` &[_][]const u8{"something", "extra"}
-fn GuiMenuFromEnum(comptime name: []const u8, comptime enumeration: type, comptime extra_options: []const []const u8) type {
-    return struct {
-    
-        const Self = @This();
-        const EnumTagType = @typeInfo(enumeration).Enum.tag_type;
-        const options: []const []const u8 = blk: {
-            var opts: []const []const u8 = &[_][]const u8 {};
-            opts = opts ++ &[_][]const u8{};
-            for (@typeInfo(enumeration).Enum.fields) |field| {
-                opts = opts ++ &[_][]const u8{field.name};
-            }
-            opts = opts ++ extra_options;
-            break :blk opts;
-        };
-    
-        text_color: RGBA,
-        text_highlight_color_1: RGBA,
-        text_highlight_color_2: RGBA,
-        menu_background_color: RGBA,
-        menu_in_screen_bb: BoundingBox(f32),
-        draggable_previous_position: ?Vec2(f32),
-        selectable_option_selected: ?EnumTagType,
-
-        fn init(initial_position: Vec2(f32), text_color: RGBA, text_highlight_color_1: RGBA, text_highlight_color_2: RGBA, menu_background_color: RGBA) Self {
-            const text_line_height = state.text_renderer.height() + 1;
-            const text_line_width = state.text_renderer.width();
-            return .{
-                .text_color = text_color,
-                .text_highlight_color_1 = text_highlight_color_1,
-                .text_highlight_color_2 = text_highlight_color_2,
-                .menu_background_color = menu_background_color,
-                .menu_in_screen_bb = BoundingBox(f32).from(initial_position.y + text_line_height*(options.len+1), initial_position.y, initial_position.x, initial_position.x + text_line_width*25),
-                .draggable_previous_position = null,
-                .selectable_option_selected = null,
-            };
-        }
-
-        fn get_header_bb(self: *const Self) BoundingBox(f32) {
-            const text_line_height = state.text_renderer.height() + 1;
-            return BoundingBox(f32).from(
-                self.menu_in_screen_bb.top,
-                self.menu_in_screen_bb.top - text_line_height,
-                self.menu_in_screen_bb.left,
-                self.menu_in_screen_bb.right,
-            );
-        }
-
-        fn get_hovered_option(self: *const Self, mouse_position_window: Vec2(f32)) ?EnumTagType {
-            const text_line_height = state.text_renderer.height() + 1;
-            const options_bb = BoundingBox(f32).from(
-                self.menu_in_screen_bb.top - text_line_height - 1,
-                self.menu_in_screen_bb.bottom,
-                self.menu_in_screen_bb.left,
-                self.menu_in_screen_bb.right,
-            );
-            if (options_bb.contains(mouse_position_window)) {
-                const height_in_menu = mouse_position_window.y - self.menu_in_screen_bb.bottom;
-                const current_line: EnumTagType = @intFromFloat(@floor(height_in_menu / text_line_height));
-                std.debug.assert(current_line >= 0 and current_line < options.len);
-                return current_line;
-            }
-            else return null;
-        }
-
-        fn get_selected_option(self: *const Self) ?EnumTagType {
-            return self.selectable_option_selected;
-        }
-
-        fn get_option_count(self: *const Self) EnumTagType {
-            _ = self;
-            return @intCast(options.len);
-        }
-
-        fn get_options(self: *const Self) []const[]const u8 {
-            _ = self;
-            return options;
-        }
-
-        fn draw_data(self: *const Self, mouse_position_window: Vec2(f32)) !void {
-            const hovered_option = self.get_hovered_option(mouse_position_window);
-            const text_line_height = state.text_renderer.height() + 1;
-            
-            // background
-            try state.renderer_shapes.add_quad_from_bb(self.menu_in_screen_bb, self.menu_background_color);
-            
-            // content
-            for (options, 0..) |option, i| {
-                const i_f32: f32 = @floatFromInt(i);
-                const i_enum: EnumTagType = @intCast(i);
-                
-                const option_bottom_absolute = self.menu_in_screen_bb.bottom + i_f32*text_line_height;
-                const option_top_absolute = option_bottom_absolute + text_line_height;
-                const option_left_absolute = self.menu_in_screen_bb.left;
-                const option_right_absolute = self.menu_in_screen_bb.right;
-                const option_bb = BoundingBox(f32).from(option_top_absolute, option_bottom_absolute, option_left_absolute, option_right_absolute);
-
-                try state.text_renderer.print(Vec2(f32).from(option_left_absolute, option_bottom_absolute), "{s}", .{option}, self.text_color);
-                
-                if (self.selectable_option_selected) |selected_option| {
-                    if (selected_option == i_enum) try state.renderer_shapes.add_quad_from_bb(option_bb, self.text_highlight_color_1);
-                }
-                
-                if (hovered_option) |option_index| {
-                    if (option_index == i_enum) try state.renderer_shapes.add_quad_from_bb(option_bb, self.text_highlight_color_2);
-                }
-            }
-            
-            // header
-            const header_bb = self.get_header_bb();
-            if (header_bb.contains(mouse_position_window)) try state.renderer_shapes.add_quad_from_bb(header_bb, self.text_highlight_color_2);
-            try state.text_renderer.print(Vec2(f32).from(header_bb.left, header_bb.bottom), name, .{}, self.text_highlight_color_1);            
-        }
-
-        // draggable
-        fn drag(self: *Self, new_pos: Vec2(f32)) void {
-            if (self.draggable_previous_position) |previous_position| {
-                const movement = new_pos.substract(previous_position);
-                self.draggable_previous_position = new_pos;
-                self.menu_in_screen_bb = self.menu_in_screen_bb.offset(movement);
-            }
-            else {
-                self.draggable_previous_position = new_pos;
-            }
-        }
-        fn stop_drag(self: *Self) void {
-            self.draggable_previous_position = null;
-        }
-
-        // selectable logic
-        fn select(self: *Self, option_index: EnumTagType) void {
-            self.selectable_option_selected = option_index;
-        }
-        fn clear_selection(self: *Self) void {
-            self.selectable_option_selected = null;
-        }
-        
-    };
 }
 
 // TODO implement internal persistent state for arbitrary number of buttons identified by the label
@@ -811,6 +654,8 @@ fn Container(comptime id: []const u8) type {
 
         const text_line_height = state.text_renderer.height()+3;
         const char_width = state.text_renderer.width()+1;
+
+        var renderer: Renderer(platform.OutPixelType) = undefined;
 
         var initialized: bool = false;
         var background_color: RGBA = undefined;
@@ -839,11 +684,12 @@ fn Container(comptime id: []const u8) type {
 
         var allocator: std.mem.Allocator = undefined;
 
-        fn begin(_allocator: std.mem.Allocator, _name: []const u8, _pos: Vec2(f32), _mouse_position: Vec2(f32), _mouse_click: bool, _mouse_down: bool) !bool {
+        fn begin(_allocator: std.mem.Allocator, _name: []const u8, _pos: Vec2(f32), _mouse_position: Vec2(f32), _mouse_click: bool, _mouse_down: bool, pixel_buffer: Buffer2D(platform.OutPixelType), mvp_matrix: M33, viewport_matrix: M33) !bool {
             _ = id;
             allocator = _allocator;
             if (!initialized) {
                 initialized = true;
+                renderer = try Renderer(platform.OutPixelType).init(allocator);
                 strings = Strings.init(allocator);
                 strings_ephemeral = Strings.init(allocator);
                 elements = std.ArrayList(GuiElement).init(allocator);
@@ -873,6 +719,7 @@ fn Container(comptime id: []const u8) type {
             mouse_position = _mouse_position;
             mouse_click = _mouse_click and dragged_frames<8;
             mouse_down = _mouse_down;
+            renderer.set_context(pixel_buffer, mvp_matrix, viewport_matrix);
 
             const header_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(_name.len)) * char_width);
             name = strings.to_slice(try strings.get_or_create(_name));
@@ -1026,9 +873,9 @@ fn Container(comptime id: []const u8) type {
             _ = increment_bb(extra_width+2, 0);
         }
 
-        fn draw(pixel_buffer: Buffer2D(platform.OutPixelType), mvp_matrix: M33, viewport_matrix: M33) !void {
+        fn draw() !void {
             var working_bb = bb;
-            try state.renderer_shapes.add_quad_from_bb(bb, background_color);
+            try renderer.add_quad_from_bb(bb, background_color);
             if (name) |n| {
                 const header_bb = BoundingBox(f32).from(
                     bb.top,
@@ -1036,32 +883,32 @@ fn Container(comptime id: []const u8) type {
                     bb.left,
                     bb.right,
                 );
-                try state.renderer_shapes.add_quad_from_bb(header_bb, if (name_hover) highlight_color_a else highlight_color_b);
-                try state.text_renderer.print(Vec2(f32).from(header_bb.left, header_bb.bottom+1), "{s}", .{n}, text_color);
+                try renderer.add_quad_from_bb(header_bb, if (name_hover) highlight_color_a else highlight_color_b);
+                try renderer.add_text(Vec2(f32).from(header_bb.left, header_bb.bottom+1), "{s}", .{n}, text_color);
                 working_bb.top -= header_bb.height();
             }
             for (elements.items) |element| {
                 switch (element.element_type) {
                     .text_line => {
                         const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
-                        try state.text_renderer.print(text_pos, "{s}", .{ strings.to_slice(elements_text_lines.items[element.index]) }, text_color);
+                        try renderer.add_text(text_pos, "{s}", .{ strings.to_slice(elements_text_lines.items[element.index]) }, text_color);
                         working_bb.top -= element.height;
                     },
                     .text_line_ephemeral => {
                         const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
-                        try state.text_renderer.print(text_pos, "{s}", .{ strings_ephemeral.to_slice(elements_text_lines.items[element.index]) }, text_color);
+                        try renderer.add_text(text_pos, "{s}", .{ strings_ephemeral.to_slice(elements_text_lines.items[element.index]) }, text_color);
                         working_bb.top -= element.height;
                     },
                     .button => {
-                        try state.renderer_shapes.add_quad_from_bb(elements_buttons.items[element.index].bb, if (elements_buttons.items[element.index].hover) highlight_color_a else highlight_color_b);
+                        try renderer.add_quad_from_bb(elements_buttons.items[element.index].bb, if (elements_buttons.items[element.index].hover) highlight_color_a else highlight_color_b);
                         const text_pos = Vec2(f32).from(working_bb.left, working_bb.top - element.height+1);
-                        try state.text_renderer.print(text_pos, "{s}", .{ strings.to_slice(elements_buttons.items[element.index].string) }, text_color);
+                        try renderer.add_text(text_pos, "{s}", .{ strings.to_slice(elements_buttons.items[element.index].string) }, text_color);
                         working_bb.top -= element.height;
                     },
                     .separator => {
                         const width = element.height-2;
                         const separator_line_bb = BoundingBox(f32).from(working_bb.top-1, working_bb.top-1-width, working_bb.left + 2, working_bb.right - 2);
-                        try state.renderer_shapes.add_quad_from_bb(separator_line_bb, highlight_color_a);
+                        try renderer.add_quad_from_bb(separator_line_bb, highlight_color_a);
                         working_bb.top -= element.height;
                     },
                     .selectable_options => {
@@ -1076,7 +923,7 @@ fn Container(comptime id: []const u8) type {
                                 working_bb.left,
                                 working_bb.right
                             );
-                            try state.text_renderer.print(option_bb.bl(), "{s}", .{option}, text_color);
+                            try renderer.add_text(option_bb.bl(), "{s}", .{option}, text_color);
                         }
                         if (data.select_index) |selected_option| {
                             const if32: f32 = @floatFromInt(selected_option);
@@ -1086,7 +933,7 @@ fn Container(comptime id: []const u8) type {
                                 working_bb.left,
                                 working_bb.right
                             );
-                            try state.renderer_shapes.add_quad_from_bb(option_bb, highlight_color_b);
+                            try renderer.add_quad_from_bb(option_bb, highlight_color_b);
                         }
                         if (data.hover_index) |hover_index| {
                             const if32: f32 = @floatFromInt(hover_index);
@@ -1096,7 +943,7 @@ fn Container(comptime id: []const u8) type {
                                 working_bb.left,
                                 working_bb.right
                             );
-                            try state.renderer_shapes.add_quad_from_bb(option_bb, highlight_color_a);
+                            try renderer.add_quad_from_bb(option_bb, highlight_color_a);
                         }
                         working_bb.top -= element.height;
                     },
@@ -1106,41 +953,49 @@ fn Container(comptime id: []const u8) type {
                         const padding = data.padding;
                         const surface = data.surface;
                         const surface_bb = BoundingBox(f32).from(working_bb.top - padding, working_bb.top - element.height + padding, working_bb.left + padding, working_bb.left + padding + @as(f32,@floatFromInt(surface.width)));
-                        try state.renderer_surfaces.add_blit_texture_to_bb(surface_bb, surface);
+                        try renderer.add_blit_texture_to_bb(surface_bb, surface);
 
-                        // const grid_dimensions = data.grid_dimensions;
-                        // // render the highlight for the hover
-                        // if (data.select_index) |selected_option| {
-                        //     const if32: f32 = @floatFromInt(selected_option);
-                        //     const option_bb = BoundingBox(f32).from(
-                        //         options_bb_bottom + (if32+1) * text_line_height,
-                        //         options_bb_bottom + (if32+0) * text_line_height,
-                        //         working_bb.left,
-                        //         working_bb.right
-                        //     );
-                        //     try state.renderer_shapes.add_quad_from_bb(option_bb, highlight_color_b);
-                        // }
-                        // // render the highlight for the selected
-                        // if (data.hover_index) |hover_index| {
-                        //     const if32: f32 = @floatFromInt(hover_index);
-                        //     const option_bb = BoundingBox(f32).from(
-                        //         options_bb_bottom + (if32+1) * text_line_height,
-                        //         options_bb_bottom + (if32+0) * text_line_height,
-                        //         working_bb.left,
-                        //         working_bb.right
-                        //     );
-                        //     try state.renderer_shapes.add_quad_from_bb(option_bb, highlight_color_a);
-                        // }
+                        const grid_dimensions = data.grid_dimensions;
+                        // render the highlight for the hover
+                        if (data.select_index) |selected_option| {
+                            const col: f32 = @floatFromInt(selected_option%grid_dimensions.x);
+                            const row: f32 = @floatFromInt(@divFloor(selected_option,grid_dimensions.y));
+                            const option_bb = BoundingBox(f32).from(
+                                surface_bb.bottom + row*8 + 8,
+                                surface_bb.bottom + row*8,
+                                surface_bb.left + col*8,
+                                surface_bb.left + col*8 + 8
+                            );
+                            var color = highlight_color_b;
+                            color.a = 50;
+                            try renderer.add_quad_from_bb(option_bb, color);
+                        }
+                        // render the highlight for the selected
+                        if (data.hover_index) |hover_index| {
+                            const col: f32 = @floatFromInt(hover_index%grid_dimensions.x);
+                            const row: f32 = @floatFromInt(@divFloor(hover_index,grid_dimensions.y));
+                            const option_bb = BoundingBox(f32).from(
+                                surface_bb.bottom + row*8 + 8,
+                                surface_bb.bottom + row*8,
+                                surface_bb.left + col*8,
+                                surface_bb.left + col*8 + 8
+                            );
+                            var color = highlight_color_a;
+                            color.a = 50;
+                            try renderer.add_quad_from_bb(option_bb, color);
+                        }
 
                         working_bb.top -= element.height;
                     }
                     // else => unreachable
                 }
             }
-            try state.renderer_shapes.add_quad_border(bb, 1, highlight_color_a);
-            state.renderer_shapes.render(pixel_buffer, mvp_matrix, viewport_matrix);
-            state.renderer_surfaces.render(pixel_buffer, mvp_matrix, viewport_matrix);
-            state.text_renderer.render_all(pixel_buffer, mvp_matrix, viewport_matrix);
+            try renderer.add_quad_border(bb, 1, highlight_color_a);
+            try renderer.flush_all();
+        }
+
+        fn end() !void {
+            try draw();
         }
 
     };
@@ -1339,6 +1194,64 @@ pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type
         pub fn deinit(self: *Self) void {
             self.vertex_buffer.clearAndFree();
         }
+
+        const Batch = struct {
+            vertex_buffer: std.ArrayList(shader.Vertex),
+            pixel_buffer: Buffer2D(output_pixel_type),
+            mvp_matrix: M33,
+            viewport_matrix: M33,
+
+            fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33) Batch {
+                return .{
+                    .vertex_buffer = std.ArrayList(shader.Vertex).init(allocator),
+                    .pixel_buffer = pixel_buffer,
+                    .mvp_matrix = mvp_matrix,
+                    .viewport_matrix = viewport_matrix,
+                };
+            }
+
+            pub fn add_quad_from_bb(self: *Batch, bb: BoundingBox(f32), tint: RGBA) !void {
+                const pos = Vector2f.from(bb.left, bb.bottom);
+                const size = Vector2f.from(bb.right - bb.left, bb.top - bb.bottom);
+                const vertices = [4] shader.Vertex {
+                    .{ .pos = .{ .x = pos.x,          .y = pos.y          }, .tint = tint },
+                    .{ .pos = .{ .x = pos.x + size.x, .y = pos.y          }, .tint = tint },
+                    .{ .pos = .{ .x = pos.x + size.x, .y = pos.y + size.y }, .tint = tint },
+                    .{ .pos = .{ .x = pos.x,          .y = pos.y + size.y }, .tint = tint },
+                };
+                try self.vertex_buffer.appendSlice(&vertices);
+            }
+
+            pub fn add_quad_border(self: *Batch, bb: BoundingBox(f32), thickness: f32, tint: RGBA) !void {
+                const line_left = BoundingBox(f32).from(bb.top+thickness, bb.bottom-thickness, bb.left-thickness, bb.left);
+                const line_bottom = BoundingBox(f32).from(bb.bottom, bb.bottom-thickness, bb.left-thickness, bb.right+thickness);
+                const line_right = BoundingBox(f32).from(bb.top+thickness, bb.bottom-thickness, bb.right, bb.right+thickness);
+                const line_top = BoundingBox(f32).from(bb.top+thickness, bb.top, bb.left-thickness, bb.right+thickness);
+                try self.add_quad_from_bb(line_left, tint);
+                try self.add_quad_from_bb(line_bottom, tint);
+                try self.add_quad_from_bb(line_right, tint);
+                try self.add_quad_from_bb(line_top, tint);
+            }
+            
+            pub fn add_quad(self: *Batch, pos: Vector2f, size: Vector2f, tint: RGBA) !void {
+                const vertices = [4] shader.Vertex {
+                    .{ .pos = .{ .x = pos.x,          .y = pos.y          }, .tint = tint },
+                    .{ .pos = .{ .x = pos.x + size.x, .y = pos.y          }, .tint = tint },
+                    .{ .pos = .{ .x = pos.x + size.x, .y = pos.y + size.y }, .tint = tint },
+                    .{ .pos = .{ .x = pos.x,          .y = pos.y + size.y }, .tint = tint },
+                };
+                try self.vertex_buffer.appendSlice(&vertices);
+            }
+
+            pub fn flush(self: *Batch) void {
+                const context = shader.Context {
+                    .mvp_matrix = self.mvp_matrix,
+                };
+                shader.Pipeline.render(self.pixel_buffer, context, self.vertex_buffer.items, @divExact(self.vertex_buffer.items.len, 4), .{ .viewport_matrix = self.viewport_matrix, });
+                self.vertex_buffer.clearAndFree();
+            }
+        };
+    
     };
 }
 
@@ -1426,6 +1339,43 @@ pub fn StandardQuadRenderer(comptime output_pixel_type: type) type {
         pub fn deinit(self: *Self) void {
             self.vertex_buffer.clearAndFree();
         }
+
+        const Batch = struct {
+            vertex_buffer: std.ArrayList(shader.Vertex),
+            texture: Buffer2D(output_pixel_type),
+            pixel_buffer: Buffer2D(output_pixel_type),
+            mvp_matrix: M33,
+            viewport_matrix: M33,
+
+            fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33, texture: Buffer2D(output_pixel_type)) Batch {
+                return .{
+                    .vertex_buffer = std.ArrayList(shader.Vertex).init(allocator),
+                    .texture = texture,
+                    .pixel_buffer = pixel_buffer,
+                    .mvp_matrix = mvp_matrix,
+                    .viewport_matrix = viewport_matrix,
+                };
+            }
+
+            pub fn add_blit_texture_to_bb(self: *Batch, bb: BoundingBox(f32)) !void {
+                const vertex_buffer = [4] shader.Vertex {
+                    .{ .pos = bb.bl(), .uv = Vec2(f32).from(0, 1) }, // 0 - bottom left
+                    .{ .pos = bb.br(), .uv = Vec2(f32).from(1, 1) }, // 1 - bottom right
+                    .{ .pos = bb.tr(), .uv = Vec2(f32).from(1, 0) }, // 2 - top right
+                    .{ .pos = bb.tl(), .uv = Vec2(f32).from(0, 0) }, // 3 - top left
+                };
+                try self.vertex_buffer.appendSlice(&vertex_buffer);
+            }
+
+            pub fn flush(self: *Batch) void {
+                const context = shader.Context {
+                    .texture = self.texture,
+                    .mvp_matrix = self.mvp_matrix,
+                };
+                shader.Pipeline.render(self.pixel_buffer, context, self.vertex_buffer.items, @divExact(self.vertex_buffer.items.len, 4), .{ .viewport_matrix = self.viewport_matrix, });
+                self.vertex_buffer.clearAndFree();
+            }
+        };
     };
 }
 
@@ -1560,6 +1510,248 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
             );
             self.vertex_buffer.clearRetainingCapacity();
         }
+    
+        const Batch = struct {
+            vertex_buffer: std.ArrayList(Shader.Vertex),
+            pixel_buffer: Buffer2D(out_pixel_type),
+            mvp_matrix: M33,
+            viewport_matrix: M33,
+
+            fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(out_pixel_type), mvp_matrix: M33, viewport_matrix: M33) Batch {
+                return .{
+                    .vertex_buffer = std.ArrayList(Shader.Vertex).init(allocator),
+                    .pixel_buffer = pixel_buffer,
+                    .mvp_matrix = mvp_matrix,
+                    .viewport_matrix = viewport_matrix,
+                };
+            }
+
+            pub fn add_text(self: *Batch, pos: Vector2f, comptime fmt: []const u8, args: anytype, tint: RGBA) !void {
+                var buff: [max_size_per_print]u8 = undefined;
+                const str = try std.fmt.bufPrint(&buff, fmt, args);
+                for (str, 0..) |_c, i| {
+                    const c = switch (_c) {
+                        65...90 => _c+32,
+                        else => _c
+                    };
+                    // x and y are the bottom left of the quad
+                    const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width + @as(f32, @floatFromInt(i));
+                    const y: f32 = pos.y;
+                    
+                    // texture left and right
+                    const u_1: f32 = @as(f32, @floatFromInt(c%16)) * base_width + pad_left;
+                    const u_2: f32 = u_1 + base_width - pad_left - pad_right;
+                    // texture top and bottom. Note that the texture is invertex so the mat here is also inverted
+                    const v_1: f32 = (@as(f32, @floatFromInt(c/16)) + 1) * base_height - pad_bottom;
+                    const v_2: f32 = @as(f32, @floatFromInt(c/16)) * base_height + pad_top;
+
+                    // NOTE the texture is reversed hence the weird uv coordinates
+                    const vertices = [4] Shader.Vertex {
+                        .{ .pos = .{ .x = x,              .y = y               }, .uv = .{ .x = u_1, .y = v_1 }, .tint = tint },
+                        .{ .pos = .{ .x = x + char_width, .y = y               }, .uv = .{ .x = u_2, .y = v_1 }, .tint = tint },
+                        .{ .pos = .{ .x = x + char_width, .y = y + char_height }, .uv = .{ .x = u_2, .y = v_2 }, .tint = tint },
+                        .{ .pos = .{ .x = x,              .y = y + char_height }, .uv = .{ .x = u_1, .y = v_2 }, .tint = tint }
+                    };
+                    
+                    try self.vertex_buffer.appendSlice(&vertices);                
+                }
+            }
+
+            pub fn flush(self: *Batch) void {
+                Shader.Pipeline.render(
+                    self.pixel_buffer,
+                    .{ .mvp_matrix = self.mvp_matrix, },
+                    self.vertex_buffer.items,
+                    self.vertex_buffer.items.len/4,
+                    .{ .viewport_matrix = self.viewport_matrix, }
+                );
+                self.vertex_buffer.clearAndFree();
+            }
+        };
+    
+    };
+}
+
+// TODO allow to continue batches if not explicitly asked to use a different batch, or if the continuation is just imposible (for example, when textures used are different)
+pub fn Renderer(comptime output_pixel_type: type) type {
+    return struct {
+
+        const Self = @This();
+
+        const TextRendererImpl = TextRenderer(output_pixel_type, 1024, text_scale);
+        const ShapeRendererImpl = ShapeRenderer(output_pixel_type, RGB.from(255,255,255));
+        const SurfaceRendererImpl = StandardQuadRenderer(output_pixel_type);
+
+        allocator: std.mem.Allocator,
+
+        batches: std.ArrayList(BatchDescriptor),
+        current_batch: BatchDescriptor,
+
+        renderer_text: TextRendererImpl,
+        batches_text: std.ArrayList(TextRendererImpl.Batch),
+        
+        renderer_shapes: ShapeRendererImpl,
+        batches_shapes: std.ArrayList(ShapeRendererImpl.Batch),
+        
+        renderer_surfaces: SurfaceRendererImpl,
+        batches_surfaces: std.ArrayList(SurfaceRendererImpl.Batch),
+
+        pixel_buffer: Buffer2D(output_pixel_type),
+        mvp_matrix: M33,
+        viewport_matrix: M33,
+
+        pub fn init(allocator: std.mem.Allocator) !Self {
+            var self: Self = undefined;
+            self.allocator = allocator;
+            
+            self.renderer_text = try TextRendererImpl.init(allocator);
+            self.renderer_shapes = try ShapeRendererImpl.init(allocator);
+            self.renderer_surfaces = try SurfaceRendererImpl.init(allocator);
+            
+            self.batches_text = std.ArrayList(TextRendererImpl.Batch).init(allocator);
+            self.batches_shapes = std.ArrayList(ShapeRendererImpl.Batch).init(allocator);
+            self.batches_surfaces = std.ArrayList(SurfaceRendererImpl.Batch).init(allocator);
+
+            self.batches = std.ArrayList(BatchDescriptor).init(allocator);
+
+            self.current_batch = .{
+                .index = 0,
+                .renderer_type = .none
+            };
+            
+            return self;
+        }
+
+        pub fn set_context(self: *Self, pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
+            self.pixel_buffer = pixel_buffer;
+            self.mvp_matrix = mvp_matrix;
+            self.viewport_matrix = viewport_matrix;
+        }
+
+        pub fn add_quad_from_bb(self: *Self, bb: BoundingBox(f32), tint: RGBA) !void {
+            const correct_renderer = RendererType.shape;
+            if (self.current_batch.renderer_type == correct_renderer) {
+                const batch = &self.batches_shapes.items[self.batches_shapes.items.len-1];
+                try batch.add_quad_from_bb(bb, tint);
+                return;
+            }
+
+            // save previous batch
+            if (self.current_batch.renderer_type != .none) try self.batches.append(self.current_batch);
+            // set new batch
+            self.current_batch = .{
+                .renderer_type = correct_renderer,
+                .index = self.batches_shapes.items.len
+            };
+            const new_batch = try self.batches_shapes.addOne();
+            new_batch.* = ShapeRendererImpl.Batch.init(self.allocator, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
+            try new_batch.add_quad_from_bb(bb, tint);
+        }
+        
+        pub fn add_quad_border(self: *Self, bb: BoundingBox(f32), thickness: f32, tint: RGBA) !void {
+            const correct_renderer = RendererType.shape;
+            if (self.current_batch.renderer_type == correct_renderer) {
+                const batch = &self.batches_shapes.items[self.current_batch.index];
+                try batch.add_quad_border(bb, thickness, tint);
+                return;
+            }
+
+            // save previous batch
+            if (self.current_batch.renderer_type != .none) try self.batches.append(self.current_batch);
+            // initialize and set new batch
+            self.current_batch = .{
+                .renderer_type = correct_renderer,
+                .index = self.batches_shapes.items.len
+            };
+            const new_batch = try self.batches_shapes.addOne();
+            new_batch.* = ShapeRendererImpl.Batch.init(self.allocator, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
+            try new_batch.add_quad_border(bb, thickness, tint);
+        }
+        
+        pub fn add_blit_texture_to_bb(self: *Self, bb: BoundingBox(f32), texture: Buffer2D(output_pixel_type)) !void {
+            const correct_renderer = RendererType.surface;
+            if (self.current_batch.renderer_type == correct_renderer) {
+                const batch = &self.batches_surfaces.items[self.current_batch.index];
+                if (batch.texture.data.ptr == texture.data.ptr) {
+                    try batch.add_blit_texture_to_bb(bb);
+                    return;
+                }
+            }
+            // save previous batch
+            if (self.current_batch.renderer_type != .none) try self.batches.append(self.current_batch);
+            // initialize and set new batch
+            self.current_batch = .{
+                .renderer_type = correct_renderer,
+                .index = self.batches_surfaces.items.len
+            };
+            const new_batch = try self.batches_surfaces.addOne();
+            new_batch.* = SurfaceRendererImpl.Batch.init(self.allocator, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix, texture);
+            try new_batch.add_blit_texture_to_bb(bb);
+        }
+        
+        pub fn add_text(self: *Self, pos: Vector2f, comptime fmt: []const u8, args: anytype, tint: RGBA) !void {
+            const correct_renderer = RendererType.text;
+            if (self.current_batch.renderer_type == correct_renderer) {
+                const batch = &self.batches_text.items[self.current_batch.index];
+                try batch.add_text(pos, fmt, args, tint);
+                return;
+            }
+
+            // save previous batch
+            if (self.current_batch.renderer_type != .none) try self.batches.append(self.current_batch);
+            // initialize and set new batch
+            self.current_batch = .{
+                .renderer_type = correct_renderer,
+                .index = self.batches_text.items.len
+            };
+            const new_batch = try self.batches_text.addOne();
+            new_batch.* = TextRendererImpl.Batch.init(self.allocator, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
+            try new_batch.add_text(pos, fmt, args, tint);
+        }
+
+        pub fn flush_all(self: *Self) !void {
+            if (self.current_batch.renderer_type == .none) return;
+            try self.batches.append(self.current_batch);
+
+            std.log.debug("total batches for container {}", .{self.batches.items.len});
+            
+            for (self.batches.items) |batch| {
+                const index = batch.index;
+                switch (batch.renderer_type) {
+                    .shape => {
+                        const batch_to_render = &self.batches_shapes.items[index];
+                        batch_to_render.flush();
+                    },
+                    .text => {
+                        const batch_to_render = &self.batches_text.items[index];
+                        batch_to_render.flush();
+                    },
+                    .surface => {
+                        const batch_to_render = &self.batches_surfaces.items[index];
+                        batch_to_render.flush();
+                    },
+                    .none => unreachable
+                }
+            }
+
+            self.batches.clearRetainingCapacity();
+            self.batches_shapes.clearRetainingCapacity();
+            self.batches_surfaces.clearRetainingCapacity();
+            self.batches_text.clearRetainingCapacity();
+            self.current_batch = .{
+                .index = 0,
+                .renderer_type = .none
+            };
+        }
+
+        const RendererType = enum {
+            none, text, shape, surface
+        };
+
+        const BatchDescriptor = struct {
+            renderer_type: RendererType,
+            index: usize,
+        };
     };
 }
 
