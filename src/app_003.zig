@@ -192,30 +192,12 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const sprite_selector_window_data = struct {
         var sprite_selected: ?usize = null;
         var sprite_hovered: ?usize = null;
-        var init = false;
-        var surface: Buffer2D(platform.OutPixelType) = undefined;
     };
-    if (sprite_selector_window_data.init == false) {
-        sprite_selector_window_data.init = true;
-        sprite_selector_window_data.surface = blk: {
-            var buffer = Buffer2D(platform.OutPixelType).from(try ud.allocator.alloc(platform.OutPixelType, 16*16*8*8), 16*8);
-            buffer.clear(platform.OutPixelType.from(BGR, @bitCast(Assets.palette[0])));
-            // pre-render the sprite atlas into a surface
-            for (0..16) |j| {
-                for (0..16) |i| {
-                    const jj: f32 = @floatFromInt(j);
-                    const ii: f32 = @floatFromInt(i);
-                    const pos = Vector2f.from(ii*8, jj*8);
-                    state.renderer_blending.add_sprite_from_atlas_index(@intCast(i + j*16), pos, .{}) catch @panic("");
-                }
-            }
-            state.renderer_blending.render(buffer, M33.orthographic_projection(0, 16*8, 16*8, 0), M33.viewport(0, 0, 16*8, 16*8));
-            break :blk buffer;
-        };
-    }
     const sprite_selector_window = Container("sprite_selector");
     if (try sprite_selector_window.begin(ud.allocator, "sprites", Vec2(f32).from (10, 10+16*8), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
-        try sprite_selector_window.surface_grid_selector(platform.OutPixelType, Vec2(usize).from(16,16), sprite_selector_window_data.surface, &sprite_selector_window_data.sprite_selected, &sprite_selector_window_data.sprite_hovered);
+        if (sprite_selector_window_data.sprite_selected) |selected| try sprite_selector_window.text_line_fmt("Selected: {}", .{selected})
+        else try sprite_selector_window.text_line("Select one...");
+        try sprite_selector_window.show_palette_based_texture_and_grid_selector(Vec2(usize).from(16,16), Assets.atlas_tiles_buffer, @constCast(&Assets.palette), &sprite_selector_window_data.sprite_selected, &sprite_selector_window_data.sprite_hovered);
     }
     try sprite_selector_window.end();
     
@@ -852,6 +834,69 @@ fn Container(comptime id: []const u8) type {
                     options_bb.bottom + (if32+0) * text_line_height,
                     options_bb.left,
                     options_bb.right
+                );
+                var color = highlight_color_a;
+                color.a = 50;
+                try renderer.add_quad_from_bb(option_bb, color);
+            }
+        }
+
+        // TODO separate grid selector from its content
+        // 1. make a grid selector
+        // 2. declare the content
+        // 3. when all the content has been declared, actually make the grid selector over that content
+        fn show_palette_based_texture_and_grid_selector(comptime surface_grid_dimensions: Vec2(usize), palette_based_texture: Buffer2D(tic80.PaletteIndex), palette: *tic80.Palette, selected: *?usize, hovered: *?usize) !void {
+            const padding: f32 = 2;
+            const element_bb = increment_bb(@as(f32,@floatFromInt(palette_based_texture.height)) + padding*2, @as(f32,@floatFromInt(palette_based_texture.width)) + padding*2);
+            const surface_bb = BoundingBox(f32).from(element_bb.top-padding, element_bb.bottom+padding, element_bb.left+padding, element_bb.right-padding);
+
+            // find out if any option is hovered
+            if (surface_bb.contains_exclusive(mouse_position)) {
+                const mouse_in_surface = mouse_position.substract(surface_bb.bl()).to(usize);
+                const mouse_tile_in_surface = Vec2(usize).from(mouse_in_surface.x/8, mouse_in_surface.y/8);
+                const hovered_tile_index = mouse_tile_in_surface.x + mouse_tile_in_surface.y*surface_grid_dimensions.x;
+                std.debug.assert(hovered_tile_index >= 0 and hovered_tile_index < surface_grid_dimensions.x*surface_grid_dimensions.y);
+                hovered.* = hovered_tile_index;
+            }
+            else hovered.* = null;
+
+            // selecting and selection-clear logic
+            if (mouse_click) if (hovered.*) |hovered_index| {
+                if (selected.*) |selected_index| {
+                    if (selected_index == hovered_index) selected.* = null
+                    else selected.* = hovered_index;
+                }
+                else {
+                    selected.* = hovered_index;
+                }
+            };
+
+            // draw
+            try renderer.add_palette_based_textured_quad(surface_bb, surface_bb.offset_negative(surface_bb.bl()), palette_based_texture, palette);
+            
+            // render the highlight for the hover
+            if (selected.*) |selected_option| {
+                const col: f32 = @floatFromInt(selected_option%surface_grid_dimensions.x);
+                const row: f32 = @floatFromInt(@divFloor(selected_option,surface_grid_dimensions.y));
+                const option_bb = BoundingBox(f32).from(
+                    surface_bb.bottom + row*8 + 8,
+                    surface_bb.bottom + row*8,
+                    surface_bb.left + col*8,
+                    surface_bb.left + col*8 + 8
+                );
+                var color = highlight_color_b;
+                color.a = 50;
+                try renderer.add_quad_from_bb(option_bb, color);
+            }
+            // render the highlight for the selected
+            if (hovered.*) |hover_index| {
+                const col: f32 = @floatFromInt(hover_index%surface_grid_dimensions.x);
+                const row: f32 = @floatFromInt(@divFloor(hover_index,surface_grid_dimensions.y));
+                const option_bb = BoundingBox(f32).from(
+                    surface_bb.bottom + row*8 + 8,
+                    surface_bb.bottom + row*8,
+                    surface_bb.left + col*8,
+                    surface_bb.left + col*8 + 8
                 );
                 var color = highlight_color_a;
                 color.a = 50;
@@ -1515,6 +1560,204 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
     };
 }
 
+pub fn PaletteBasedTexturedQuadRenderer(comptime output_pixel_type: type, comptime key_color: ?tic80.PaletteIndex) type {
+    return struct {
+        
+        const Self = @This();
+
+        const shader = struct {
+
+            pub const Context = struct {
+                palette_based_texture: Buffer2D(tic80.PaletteIndex),
+                palette: *tic80.Palette,
+                mvp_matrix: M33,
+            };
+
+            pub const Invariant = struct {
+                uv: Vector2f,
+            };
+
+            pub const Vertex = struct {
+                pos: Vector2f,
+                uv: Vector2f,
+            };
+
+            pub const pipeline_configuration = graphics.GraphicsPipelineQuads2DConfiguration {
+                .blend_with_background = key_color != null,
+                .do_quad_clipping = true,
+                .do_scissoring = false,
+                .trace = false
+            };
+
+            inline fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector3f {
+                out_invariant.uv = vertex.uv;
+                return context.mvp_matrix.apply_to_vec2(vertex.pos);
+            }
+
+            inline fn fragment_shader(context: Context, invariants: Invariant) output_pixel_type {
+                const palette_index = context.palette_based_texture.point_sample(false, invariants.uv);
+                const key_color_enabled = comptime key_color != null;
+                if (key_color_enabled) {
+                    if (palette_index == key_color.?) return output_pixel_type.from(RGBA, RGBA.make(0,0,0,0));
+                }
+                return output_pixel_type.from(BGR, @bitCast(context.palette[palette_index]));
+            }
+            
+            pub const Pipeline = graphics.GraphicsPipelineQuads2D(
+                output_pixel_type,
+                Context,
+                Invariant,
+                Vertex,
+                pipeline_configuration,
+                vertex_shader,
+                fragment_shader
+            );
+            
+        };
+
+        allocator: std.mem.Allocator,
+        palette_based_texture: Buffer2D(tic80.PaletteIndex),
+        palette: *tic80.Palette,
+        vertex_buffer: std.ArrayList(shader.Vertex),
+
+        pub fn init(allocator: std.mem.Allocator, palette: *tic80.Palette, palette_based_texture: Buffer2D(tic80.PaletteIndex)) !Self {
+            var self: Self = undefined;
+            self.allocator = allocator;
+            self.palette_based_texture = palette_based_texture;
+            self.palette = palette;
+            self.vertex_buffer = std.ArrayList(shader.Vertex).init(allocator);
+            return self;
+        }
+
+        pub const ExtraParameters = struct {
+            mirror_horizontally: bool = false
+        };
+
+        pub fn add_sprite_from_atlas_by_index(self: *Self, comptime grid_cell_dimensions: Vec2(usize), comptime grid_dimensions: Vec2(usize), sprite_index: usize, dest_bb: BoundingBox(f32), parameters: ExtraParameters) !void {
+            const colf: f32 = @floatFromInt(sprite_index % grid_dimensions.x);
+            const rowf: f32 = @floatFromInt(@divFloor(sprite_index, grid_dimensions.y));
+            var vertices = [4] shader.Vertex {
+                .{ .pos = dest_bb.bl(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + 0                      , rowf*grid_cell_dimensions.y + grid_cell_dimensions.y) }, // 0 - bottom left
+                .{ .pos = dest_bb.br(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + grid_cell_dimensions.x , rowf*grid_cell_dimensions.y + grid_cell_dimensions.y) }, // 1 - bottom right
+                .{ .pos = dest_bb.tr(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + grid_cell_dimensions.x , rowf*grid_cell_dimensions.y + 0                     ) }, // 2 - top right
+                .{ .pos = dest_bb.tl(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + 0                      , rowf*grid_cell_dimensions.y + 0                     ) }, // 3 - top left
+            };
+            if (parameters.mirror_horizontally) {
+                vertices[0].uv.x = colf*grid_cell_dimensions.x + grid_cell_dimensions.x;
+                vertices[1].uv.x = colf*grid_cell_dimensions.x + 0;
+                vertices[2].uv.x = colf*grid_cell_dimensions.x + 0;
+                vertices[3].uv.x = colf*grid_cell_dimensions.x + grid_cell_dimensions.x;
+            }
+            try self.vertex_buffer.appendSlice(&vertices);
+        }
+
+        pub fn add_map(self: *Self, comptime grid_cell_dimensions: Vec2(usize), comptime grid_dimensions: Vec2(usize), map: *[136][240]u8, map_bb: BoundingBox(usize), dest_bb: BoundingBox(f32)) !void {
+            for (map[map_bb.bottom..map_bb.top+1], 0..) |map_row, i| {
+                for (map_row[map_bb.left..map_bb.right+1], 0..) |sprite_index, j| {
+                    const offset = Vector2f.from(@floatFromInt(j*8), @floatFromInt(i*8));
+                    const map_tile_dest_bb = BoundingBox(f32).from(
+                        dest_bb.bottom + offset.y + grid_cell_dimensions.y,
+                        dest_bb.bottom + offset.y,
+                        dest_bb.left + offset.x,
+                        dest_bb.left + offset.x + grid_cell_dimensions.x
+                    );
+                    try self.add_sprite_from_atlas_by_index(grid_cell_dimensions, grid_dimensions, sprite_index, map_tile_dest_bb, .{});
+                }
+            }
+        }
+
+        pub fn render(self: *Self, pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
+            const context = shader.Context {
+                .texture = self.palette_based_texture,
+                .palette = self.palette,
+                .mvp_matrix = mvp_matrix,
+            };
+            shader.Pipeline.render(pixel_buffer, context, self.vertex_buffer.items, @divExact(self.vertex_buffer.items.len, 4), .{ .viewport_matrix = viewport_matrix });
+            self.vertex_buffer.clearRetainingCapacity();
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.vertex_buffer.clearAndFree();
+        }
+
+        const Batch = struct {
+            
+            palette_based_texture: Buffer2D(tic80.PaletteIndex),
+            palette: *tic80.Palette,
+            vertex_buffer: std.ArrayList(shader.Vertex),
+            pixel_buffer: Buffer2D(output_pixel_type),
+            mvp_matrix: M33,
+            viewport_matrix: M33,
+
+            pub fn init(allocator: std.mem.Allocator, palette: *tic80.Palette, palette_based_texture: Buffer2D(tic80.PaletteIndex), pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33) !Batch {
+                var self: Batch = undefined;
+                self.palette_based_texture = palette_based_texture;
+                self.palette = palette;
+                self.vertex_buffer = std.ArrayList(shader.Vertex).init(allocator);
+                self.pixel_buffer = pixel_buffer;
+                self.mvp_matrix = mvp_matrix;
+                self.viewport_matrix = viewport_matrix;
+                return self;
+            }
+
+            pub fn add_palette_based_textured_quad(self: *Batch, dest_bb: BoundingBox(f32), src_bb: BoundingBox(f32)) !void {
+                var vertices = [4] shader.Vertex {
+                    .{ .pos = dest_bb.bl(), .uv = src_bb.tl() }, // 0 - bottom left
+                    .{ .pos = dest_bb.br(), .uv = src_bb.tr() }, // 1 - bottom right
+                    .{ .pos = dest_bb.tr(), .uv = src_bb.br() }, // 2 - top right
+                    .{ .pos = dest_bb.tl(), .uv = src_bb.bl() }, // 3 - top left
+                };
+                try self.vertex_buffer.appendSlice(&vertices);
+            }
+
+            pub fn add_sprite_from_atlas_by_index(self: *Batch, comptime grid_cell_dimensions: Vec2(usize), comptime grid_dimensions: Vec2(usize), sprite_index: usize, dest_bb: BoundingBox(f32), parameters: ExtraParameters) !void {
+                const colf: f32 = @floatFromInt(sprite_index % grid_dimensions.x);
+                const rowf: f32 = @floatFromInt(@divFloor(sprite_index, grid_dimensions.y));
+                var vertices = [4] shader.Vertex {
+                    .{ .pos = dest_bb.bl(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + 0                      , rowf*grid_cell_dimensions.y + grid_cell_dimensions.y) }, // 0 - bottom left
+                    .{ .pos = dest_bb.br(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + grid_cell_dimensions.x , rowf*grid_cell_dimensions.y + grid_cell_dimensions.y) }, // 1 - bottom right
+                    .{ .pos = dest_bb.tr(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + grid_cell_dimensions.x , rowf*grid_cell_dimensions.y + 0                     ) }, // 2 - top right
+                    .{ .pos = dest_bb.tl(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + 0                      , rowf*grid_cell_dimensions.y + 0                     ) }, // 3 - top left
+                };
+                if (parameters.mirror_horizontally) {
+                    vertices[0].uv.x = colf*grid_cell_dimensions.x + grid_cell_dimensions.x;
+                    vertices[1].uv.x = colf*grid_cell_dimensions.x + 0;
+                    vertices[2].uv.x = colf*grid_cell_dimensions.x + 0;
+                    vertices[3].uv.x = colf*grid_cell_dimensions.x + grid_cell_dimensions.x;
+                }
+                try self.vertex_buffer.appendSlice(&vertices);
+            }
+
+            pub fn add_map(self: *Batch, comptime grid_cell_dimensions: Vec2(usize), comptime grid_dimensions: Vec2(usize), map: *[136][240]u8, map_bb: BoundingBox(usize), dest_bb: BoundingBox(f32)) !void {
+                for (map[map_bb.bottom..map_bb.top+1], 0..) |map_row, i| {
+                    for (map_row[map_bb.left..map_bb.right+1], 0..) |sprite_index, j| {
+                        const offset = Vector2f.from(@floatFromInt(j*8), @floatFromInt(i*8));
+                        const map_tile_dest_bb = BoundingBox(f32).from(
+                            dest_bb.bottom + offset.y + grid_cell_dimensions.y,
+                            dest_bb.bottom + offset.y,
+                            dest_bb.left + offset.x,
+                            dest_bb.left + offset.x + grid_cell_dimensions.x
+                        );
+                        try self.add_sprite_from_atlas_by_index(grid_cell_dimensions, grid_dimensions, sprite_index, map_tile_dest_bb, .{});
+                    }
+                }
+            }
+
+            pub fn flush(self: *Batch) void {
+                const context = shader.Context {
+                    .palette_based_texture = self.palette_based_texture,
+                    .palette = self.palette,
+                    .mvp_matrix = self.mvp_matrix,
+                };
+                shader.Pipeline.render(self.pixel_buffer, context, self.vertex_buffer.items, @divExact(self.vertex_buffer.items.len, 4), .{ .viewport_matrix = self.viewport_matrix });
+                self.vertex_buffer.clearAndFree();
+            }
+            
+        };
+        
+    };
+}
+
 // TODO allow to continue batches if not explicitly asked to use a different batch, or if the continuation is just imposible (for example, when textures used are different)
 // TODO add layers!
 pub fn Renderer(comptime output_pixel_type: type) type {
@@ -1525,19 +1768,16 @@ pub fn Renderer(comptime output_pixel_type: type) type {
         const TextRendererImpl = TextRenderer(output_pixel_type, 1024, text_scale);
         const ShapeRendererImpl = ShapeRenderer(output_pixel_type, RGB.from(255,255,255));
         const SurfaceRendererImpl = StandardQuadRenderer(output_pixel_type);
+        const PaletteBasedTexturedQuadRendererImpl = PaletteBasedTexturedQuadRenderer(output_pixel_type, null);
 
         allocator: std.mem.Allocator,
 
         batches: std.ArrayList(BatchDescriptor),
         current_batch: BatchDescriptor,
 
-        renderer_text: TextRendererImpl,
         batches_text: std.ArrayList(TextRendererImpl.Batch),
-        
-        renderer_shapes: ShapeRendererImpl,
         batches_shapes: std.ArrayList(ShapeRendererImpl.Batch),
-        
-        renderer_surfaces: SurfaceRendererImpl,
+        batches_palette_based_textured_quads: std.ArrayList(PaletteBasedTexturedQuadRendererImpl.Batch),
         batches_surfaces: std.ArrayList(SurfaceRendererImpl.Batch),
 
         pixel_buffer: Buffer2D(output_pixel_type),
@@ -1547,14 +1787,11 @@ pub fn Renderer(comptime output_pixel_type: type) type {
         pub fn init(allocator: std.mem.Allocator) !Self {
             var self: Self = undefined;
             self.allocator = allocator;
-            
-            self.renderer_text = try TextRendererImpl.init(allocator);
-            self.renderer_shapes = try ShapeRendererImpl.init(allocator);
-            self.renderer_surfaces = try SurfaceRendererImpl.init(allocator);
-            
+                        
             self.batches_text = std.ArrayList(TextRendererImpl.Batch).init(allocator);
             self.batches_shapes = std.ArrayList(ShapeRendererImpl.Batch).init(allocator);
             self.batches_surfaces = std.ArrayList(SurfaceRendererImpl.Batch).init(allocator);
+            self.batches_palette_based_textured_quads = std.ArrayList(PaletteBasedTexturedQuadRendererImpl.Batch).init(allocator);
 
             self.batches = std.ArrayList(BatchDescriptor).init(allocator);
 
@@ -1612,6 +1849,30 @@ pub fn Renderer(comptime output_pixel_type: type) type {
             try new_batch.add_quad_border(bb, thickness, tint);
         }
         
+        pub fn add_palette_based_textured_quad(self: *Self, dest_bb: BoundingBox(f32), src_bb: BoundingBox(f32), palette_based_texture: Buffer2D(tic80.PaletteIndex), palette: *tic80.Palette) !void {
+            const correct_renderer = RendererType.palette_based_textured_quad_renderer;
+            if (self.current_batch.renderer_type == correct_renderer) {
+                const batch = &self.batches_palette_based_textured_quads.items[self.current_batch.index];
+                // if the batch is using same palette and texture, keep using it
+                if (batch.palette_based_texture.data.ptr == palette_based_texture.data.ptr and batch.palette == palette) {
+                    try batch.add_palette_based_textured_quad(dest_bb, src_bb);
+                    return;
+                }
+            }
+
+            // save previous batch
+            if (self.current_batch.renderer_type != .none) try self.batches.append(self.current_batch);
+
+            // initialize and set new batch
+            self.current_batch = .{
+                .renderer_type = correct_renderer,
+                .index = self.batches_palette_based_textured_quads.items.len
+            };
+            const new_batch = try self.batches_palette_based_textured_quads.addOne();
+            new_batch.* = try PaletteBasedTexturedQuadRendererImpl.Batch.init(self.allocator, palette, palette_based_texture, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
+            try new_batch.add_palette_based_textured_quad(dest_bb, src_bb);
+        }
+
         pub fn add_blit_texture_to_bb(self: *Self, bb: BoundingBox(f32), texture: Buffer2D(output_pixel_type)) !void {
             const correct_renderer = RendererType.surface;
             if (self.current_batch.renderer_type == correct_renderer) {
@@ -1674,6 +1935,10 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                         const batch_to_render = &self.batches_surfaces.items[index];
                         batch_to_render.flush();
                     },
+                    .palette_based_textured_quad_renderer => {
+                        const batch_to_render = &self.batches_palette_based_textured_quads.items[index];
+                        batch_to_render.flush();
+                    },
                     .none => unreachable
                 }
             }
@@ -1689,7 +1954,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
         }
 
         const RendererType = enum {
-            none, text, shape, surface
+            none, text, shape, surface, palette_based_textured_quad_renderer
         };
 
         const BatchDescriptor = struct {
@@ -2394,6 +2659,26 @@ pub const Assets = struct {
         atlas[19] = tic80.SpriteData { 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xe, 0xe, 0x0, 0x0, 0x0, 0x0, 0x0, 0xe, 0xc, 0xe, 0xc, 0x0, 0xd, 0x0, 0x0, 0xe, 0xc, 0xe, 0xc, 0x0, 0xd, 0x0, 0x0, 0x0, 0xe, 0xe, 0xe, 0x0, 0xd, 0x0, 0x0, 0xf, 0xf, 0xf, 0xf, 0x0, 0xf, 0x0, 0x0, 0xf, 0xd, 0xd, 0xf, 0x0, 0x1 };
         atlas[20] = tic80.SpriteData { 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xe, 0xe, 0x0, 0x0, 0x0, 0x0, 0x0, 0xe, 0xc, 0xe, 0xc, 0x0, 0xd, 0x0, 0x0, 0xe, 0xc, 0xe, 0xc, 0x0, 0xd, 0x0, 0x0, 0x0, 0xe, 0xe, 0xe, 0x0, 0xd, 0x0, 0x0, 0xf, 0xf, 0xf, 0xf, 0x0, 0xf, 0x0, 0x0, 0xf, 0xd, 0xd, 0xf, 0x0, 0x1, 0x0, 0x0, 0x0, 0xd, 0xd, 0xe, 0x0, 0x0 };
         break :blk atlas;
+    };
+
+    pub const atlas_tiles_buffer = Buffer2D(tic80.PaletteIndex).from(@constCast(&atlas_tiles_normalized), 8*16);
+    pub const atlas_tiles_normalized: [8*8*16*16]tic80.PaletteIndex = blk: {
+        var texture_data: [8*8*16*16]tic80.PaletteIndex = undefined;
+        for (atlas_tiles, 0..) |sprite, sprite_index| {
+            const atlas_col = sprite_index % 16;
+            const atlas_row = @divFloor(sprite_index, 16);
+            @setEvalBranchQuota(1000000);
+            for (sprite, 0..) |palette_index, pixel_index| {
+                const sprite_col = pixel_index % 8;
+                const sprite_row = @divFloor(pixel_index, 8);
+
+                const dest_x = atlas_col*8 + sprite_col;
+                // NOTE I want the atlas sprite 0  to start from bottom left and grow upwards so inverse y
+                const dest_y = (15 - atlas_row)*8 + sprite_row;
+                texture_data[dest_x + dest_y*16*8] = palette_index;
+            }
+        }
+        break :blk texture_data;
     };
 
     pub const atlas_tiles: tic80.SpriteAtlas = blk: {
