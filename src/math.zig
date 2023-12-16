@@ -980,6 +980,12 @@ pub fn BoundingBox(comptime T: type) type {
             return from(_br.y+size.y, _br.y, _br.x, _br.x+size.x);
         }
 
+        pub inline fn from_indexed_grid(grid_dimensions: Vec2(T), grid_cell_dimensions: Vec2(T), index: T, inverse_y: bool) Self {
+            const col = index % grid_dimensions.x;
+            const row = if (inverse_y) (grid_dimensions.y-1) - @divFloor(index, grid_dimensions.x) else @divFloor(index, grid_dimensions.x);
+            return BoundingBox(T).from(row*grid_cell_dimensions.y + grid_cell_dimensions.y, row*grid_cell_dimensions.y, col*grid_cell_dimensions.x, col*grid_cell_dimensions.x + grid_cell_dimensions.x);
+        }
+
         /// `point` can be anything that has fields `x: T` and `y: T`
         pub inline fn contains(self: Self, point: anytype) bool {
             return point.x >= self.left and point.x <= self.right and point.y >= self.bottom and point.y <= self.top;
