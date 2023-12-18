@@ -173,6 +173,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         var quick_select_sprite_hovered: ?usize = null;
         var quick_select_indices: [8]?usize = [_]?usize {null} ** 8;
     };
+    // paint the map, add an entity spawner, add a particle emitter, drag currently hovered item (and what item it is...)
+    const MapEditActionType = enum {
+        none, modify_map, modify_entity_spawners, modify_particle_emitters
+    };
     const map_editor_data = struct {
         const size = Vec2(usize).from(50,30);
         var map_tile_selected: ?usize = 0;
@@ -180,6 +184,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         var map_tile_bb = BoundingBox(usize).from(size.y-1, 0, 0, size.x-1);
         var surface: Buffer2D(platform.OutPixelType) = undefined;
         var initialized = false;
+        var edit_action_type: MapEditActionType = .none;
     };
     if (!map_editor_data.initialized) {
         map_editor_data.initialized = true;
@@ -188,35 +193,41 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const map_editor = Container("map_editor");
     if (try map_editor.begin(ud.allocator, "map editor", Vec2(f32).from (200, h-10), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
         
-        const particle_emitter_menu = map_editor;
-        {
-            try particle_emitter_menu.header("particles");
-            if (particle_emitter_menu_data.option_selected) |selected| try particle_emitter_menu.text_line_fmt("Selected: {}", .{selected})
-            else try particle_emitter_menu.text_line("Select one...");
-            _ = try particle_emitter_menu.selection_grid_from_text_options(particle_emitter_menu_data.options, &particle_emitter_menu_data.option_selected, &particle_emitter_menu_data.option_hovered);
-        }
-        
-        try map_editor.separator(1);
-        
         const entity_spawner_menu = map_editor;
         {
-            try entity_spawner_menu.header("entities");
             if (entity_spawner_menu_data.option_selected) |selected| try entity_spawner_menu.text_line_fmt("Selected: {}", .{selected})
             else try entity_spawner_menu.text_line("Select one...");
-            _ = try entity_spawner_menu.selection_grid_from_text_options(entity_spawner_menu_data.options, &entity_spawner_menu_data.option_selected, &entity_spawner_menu_data.option_hovered);
+            const selection_grid = try entity_spawner_menu.selection_grid_from_text_options(entity_spawner_menu_data.options, &entity_spawner_menu_data.option_selected, &entity_spawner_menu_data.option_hovered);
+            if (selection_grid.tile_clicked()) |_| {
+                map_editor_data.edit_action_type = .modify_entity_spawners;
+            }
+        }
+        
+        try map_editor.separator(0);
+        
+        const particle_emitter_menu = map_editor;
+        {
+            if (particle_emitter_menu_data.option_selected) |selected| try particle_emitter_menu.text_line_fmt("Selected: {}", .{selected})
+            else try particle_emitter_menu.text_line("Select one...");
+            const selection_grid = try particle_emitter_menu.selection_grid_from_text_options(particle_emitter_menu_data.options, &particle_emitter_menu_data.option_selected, &particle_emitter_menu_data.option_hovered);
+            if (selection_grid.tile_clicked()) |_| {
+                map_editor_data.edit_action_type = .modify_particle_emitters;
+            }
         }
 
-        try map_editor.separator(1);
+        try map_editor.separator(0);
 
         const sprite_selector_window = map_editor;
         {
-            try sprite_selector_window.header("sprites");
             if (sprite_selector_window_data.sprite_selected) |selected| try sprite_selector_window.text_line_fmt("Selected: {}", .{selected})
             else try sprite_selector_window.text_line("Select one...");
             
             const sprite_quick_select_grid = sprite_selector_window.selection_grid(Vec2(usize).from(8,1), Vec2(usize).from(8,8), &sprite_selector_window_data.quick_select_sprite_selected, &sprite_selector_window_data.quick_select_sprite_hovered);
             for (0..8) |i| {
-                if (ud.key_pressed(49 + i)) sprite_selector_window_data.quick_select_sprite_selected = i;
+                if (ud.key_pressed(49 + i)) {
+                    sprite_selector_window_data.quick_select_sprite_selected = i;
+                    map_editor_data.edit_action_type = .modify_map;
+                }
                 if (sprite_selector_window_data.quick_select_indices[i]) |sprite_index| {
                     const sprite_uv_bb = BoundingBox(usize).from_indexed_grid(Vec2(usize).from(16,16), Vec2(usize).from(8,8), sprite_index, true);
                     try sprite_quick_select_grid.fill_index_with_palette_based_textured_quad(i, sprite_uv_bb.to(f32), Assets.atlas_tiles_buffer, @constCast(&Assets.palette));
@@ -228,12 +239,16 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             try sprite_grid.fill_with_palette_based_texture(Assets.atlas_tiles_buffer, @constCast(&Assets.palette));
             try sprite_grid.highlight_selection_and_hover();
             
-            if (sprite_grid.just_selected) {
-                sprite_selector_window_data.quick_select_indices[sprite_selector_window_data.quick_select_sprite_selected.?] = sprite_selector_window_data.sprite_selected.?;
+            if (sprite_grid.tile_clicked()) |index| {
+                map_editor_data.edit_action_type = .modify_map;
+                sprite_selector_window_data.quick_select_indices[sprite_selector_window_data.quick_select_sprite_selected.?] = index;
             }
         }
 
         map_editor.layout_next_column();
+
+
+        // TODO make a in-editor log
 
         if (ud.key_pressing('D') and map_editor_data.map_tile_bb.right < 240-1) map_editor_data.map_tile_bb = map_editor_data.map_tile_bb.offset(Vec2(usize).from(1, 0));
         if (ud.key_pressing('W') and map_editor_data.map_tile_bb.top < 136-1) map_editor_data.map_tile_bb = map_editor_data.map_tile_bb.offset(Vec2(usize).from(0, 1));
@@ -242,20 +257,58 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         
         const map_editor_tile_grid = map_editor.selection_grid(map_editor_data.size, Vec2(usize).from(8,8), &map_editor_data.map_tile_selected, &map_editor_data.map_tile_hovered);
         if (map_editor_tile_grid.tile_clicking()) |tile_index| {
-            // paint he map
-            if (sprite_selector_window_data.quick_select_sprite_selected) |quic_select_index| {
-                if (sprite_selector_window_data.quick_select_indices[quic_select_index]) |sprite_index| {
-                    const map_y = map_editor_data.map_tile_bb.bottom + @divFloor(tile_index, map_editor_data.size.x);
-                    const map_x = map_editor_data.map_tile_bb.left + tile_index % map_editor_data.size.x;
-                    state.resources.map[map_y][map_x] = @intCast(sprite_index);
-                }
+            const map_tile_clicked = Vec2(usize).from(
+                map_editor_data.map_tile_bb.left + tile_index % map_editor_data.size.x,
+                map_editor_data.map_tile_bb.bottom + @divFloor(tile_index, map_editor_data.size.x)
+            ).to(u8);
+            switch (map_editor_data.edit_action_type) {
+                .modify_map => {
+                    if (sprite_selector_window_data.quick_select_sprite_selected) |quic_select_index| {
+                        if (sprite_selector_window_data.quick_select_indices[quic_select_index]) |sprite_index| {
+                            state.resources.map[map_tile_clicked.y][map_tile_clicked.x] = @intCast(sprite_index);
+                        }
+                    }
+                },
+                .modify_entity_spawners => {
+                    const option_selected = entity_spawner_menu_data.option_selected.?;
+                    // NOTE the last option is hardcoded to be "delete" which is the only way of deleting entity spawners currently
+                    if (option_selected == entity_spawner_menu_data.options.len-1) {
+                        for (state.resources.entity_spawners.items, 0..) |pe, i| {
+                            if (pe.pos.equal(map_tile_clicked)) {
+                                _ = state.resources.entity_spawners.orderedRemove(i);
+                                break;
+                            }
+                        }
+                    }
+                    else {
+                        try state.resources.entity_spawners.append(.{
+                            .pos = map_tile_clicked,
+                            .entity_type = @intCast(option_selected)
+                        });
+                    }
+                },
+                .modify_particle_emitters => {
+                    const option_selected = particle_emitter_menu_data.option_selected.?;
+                    // NOTE the last option is hardcoded to be "delete" which is the only way of deleting entity spawners currently
+                    if (option_selected == particle_emitter_menu_data.options.len-1) {
+                        for (state.resources.environment_particle_emitters.items, 0..) |pe, i| {
+                            if (pe.pos.equal(map_tile_clicked)) {
+                                _ = state.resources.environment_particle_emitters.orderedRemove(i);
+                                break;
+                            }
+                        }
+                    }
+                    else {
+                        try state.resources.environment_particle_emitters.append(.{
+                            .pos = map_tile_clicked,
+                            .particle_emitter_type = @intCast(option_selected)
+                        });
+                    }
+                },
+                .none => {},
             }
         }
 
-        // TODO add Container::layout_newxt_column() which makes it so that subsequents widgets are added on a newly added column
-        // TODO add menu section "current edit action" which shows, if anyone where to click on the map, what exactly would happen:
-        //     paint the map, add an entity spawner, add a particle emitter, drag currently hovered item (and what item it is...)
-        // TODO put everything under a single container
         // TODO new container for modifying the tiles, a simple paint windows basically
 
         // NOTE the map editor is rendered separately to a surface and after the surface is done its paited onto the grid itself
@@ -306,15 +359,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     try map_editor.end();
     
     if (false) {
-    // render the map
-    {
-        try state.renderer_quads.add_map(state.resources.map, state.level_background.bb, Vector2f.from(0,0));
-        state.renderer_quads.render(
-            ud.pixel_buffer,
-            mvp_matrix,
-            viewport_matrix
-        );
-    }
 
     // level bounding boxes
     {
@@ -457,30 +501,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
     }
     
-    // Entity Spawners in the map editor
-    {
-        // Create and Delete entity spawners in the map
-        if (entity_spawner_menu_data.option_selected) |option_selected| {
-            if (state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
-                // NOTE the last option is hardcoded to be "delete" which is the only way of deleting entity spawners currently
-                if (option_selected == entity_spawner_menu_data.options.len-1) {
-                    const pos_to_delete = mouse_tile.to(u8);
-                    for (state.resources.entity_spawners.items, 0..) |pe, i| {
-                        if (pe.pos.equal(pos_to_delete)) {
-                            const removed = state.resources.entity_spawners.orderedRemove(i);
-                            std.log.debug("removed entity spawner {any}", .{removed});
-                            break;
-                        }
-                    }
-                }
-                else {
-                    try state.resources.entity_spawners.append(.{
-                        .pos = mouse_tile.to(u8),
-                        .entity_type = @intCast(option_selected)
-                    });
-                }
-            }
-        }
         // move spawners in the map
         {
             const EntitySpawnerModifyState = struct {
@@ -523,35 +543,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
             state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
         }
-    }
     
-    // Particle Emitters in the map editor
-    {
-        // Create and Delete emitters in the map
-        {
-            // implement the functionality of the menu in the map editor itself
-            if (particle_emitter_menu_data.option_selected) |option_selected| {
-                if(state.level_background.bb.to(f32).contains(mouse_tile) and ud.mouse_left_clicked) {
-                    // NOTE the first entity in the list is hardcoded to be "delete" which is the only way of deleting entity spawners currently
-                    if (option_selected == particle_emitter_menu_data.options.len-1) {
-                        const pos_to_delete = mouse_tile.to(u8);
-                        for (state.resources.environment_particle_emitters.items, 0..) |pe, i| {
-                            if (pe.pos.equal(pos_to_delete)) {
-                                const removed = state.resources.environment_particle_emitters.orderedRemove(i);
-                                std.log.debug("removed particle emitter {any}", .{removed});
-                                break;
-                            }
-                        }
-                    }
-                    else {
-                        try state.resources.environment_particle_emitters.append(.{
-                            .pos = mouse_tile.to(u8),
-                            .particle_emitter_type = @intCast(option_selected)
-                        });
-                    }
-                }
-            }
-        }
         // Move emitters in the map
         {
             const ParticleEmitterModifyState = struct {
@@ -594,54 +586,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
             state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
         }
-    }
-
-    // map painting stuff
-    {
-        const MapPaintState = struct {
-            var active = false;
-            fn set() void {
-                std.debug.assert(!active);
-                std.debug.assert(!MouseState.busy);
-                MouseState.busy = true;
-                active = true;
-            }
-            fn unset() void {
-                std.debug.assert(active);
-                std.debug.assert(MouseState.busy);
-                MouseState.busy = false;
-                active = false;
-            }
-        };
-        // the bounding box of the full map, used to know whether the mouse is in it or not
-        const map_tiles_bb = blk: {
-            var bb = state.level_background.bb.to(f32);
-            break :blk bb.offset(Vec2(f32).from(-bb.left, -bb.bottom));
-        };
-        
-        // conditions to start painting the map
-        if (!MouseState.busy and !MapPaintState.active and map_tiles_bb.contains(mouse_tile) and ud.mouse_left_down) MapPaintState.set();
-        
-        if (MapPaintState.active) {
-            // conditions to stop painting the map
-            if (!ud.mouse_left_down or !map_tiles_bb.contains(mouse_tile)) MapPaintState.unset()
-            else {
-                // paint the map
-                state.resources.map[@intFromFloat(mouse_tile_in_map.y)][@intFromFloat(mouse_tile_in_map.x)] = state.selected_sprite;
-            }
-        }
-
-        // highlight the map cell the mouse is on        
-        if (!MouseState.busy and map_tiles_bb.contains(mouse_tile)) {
-            try state.renderer_shapes.add_quad(mouse_tile.scale(8), Vector2f.from(8,8), @as(RGBA, @bitCast(@as(u32, 0x99999999))));
-            state.renderer_shapes.render(
-                ud.pixel_buffer,
-                mvp_matrix,
-                viewport_matrix
-            );
-        }
-    }
-
     }
 
     // debug overlay
@@ -935,6 +879,10 @@ fn Container(comptime id: []const u8) type {
                 }
             }
 
+            pub fn tile_clicked(self: GridThingy) ?usize {
+                if (self.just_selected) return self.selected.*.?;
+                return null;
+            }
             pub fn tile_clicking(self: GridThingy) ?usize {
                 if (self.click_and_dragging) return self.hovered.*.?;
                 return null;
