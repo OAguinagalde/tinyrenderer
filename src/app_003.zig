@@ -123,14 +123,9 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         var busy = false;
     };
 
-    const pan_speed = 5;
     if (ud.key_pressed('L')) try state.resources.load_from_file(state.resource_file_name);
     if (ud.key_pressed('M')) try state.resources.save_to_file(ud.allocator, state.resource_file_name);
     if (ud.key_pressed('G')) state.debug = !state.debug;
-    if (ud.key_pressing('W')) state.camera.pos.y += pan_speed;
-    if (ud.key_pressing('A')) state.camera.pos.x -= pan_speed;
-    if (ud.key_pressing('S')) state.camera.pos.y -= pan_speed;
-    if (ud.key_pressing('D')) state.camera.pos.x += pan_speed;
     if (ud.mwheel > 0) state.zoom += 1;
     if (ud.mwheel < 0) state.zoom -= 1;
 
@@ -242,25 +237,60 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         if (ud.key_pressing('S') and map_editor_data.map_tile_bb.bottom > 0) map_editor_data.map_tile_bb = map_editor_data.map_tile_bb.offset_negative(Vec2(usize).from(0, 1));
         if (ud.key_pressing('A') and map_editor_data.map_tile_bb.left > 0) map_editor_data.map_tile_bb = map_editor_data.map_tile_bb.offset_negative(Vec2(usize).from(1, 0));
         
-        try state.renderer_quads.add_map(state.resources.map, map_editor_data.map_tile_bb, Vector2f.from(0,0));
-        state.renderer_quads.render(
-            map_editor_data.surface,
-            M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
-            M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
-        );
-
         const map_editor_tile_grid = map_editor.selection_grid(map_editor_data.size, Vec2(usize).from(8,8), &map_editor_data.map_tile_selected, &map_editor_data.map_tile_hovered);
+        if (map_editor_tile_grid.tile_clicking()) |tile_index| {
+            // paint he map
+            if (sprite_selector_window_data.quick_select_sprite_selected) |quic_select_index| {
+                if (sprite_selector_window_data.quick_select_indices[quic_select_index]) |sprite_index| {
+                    const map_y = map_editor_data.map_tile_bb.bottom + @divFloor(tile_index, map_editor_data.size.x);
+                    const map_x = map_editor_data.map_tile_bb.left + tile_index % map_editor_data.size.x;
+                    state.resources.map[map_y][map_x] = @intCast(sprite_index);
+                }
+            }
+        }
 
-        // map_editor_data.offsetx = std.math.clamp(map_editor_data.offsetx, 0, 240-ww);
-        // map_editor_data.offsety = std.math.clamp(map_editor_data.offsety, 0, 136-hh);
-        // const map_editor_tile_grid = map_editor.selection_grid(Vec2(usize).from(ww,hh), Vec2(usize).from(8,8), &map_editor_data.map_tile_selected, &map_editor_data.map_tile_hovered);
-        // for (map_editor_data.offsety..map_editor_data.offsety+hh) |y| {
-        //     for (map_editor_data.offsetx..map_editor_data.offsetx+ww) |x| {
-        //         const index = (x - map_editor_data.offsetx) + (y - map_editor_data.offsety)*ww;
-        //         const sprite_uv_bb = BoundingBox(usize).from_indexed_grid(Vec2(usize).from(16,16), Vec2(usize).from(8,8), @intCast(state.resources.map[y][x]), true);
-        //         try map_editor_tile_grid.fill_index_with_palette_based_textured_quad(index, sprite_uv_bb.to(f32), Assets.atlas_tiles_buffer, @constCast(&Assets.palette));
-        //     }
-        // }
+        // TODO add Container::layout_newxt_column() which makes it so that subsequents widgets are added on a newly added column
+        // TODO add menu section "current edit action" which shows, if anyone where to click on the map, what exactly would happen:
+        //     paint the map, add an entity spawner, add a particle emitter, drag currently hovered item (and what item it is...)
+        // TODO put everything under a single container
+        // TODO new container for modifying the tiles, a simple paint windows basically
+
+        // NOTE the map editor is rendered separately to a surface and after the surface is done its paited onto the grid itself
+        {
+            // render the map
+            try state.renderer_quads.add_map(state.resources.map, map_editor_data.map_tile_bb, Vector2f.from(0,0));
+            state.renderer_quads.render(
+                map_editor_data.surface,
+                M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
+                M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
+            );
+            // render entity spawners
+            for (state.resources.entity_spawners.items) |entity_spawner| {
+                if (!map_editor_data.map_tile_bb.contains(entity_spawner.pos.to(usize))) continue;
+                // use the first sprite of the default animation as the sprite of the spawner
+                const spawner_sprite_id = Assets.EntityDescriptor.from(@enumFromInt(entity_spawner.entity_type)).default_animation.sprites[0];
+                const position = entity_spawner.pos.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
+                try state.renderer_blending.add_sprite_from_atlas_index(spawner_sprite_id, position, .{});
+            }
+            state.renderer_blending.render(
+                map_editor_data.surface,
+                M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
+                M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
+            );
+            // render the particle emitters
+            for (state.resources.environment_particle_emitters.items) |particle_emitter| {
+                if (!map_editor_data.map_tile_bb.contains(particle_emitter.pos.to(usize))) continue;
+                // for now, the "icon" of a particle emitter is the sprite with index 1 (it looks like a weird portal cube thing)
+                const particle_emitter_sprite_id = 1;
+                const position = particle_emitter.pos.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
+                try state.renderer_quads.add_sprite_from_atlas_index(particle_emitter_sprite_id, position, .{});
+            }
+            state.renderer_quads.render(
+                map_editor_data.surface,
+                M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
+                M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
+            );
+        }
 
         try map_editor_tile_grid.fill_with_texture(map_editor_data.surface);
         try map_editor_tile_grid.highlight_selection_and_hover();
@@ -792,68 +822,6 @@ fn Container(comptime id: []const u8) type {
             return grid;
         }
         
-        // fn option_selector(options: []const []const u8, selected: *?usize, hovered: *?usize) !void {
-        //     // TODO calculate minimal max width of every option
-        //     const options_bb = increment_bb(text_line_height*@as(f32, @floatFromInt(options.len)), 0);
-            
-        //     // find out if any option is hovered
-        //     if (options_bb.contains_exclusive(mouse_position)) {
-        //         const mouse_in_options_bb = mouse_position.substract(options_bb.bl());
-        //         const option_index: usize = @intFromFloat(@floor(mouse_in_options_bb.y / text_line_height));
-        //         std.debug.assert(option_index >= 0 and option_index < options.len);
-        //         hovered.* = option_index;
-        //     }
-        //     else hovered.* = null;
-
-        //     // selecting and selection-clear logic
-        //     if (mouse_click) if (hovered.*) |hovered_index| {
-        //         if (selected.*) |selected_index| {
-        //             if (selected_index == hovered_index) selected.* = null
-        //             else selected.* = hovered_index;
-        //         }
-        //         else {
-        //             selected.* = hovered_index;
-        //         }
-        //     };
-
-        //     // draw
-        //     for (options, 0..) |option, i| {
-        //         const if32: f32 = @floatFromInt(i);
-        //         // The bounding box of the i-th selectable option
-        //         const option_bb = BoundingBox(f32).from(
-        //             options_bb.bottom + (if32+1) * text_line_height,
-        //             options_bb.bottom + (if32+0) * text_line_height,
-        //             options_bb.left,
-        //             options_bb.right
-        //         );
-        //         try renderer.add_text(option_bb.bl(), "{s}", .{option}, text_color);
-        //     }
-        //     if (selected.*) |selected_option| {
-        //         const if32: f32 = @floatFromInt(selected_option);
-        //         const option_bb = BoundingBox(f32).from(
-        //             options_bb.bottom + (if32+1) * text_line_height,
-        //             options_bb.bottom + (if32+0) * text_line_height,
-        //             options_bb.left,
-        //             options_bb.right
-        //         );
-        //         var color = highlight_color_b;
-        //         color.a = 50;
-        //         try renderer.add_quad_from_bb(option_bb, color);
-        //     }
-        //     if (hovered.*) |hover_index| {
-        //         const if32: f32 = @floatFromInt(hover_index);
-        //         const option_bb = BoundingBox(f32).from(
-        //             options_bb.bottom + (if32+1) * text_line_height,
-        //             options_bb.bottom + (if32+0) * text_line_height,
-        //             options_bb.left,
-        //             options_bb.right
-        //         );
-        //         var color = highlight_color_a;
-        //         color.a = 50;
-        //         try renderer.add_quad_from_bb(option_bb, color);
-        //     }
-        // }
-
         const GridThingy = struct {
             
             grid_dimensions: Vec2(usize),
@@ -863,6 +831,7 @@ fn Container(comptime id: []const u8) type {
             selected: *?usize,
             hovered: *?usize,
             just_selected: bool,
+            click_and_dragging: bool,
             
             pub fn fill_with_texture(self: GridThingy, texture: Buffer2D(platform.OutPixelType)) !void {
                 try renderer.add_blit_texture_to_bb(self.working_bb, texture);
@@ -924,6 +893,11 @@ fn Container(comptime id: []const u8) type {
                 }
             }
 
+            pub fn tile_clicking(self: GridThingy) ?usize {
+                if (self.click_and_dragging) return self.hovered.*.?;
+                return null;
+            }
+
         };
 
         fn selection_grid(grid_dimensions: Vec2(usize), grid_cell_dimensions: Vec2(usize), selected: *?usize, hovered: *?usize) GridThingy {
@@ -945,6 +919,11 @@ fn Container(comptime id: []const u8) type {
             else hovered.* = null;
 
             // selecting and selection-clear logic
+            var click_and_dragging = false;
+            if (mouse_down) if (hovered.*) |_| {
+                click_and_dragging = true;
+            };
+
             var just_selected = false;
             if (mouse_click) if (hovered.*) |hovered_index| {
                 if (selected.*) |selected_index| {
@@ -968,130 +947,10 @@ fn Container(comptime id: []const u8) type {
                 .hovered = hovered,
                 .selected = selected,
                 .just_selected = just_selected,
+                .click_and_dragging = click_and_dragging,
             };
         }
         
-        // // TODO separate grid selector from its content
-        // // 1. make a grid selector
-        // // 2. declare the content
-        // // 3. when all the content has been declared, actually make the grid selector over that content
-        // fn show_palette_based_texture_and_grid_selector(comptime surface_grid_dimensions: Vec2(usize), palette_based_texture: Buffer2D(tic80.PaletteIndex), palette: *tic80.Palette, selected: *?usize, hovered: *?usize) !void {
-        //     const padding: f32 = 2;
-        //     const element_bb = increment_bb(@as(f32,@floatFromInt(palette_based_texture.height)) + padding*2, @as(f32,@floatFromInt(palette_based_texture.width)) + padding*2);
-        //     const surface_bb = BoundingBox(f32).from(element_bb.top-padding, element_bb.bottom+padding, element_bb.left+padding, element_bb.right-padding);
-
-        //     // find out if any option is hovered
-        //     if (surface_bb.contains_exclusive(mouse_position)) {
-        //         const mouse_in_surface = mouse_position.substract(surface_bb.bl()).to(usize);
-        //         const mouse_tile_in_surface = Vec2(usize).from(mouse_in_surface.x/8, mouse_in_surface.y/8);
-        //         const hovered_tile_index = mouse_tile_in_surface.x + mouse_tile_in_surface.y*surface_grid_dimensions.x;
-        //         std.debug.assert(hovered_tile_index >= 0 and hovered_tile_index < surface_grid_dimensions.x*surface_grid_dimensions.y);
-        //         hovered.* = hovered_tile_index;
-        //     }
-        //     else hovered.* = null;
-
-        //     // selecting and selection-clear logic
-        //     if (mouse_click) if (hovered.*) |hovered_index| {
-        //         if (selected.*) |selected_index| {
-        //             if (selected_index == hovered_index) selected.* = null
-        //             else selected.* = hovered_index;
-        //         }
-        //         else {
-        //             selected.* = hovered_index;
-        //         }
-        //     };
-
-        //     // draw
-        //     try renderer.add_palette_based_textured_quad(surface_bb, surface_bb.offset_negative(surface_bb.bl()), palette_based_texture, palette);
-            
-        //     // render the highlight for the hover
-        //     if (selected.*) |selected_option| {
-        //         const col: f32 = @floatFromInt(selected_option%surface_grid_dimensions.x);
-        //         const row: f32 = @floatFromInt(@divFloor(selected_option,surface_grid_dimensions.y));
-        //         const option_bb = BoundingBox(f32).from(
-        //             surface_bb.bottom + row*8 + 8,
-        //             surface_bb.bottom + row*8,
-        //             surface_bb.left + col*8,
-        //             surface_bb.left + col*8 + 8
-        //         );
-        //         var color = highlight_color_b;
-        //         color.a = 50;
-        //         try renderer.add_quad_from_bb(option_bb, color);
-        //     }
-        //     // render the highlight for the selected
-        //     if (hovered.*) |hover_index| {
-        //         const col: f32 = @floatFromInt(hover_index%surface_grid_dimensions.x);
-        //         const row: f32 = @floatFromInt(@divFloor(hover_index,surface_grid_dimensions.y));
-        //         const option_bb = BoundingBox(f32).from(
-        //             surface_bb.bottom + row*8 + 8,
-        //             surface_bb.bottom + row*8,
-        //             surface_bb.left + col*8,
-        //             surface_bb.left + col*8 + 8
-        //         );
-        //         var color = highlight_color_a;
-        //         color.a = 50;
-        //         try renderer.add_quad_from_bb(option_bb, color);
-        //     }
-        // }
-
-        // fn surface_grid_selector(comptime surface_pixel_type: type, comptime surface_grid_dimensions: Vec2(usize), surface: Buffer2D(surface_pixel_type), selected: *?usize, hovered: *?usize) !void {
-        //     const padding: f32 = 2;
-        //     const element_bb = increment_bb(@as(f32,@floatFromInt(surface.height)) + padding*2, @as(f32,@floatFromInt(surface.width)) + padding*2);
-        //     const surface_bb = BoundingBox(f32).from(element_bb.top-padding, element_bb.bottom+padding, element_bb.left+padding, element_bb.right-padding);
-
-        //     // find out if any option is hovered
-        //     if (surface_bb.contains_exclusive(mouse_position)) {
-        //         const mouse_in_surface = mouse_position.substract(surface_bb.bl()).to(usize);
-        //         const mouse_tile_in_surface = Vec2(usize).from(mouse_in_surface.x/surface_grid_dimensions.x, mouse_in_surface.y/surface_grid_dimensions.y);
-        //         const hovered_tile_index = mouse_tile_in_surface.x + mouse_tile_in_surface.y*surface_grid_dimensions.x;
-        //         std.debug.assert(hovered_tile_index >= 0 and hovered_tile_index < surface_grid_dimensions.x*surface_grid_dimensions.y);
-        //         hovered.* = hovered_tile_index;
-        //     }
-        //     else hovered.* = null;
-
-        //     // selecting and selection-clear logic
-        //     if (mouse_click) if (hovered.*) |hovered_index| {
-        //         if (selected.*) |selected_index| {
-        //             if (selected_index == hovered_index) selected.* = null
-        //             else selected.* = hovered_index;
-        //         }
-        //         else {
-        //             selected.* = hovered_index;
-        //         }
-        //     };
-
-        //     // draw
-        //     try renderer.add_blit_texture_to_bb(surface_bb, surface);
-        //     // render the highlight for the hover
-        //     if (selected.*) |selected_option| {
-        //         const col: f32 = @floatFromInt(selected_option%surface_grid_dimensions.x);
-        //         const row: f32 = @floatFromInt(@divFloor(selected_option,surface_grid_dimensions.y));
-        //         const option_bb = BoundingBox(f32).from(
-        //             surface_bb.bottom + row*8 + 8,
-        //             surface_bb.bottom + row*8,
-        //             surface_bb.left + col*8,
-        //             surface_bb.left + col*8 + 8
-        //         );
-        //         var color = highlight_color_b;
-        //         color.a = 50;
-        //         try renderer.add_quad_from_bb(option_bb, color);
-        //     }
-        //     // render the highlight for the selected
-        //     if (hovered.*) |hover_index| {
-        //         const col: f32 = @floatFromInt(hover_index%surface_grid_dimensions.x);
-        //         const row: f32 = @floatFromInt(@divFloor(hover_index,surface_grid_dimensions.y));
-        //         const option_bb = BoundingBox(f32).from(
-        //             surface_bb.bottom + row*8 + 8,
-        //             surface_bb.bottom + row*8,
-        //             surface_bb.left + col*8,
-        //             surface_bb.left + col*8 + 8
-        //         );
-        //         var color = highlight_color_a;
-        //         color.a = 50;
-        //         try renderer.add_quad_from_bb(option_bb, color);
-        //     }
-        // }
-
         fn separator(extra_width: f32) !void {
             const padding = 1;
             try elements.append(.{.index = 0, .element_type = .separator, .height = extra_width+2});
