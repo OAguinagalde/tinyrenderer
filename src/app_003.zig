@@ -153,15 +153,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             break :blk opts;
         };
     };
-    
-    const entity_spawner_menu = Container("entity_spawner_menu");
-    if (try entity_spawner_menu.begin(ud.allocator, "entity spawner", Vec2(f32).from(10, 250), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
-        if (entity_spawner_menu_data.option_selected) |selected| try entity_spawner_menu.text_line_fmt("Selected: {}", .{selected})
-        else try entity_spawner_menu.text_line("Select one...");
-        _ = try entity_spawner_menu.selection_grid_from_text_options(entity_spawner_menu_data.options, &entity_spawner_menu_data.option_selected, &entity_spawner_menu_data.option_hovered);
-    }
-    try entity_spawner_menu.end();
-
     const particle_emitter_menu_data = struct {
         var option_selected: ?usize = null;
         var option_hovered: ?usize = null;
@@ -175,15 +166,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             break :blk opts;
         };
     };
-
-    const particle_emitter_menu = Container("particle_emitter_menu");
-    if (try particle_emitter_menu.begin(ud.allocator, "particle emitter spawner", Vec2(f32).from(10, 300), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
-        if (particle_emitter_menu_data.option_selected) |selected| try particle_emitter_menu.text_line_fmt("Selected: {}", .{selected})
-        else try particle_emitter_menu.text_line("Select one...");
-        _ = try particle_emitter_menu.selection_grid_from_text_options(particle_emitter_menu_data.options, &particle_emitter_menu_data.option_selected, &particle_emitter_menu_data.option_hovered);
-    }
-    try particle_emitter_menu.end();
-
     const sprite_selector_window_data = struct {
         var sprite_selected: ?usize = 0;
         var sprite_hovered: ?usize = null;
@@ -191,32 +173,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         var quick_select_sprite_hovered: ?usize = null;
         var quick_select_indices: [8]?usize = [_]?usize {null} ** 8;
     };
-    const sprite_selector_window = Container("sprite_selector");
-    if (try sprite_selector_window.begin(ud.allocator, "sprites", Vec2(f32).from (10, 10+16*8), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
-        if (sprite_selector_window_data.sprite_selected) |selected| try sprite_selector_window.text_line_fmt("Selected: {}", .{selected})
-        else try sprite_selector_window.text_line("Select one...");
-        
-        const sprite_quick_select_grid = sprite_selector_window.selection_grid(Vec2(usize).from(8,1), Vec2(usize).from(8,8), &sprite_selector_window_data.quick_select_sprite_selected, &sprite_selector_window_data.quick_select_sprite_hovered);
-        for (0..8) |i| {
-            if (ud.key_pressed(49 + i)) sprite_selector_window_data.quick_select_sprite_selected = i;
-            if (sprite_selector_window_data.quick_select_indices[i]) |sprite_index| {
-                const sprite_uv_bb = BoundingBox(usize).from_indexed_grid(Vec2(usize).from(16,16), Vec2(usize).from(8,8), sprite_index, true);
-                try sprite_quick_select_grid.fill_index_with_palette_based_textured_quad(i, sprite_uv_bb.to(f32), Assets.atlas_tiles_buffer, @constCast(&Assets.palette));
-            }
-        }
-        try sprite_quick_select_grid.highlight_selection_and_hover();
-
-        const sprite_grid = sprite_selector_window.selection_grid(Vec2(usize).from(16,16), Vec2(usize).from(8,8), &sprite_selector_window_data.sprite_selected, &sprite_selector_window_data.sprite_hovered);
-        try sprite_grid.fill_with_palette_based_texture(Assets.atlas_tiles_buffer, @constCast(&Assets.palette));
-        try sprite_grid.highlight_selection_and_hover();
-        
-        if (sprite_grid.just_selected) {
-            sprite_selector_window_data.quick_select_indices[sprite_selector_window_data.quick_select_sprite_selected.?] = sprite_selector_window_data.sprite_selected.?;
-        }
-
-    }
-    try sprite_selector_window.end();
-
     const map_editor_data = struct {
         const size = Vec2(usize).from(50,30);
         var map_tile_selected: ?usize = 0;
@@ -232,6 +188,53 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const map_editor = Container("map_editor");
     if (try map_editor.begin(ud.allocator, "map editor", Vec2(f32).from (200, h-10), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
         
+        const particle_emitter_menu = map_editor;
+        {
+            try particle_emitter_menu.header("particles");
+            if (particle_emitter_menu_data.option_selected) |selected| try particle_emitter_menu.text_line_fmt("Selected: {}", .{selected})
+            else try particle_emitter_menu.text_line("Select one...");
+            _ = try particle_emitter_menu.selection_grid_from_text_options(particle_emitter_menu_data.options, &particle_emitter_menu_data.option_selected, &particle_emitter_menu_data.option_hovered);
+        }
+        
+        try map_editor.separator(1);
+        
+        const entity_spawner_menu = map_editor;
+        {
+            try entity_spawner_menu.header("entities");
+            if (entity_spawner_menu_data.option_selected) |selected| try entity_spawner_menu.text_line_fmt("Selected: {}", .{selected})
+            else try entity_spawner_menu.text_line("Select one...");
+            _ = try entity_spawner_menu.selection_grid_from_text_options(entity_spawner_menu_data.options, &entity_spawner_menu_data.option_selected, &entity_spawner_menu_data.option_hovered);
+        }
+
+        try map_editor.separator(1);
+
+        const sprite_selector_window = map_editor;
+        {
+            try sprite_selector_window.header("sprites");
+            if (sprite_selector_window_data.sprite_selected) |selected| try sprite_selector_window.text_line_fmt("Selected: {}", .{selected})
+            else try sprite_selector_window.text_line("Select one...");
+            
+            const sprite_quick_select_grid = sprite_selector_window.selection_grid(Vec2(usize).from(8,1), Vec2(usize).from(8,8), &sprite_selector_window_data.quick_select_sprite_selected, &sprite_selector_window_data.quick_select_sprite_hovered);
+            for (0..8) |i| {
+                if (ud.key_pressed(49 + i)) sprite_selector_window_data.quick_select_sprite_selected = i;
+                if (sprite_selector_window_data.quick_select_indices[i]) |sprite_index| {
+                    const sprite_uv_bb = BoundingBox(usize).from_indexed_grid(Vec2(usize).from(16,16), Vec2(usize).from(8,8), sprite_index, true);
+                    try sprite_quick_select_grid.fill_index_with_palette_based_textured_quad(i, sprite_uv_bb.to(f32), Assets.atlas_tiles_buffer, @constCast(&Assets.palette));
+                }
+            }
+            try sprite_quick_select_grid.highlight_selection_and_hover();
+
+            const sprite_grid = sprite_selector_window.selection_grid(Vec2(usize).from(16,16), Vec2(usize).from(8,8), &sprite_selector_window_data.sprite_selected, &sprite_selector_window_data.sprite_hovered);
+            try sprite_grid.fill_with_palette_based_texture(Assets.atlas_tiles_buffer, @constCast(&Assets.palette));
+            try sprite_grid.highlight_selection_and_hover();
+            
+            if (sprite_grid.just_selected) {
+                sprite_selector_window_data.quick_select_indices[sprite_selector_window_data.quick_select_sprite_selected.?] = sprite_selector_window_data.sprite_selected.?;
+            }
+        }
+
+        map_editor.layout_next_column();
+
         if (ud.key_pressing('D') and map_editor_data.map_tile_bb.right < 240-1) map_editor_data.map_tile_bb = map_editor_data.map_tile_bb.offset(Vec2(usize).from(1, 0));
         if (ud.key_pressing('W') and map_editor_data.map_tile_bb.top < 136-1) map_editor_data.map_tile_bb = map_editor_data.map_tile_bb.offset(Vec2(usize).from(0, 1));
         if (ud.key_pressing('S') and map_editor_data.map_tile_bb.bottom > 0) map_editor_data.map_tile_bb = map_editor_data.map_tile_bb.offset_negative(Vec2(usize).from(0, 1));
@@ -257,6 +260,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
         // NOTE the map editor is rendered separately to a surface and after the surface is done its paited onto the grid itself
         {
+         
             // render the map
             try state.renderer_quads.add_map(state.resources.map, map_editor_data.map_tile_bb, Vector2f.from(0,0));
             state.renderer_quads.render(
@@ -264,6 +268,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
                 M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
             );
+         
             // render entity spawners
             for (state.resources.entity_spawners.items) |entity_spawner| {
                 if (!map_editor_data.map_tile_bb.contains(entity_spawner.pos.to(usize))) continue;
@@ -277,6 +282,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
                 M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
             );
+         
             // render the particle emitters
             for (state.resources.environment_particle_emitters.items) |particle_emitter| {
                 if (!map_editor_data.map_tile_bb.contains(particle_emitter.pos.to(usize))) continue;
@@ -290,6 +296,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
                 M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
             );
+
+
         }
 
         try map_editor_tile_grid.fill_with_texture(map_editor_data.surface);
@@ -681,12 +689,15 @@ fn Container(comptime id: []const u8) type {
         
         var name_hover: bool = false;
         var name: ?[]const u8 = null;
-        var bb: BoundingBox(f32) = undefined;
         var elements: std.ArrayList(GuiElement) = undefined;
         var elements_text_lines: std.ArrayList(String) = undefined;
         var elements_buttons: std.ArrayList(Button) = undefined;
         var selectable_options: std.ArrayList(SelectableOptions) = undefined;
         var surface_with_grids: std.ArrayList(SurfaceWithSelectableGridElement(platform.OutPixelType)) = undefined;
+        
+        var total_bb: BoundingBox(f32) = undefined;
+        var column_bb: BoundingBox(f32) = undefined;
+        var other_columns_bb: BoundingBox(f32) = undefined;
 
         var container_active: bool = true;
         var pos: Vec2(f32) = undefined;
@@ -715,13 +726,20 @@ fn Container(comptime id: []const u8) type {
                 highlight_color_b = RGBA.from(BGR, @bitCast(Assets.palette[3]));
                 background_color = RGBA.make(0,0,0,255);
 
-                bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, pos.x);
+                total_bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, pos.x);
+                other_columns_bb = total_bb;
+                column_bb = total_bb;
+
                 pos = _pos;
             }
             // reset the data for a new frame
             name = null;
             name_hover = false;
-            bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, pos.x + bb.width());
+            
+            total_bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, @max(pos.x + total_bb.width(), (1+char_width)*@as(f32,@floatFromInt(_name.len))));
+            column_bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, pos.x);
+            other_columns_bb = column_bb;
+
             elements_text_lines.clearRetainingCapacity();
             elements.clearRetainingCapacity();
             elements_buttons.clearRetainingCapacity();
@@ -738,7 +756,9 @@ fn Container(comptime id: []const u8) type {
             // TODO fix this hack
             try renderer.add_quad_from_bb(BoundingBox(f32).from(0,0,0,0), background_color);
 
-            const header_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(_name.len)) * char_width);
+            var header_bb = BoundingBox(f32).from(total_bb.top, total_bb.top - text_line_height, total_bb.left, total_bb.right);
+            total_bb.bottom = header_bb.bottom;
+            column_bb.bottom -= text_line_height;
             name = strings.to_slice(try strings.get_or_create(_name));
             
             if (header_bb.contains(mouse_position)) {
@@ -758,7 +778,10 @@ fn Container(comptime id: []const u8) type {
                     const movement = mouse_position.substract(previous_position);
                     draggable_previous_position = mouse_position;
                     pos = pos.add(movement);
-                    bb = bb.offset(movement);
+                    total_bb = total_bb.offset(movement);
+                    column_bb = column_bb.offset(movement);
+                    other_columns_bb = other_columns_bb.offset(movement);
+                    header_bb = header_bb.offset(movement);
                     dragged_frames += 1;
                 }
             }
@@ -767,21 +790,34 @@ fn Container(comptime id: []const u8) type {
             }
 
             if (name) |n| {
-                try renderer.add_quad_from_bb(bb, if (name_hover) highlight_color_a else highlight_color_b);
-                try renderer.add_text(Vec2(f32).from(bb.left, bb.bottom+1), "{s}", .{n}, text_color);
+                try renderer.add_quad_from_bb(header_bb, if (name_hover) highlight_color_a else highlight_color_b);
+                try renderer.add_text(header_bb.bl().add(Vec2(f32).from(1,1)), "{s}", .{n}, text_color);
             }
             
             return container_active;
         }
 
-        fn increment_bb(added_height: f32, minimum_width: f32) BoundingBox(f32) {
-            bb.bottom = bb.bottom - added_height;
-            bb.right = @max(bb.left + minimum_width, bb.right);
-            return BoundingBox(f32).from(bb.bottom + added_height, bb.bottom, bb.left, bb.right);
+        fn layout_next_column() void {
+            // `other_columns_bb` = `other_columns_bb` + `column_bb`
+            other_columns_bb = BoundingBox(f32).from(total_bb.top, total_bb.bottom, total_bb.left, column_bb.right);
+            column_bb = BoundingBox(f32).from(total_bb.top - text_line_height, total_bb.top - text_line_height, column_bb.right, column_bb.right);
+        }
+
+        fn increment_column_bb(required_height: f32, required_width: f32) BoundingBox(f32) {
+            column_bb.bottom = column_bb.bottom - required_height;
+            column_bb.right = @max(column_bb.left + required_width, column_bb.right);
+            if (column_bb.height() > other_columns_bb.height()) {
+                other_columns_bb.bottom = column_bb.bottom;
+                total_bb.bottom = column_bb.bottom;
+            }
+            if (column_bb.right > total_bb.right) {
+                total_bb.right = column_bb.right;
+            }
+            return BoundingBox(f32).from(column_bb.bottom + required_height, column_bb.bottom, column_bb.left, column_bb.right);
         }
 
         fn button(text: []const u8, pressed: *bool) !bool {
-            const button_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
+            const button_bb = increment_column_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
 
             var hover = false;
             if (button_bb.contains(mouse_position)) {
@@ -797,15 +833,21 @@ fn Container(comptime id: []const u8) type {
             return pressed.*;
         }
 
+        fn header(text: []const u8) !void {
+            const text_bb = increment_column_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
+            try renderer.add_quad_from_bb(text_bb, highlight_color_b);
+            try renderer.add_text(text_bb.bl().add(Vec2(f32).from(1,1)), "{s}", .{text}, text_color);
+        }
+        
         fn text_line(text: []const u8) !void {
-            const text_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
+            const text_bb = increment_column_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);
             try renderer.add_text(text_bb.bl(), "{s}", .{text}, text_color);
         }
 
         fn text_line_fmt(comptime fmt: []const u8, args: anytype) !void {
             const text = try std.fmt.allocPrint(allocator, fmt, args);
             defer allocator.free(text);
-            const text_bb = increment_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);           
+            const text_bb = increment_column_bb(text_line_height, @as(f32, @floatFromInt(text.len))*char_width);           
             try renderer.add_text(text_bb.bl(), "{s}", .{text}, text_color);
         }
 
@@ -902,7 +944,7 @@ fn Container(comptime id: []const u8) type {
 
         fn selection_grid(grid_dimensions: Vec2(usize), grid_cell_dimensions: Vec2(usize), selected: *?usize, hovered: *?usize) GridThingy {
             const padding: f32 = 2;
-            const element_bb = increment_bb(
+            const element_bb = increment_column_bb(
                 @as(f32,@floatFromInt(grid_cell_dimensions.y*grid_dimensions.y)) + padding*2,
                 @as(f32,@floatFromInt(grid_cell_dimensions.x*grid_dimensions.x)) + padding*2
             );
@@ -954,25 +996,22 @@ fn Container(comptime id: []const u8) type {
         fn separator(extra_width: f32) !void {
             const padding = 1;
             try elements.append(.{.index = 0, .element_type = .separator, .height = extra_width+2});
-            const separator_bb = increment_bb(extra_width + 2*padding, 0);
+            const separator_bb = increment_column_bb(extra_width + 2*padding, 0);
             const separator_line_bb = BoundingBox(f32).from(separator_bb.top-padding, separator_bb.bottom+padding, separator_bb.left + padding, separator_bb.right - padding);
             try renderer.add_quad_from_bb(separator_line_bb, highlight_color_a);
         }
 
         fn end() !void {
-            
             // TODO render in background layer
             // For now this is a huge hack lol dont do this
-            try renderer.batches_shapes.items[0].add_quad_from_bb(bb, background_color);
+            try renderer.batches_shapes.items[0].add_quad_from_bb(total_bb, background_color);
             renderer.batches_shapes.items[0].vertex_buffer.items[3] = renderer.batches_shapes.items[0].vertex_buffer.pop();
             renderer.batches_shapes.items[0].vertex_buffer.items[2] = renderer.batches_shapes.items[0].vertex_buffer.pop();
             renderer.batches_shapes.items[0].vertex_buffer.items[1] = renderer.batches_shapes.items[0].vertex_buffer.pop();
             renderer.batches_shapes.items[0].vertex_buffer.items[0] = renderer.batches_shapes.items[0].vertex_buffer.pop();
             
-
-            try renderer.add_quad_border(bb, 1, highlight_color_a);
+            try renderer.add_quad_border(total_bb, 1, highlight_color_a);
             try renderer.flush_all();
-            // try draw();
         }
 
     };
