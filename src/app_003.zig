@@ -175,7 +175,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     };
     // paint the map, add an entity spawner, add a particle emitter, drag currently hovered item (and what item it is...)
     const MapEditActionType = enum {
-        none, modify_map, modify_entity_spawners, modify_particle_emitters
+        none, modify_map, modify_entity_spawners, modify_particle_emitters, modify_position_of_selected_item
     };
     const map_editor_data = struct {
         const size = Vec2(usize).from(50,30);
@@ -193,6 +193,11 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const map_editor = Container("map_editor");
     if (try map_editor.begin(ud.allocator, "map editor", Vec2(f32).from (200, h-10), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
         
+        try map_editor.text_line("Edit action:");
+        try map_editor.text_line_fmt("{s}", .{@tagName(map_editor_data.edit_action_type)});
+        try map_editor.separator(0);
+        try map_editor.separator(0);
+        
         const entity_spawner_menu = map_editor;
         {
             if (entity_spawner_menu_data.option_selected) |selected| try entity_spawner_menu.text_line_fmt("Selected: {}", .{selected})
@@ -203,6 +208,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             }
         }
         
+        try map_editor.separator(0);
         try map_editor.separator(0);
         
         const particle_emitter_menu = map_editor;
@@ -215,6 +221,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             }
         }
 
+        try map_editor.separator(0);
         try map_editor.separator(0);
 
         const sprite_selector_window = map_editor;
@@ -246,7 +253,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
 
         map_editor.layout_next_column();
-
 
         // TODO make a in-editor log
 
@@ -305,6 +311,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                         });
                     }
                 },
+                .modify_position_of_selected_item => {},
                 .none => {},
             }
         }
@@ -313,9 +320,32 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
         // NOTE the map editor is rendered separately to a surface and after the surface is done its paited onto the grid itself
         {
-         
             // render the map
             try state.renderer_quads.add_map(state.resources.map, map_editor_data.map_tile_bb, Vector2f.from(0,0));
+
+            // render the level junctions
+            for (state.resources.junctions.items) |junction| {
+                const exit_sprite_id = 143;
+                // TODO add line renderer pipeline, which batches lines and renders them all together I guess?
+                if (map_editor_data.map_tile_bb.contains(junction.a.to(usize))) {
+                    const position = junction.a.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
+                    try state.renderer_quads.add_sprite_from_atlas_index(exit_sprite_id, position, .{});
+                }
+                if (map_editor_data.map_tile_bb.contains(junction.b.to(usize))) {
+                    const position = junction.b.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
+                    try state.renderer_quads.add_sprite_from_atlas_index(exit_sprite_id, position, .{});
+                }
+            }
+
+            // render the particle emitters
+            for (state.resources.environment_particle_emitters.items) |particle_emitter| {
+                if (!map_editor_data.map_tile_bb.contains(particle_emitter.pos.to(usize))) continue;
+                // for now, the "icon" of a particle emitter is the sprite with index 1 (it looks like a weird portal cube thing)
+                const particle_emitter_sprite_id = 1;
+                const position = particle_emitter.pos.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
+                try state.renderer_quads.add_sprite_from_atlas_index(particle_emitter_sprite_id, position, .{});
+            }
+
             state.renderer_quads.render(
                 map_editor_data.surface,
                 M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
@@ -335,21 +365,22 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
                 M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
             );
-         
-            // render the particle emitters
-            for (state.resources.environment_particle_emitters.items) |particle_emitter| {
-                if (!map_editor_data.map_tile_bb.contains(particle_emitter.pos.to(usize))) continue;
-                // for now, the "icon" of a particle emitter is the sprite with index 1 (it looks like a weird portal cube thing)
-                const particle_emitter_sprite_id = 1;
-                const position = particle_emitter.pos.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
-                try state.renderer_quads.add_sprite_from_atlas_index(particle_emitter_sprite_id, position, .{});
+
+            // render the sub level bounding boxes
+            for (state.resources.levels.items) |*l| {
+                const level_bb_f32 = l.bb.to(f32);
+                var level_bb = level_bb_f32;
+                level_bb.right += 1;
+                level_bb.top += 1;
+                level_bb = level_bb.scale(Vec2(f32).from(8,8)).offset_negative(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
+                const color: RGBA = @bitCast(@as(u32,0xffffffff));
+                try state.renderer_shapes.add_quad_border(level_bb, 1, color);
             }
-            state.renderer_quads.render(
+            state.renderer_shapes.render(
                 map_editor_data.surface,
                 M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
                 M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
             );
-
 
         }
 
