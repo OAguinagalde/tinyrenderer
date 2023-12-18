@@ -49,7 +49,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
             const event: []const u8 = wasm_get_static_buffer()[0..len];
             flog("event received {s}", .{event});
             var tokens = std.mem.tokenize(u8, event, ":");
-            var event_type = tokens.next().?;
+            const event_type = tokens.next().?;
             if (std.mem.eql(u8, event_type, "mouse")) {
                 if (std.mem.eql(u8, tokens.next().?, "down")) {
                     flog("mouse down!", .{});
@@ -173,7 +173,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
             state.__heap_end = @extern(?[*]u8, .{.name = "__heap_end"}).?;
             flog("__heap_end {any} {}", .{state.__heap_end, @as(usize, @intFromPtr(state.__heap_end))});
             var zero: [*]allowzero u8 = @ptrFromInt(0);
-            var heap: []u8 = @ptrCast(zero[@intFromPtr(state.__heap_base)..@intFromPtr(state.__heap_end)]);
+            const heap: []u8 = @ptrCast(zero[@intFromPtr(state.__heap_base)..@intFromPtr(state.__heap_end)]);
             flog("heap length {}", .{heap.len});
             
             state.fba = std.heap.FixedBufferAllocator.init(heap);
@@ -248,10 +248,10 @@ pub fn Application(comptime app: ApplicationDescription) type {
             const size = context_size+file.len+callback_size;
             var task_storage = try self.arena.allocator().alloc(u8, size);
             
-            var file_storage: []u8 = task_storage[0..file.len];
-            var callback_storage: []u8 = task_storage[file.len..file.len+callback_size];
-            var context_storage: []u8 = task_storage[file.len+callback_size..size];
-            var context_and_callback = task_storage[file.len..size];
+            const file_storage: []u8 = task_storage[0..file.len];
+            const callback_storage: []u8 = task_storage[file.len..file.len+callback_size];
+            const context_storage: []u8 = task_storage[file.len+callback_size..size];
+            const context_and_callback = task_storage[file.len..size];
             
             std.debug.assert(context_size == context_storage.len);
             std.mem.copy(u8, file_storage, file);
@@ -264,7 +264,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
         }
         pub fn flog(comptime fmt: []const u8, args: anytype) void {
             var buffer: [1024*2]u8 = undefined;
-            var str = std.fmt.bufPrint(&buffer, fmt, args) catch "flog failed"[0..];
+            const str = std.fmt.bufPrint(&buffer, fmt, args) catch "flog failed"[0..];
             console_log(str.ptr, str.len);
         }
         fn panic(e: anyerror) noreturn {

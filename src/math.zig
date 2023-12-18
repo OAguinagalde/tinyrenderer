@@ -18,16 +18,19 @@ pub fn Vec2(comptime T: type) type {
         }
 
         pub inline fn to(self: Self, comptime OtherType: type) Vec2(OtherType) {
-            const self_is_float = comptime std.meta.trait.isFloat(T);
-            const other_is_float = comptime std.meta.trait.isFloat(OtherType);
-            if (self_is_float) {
-                if (other_is_float) return Vec2(OtherType).from(@floatCast(self.x), @floatCast(self.y))
-                else return Vec2(OtherType).from(@intFromFloat(self.x), @intFromFloat(self.y));
-            }
-            else {
-                if (other_is_float) return Vec2(OtherType).from(@floatFromInt(self.x), @floatFromInt(self.y))
-                else return Vec2(OtherType).from(@intCast(self.x), @intCast(self.y));
-            }
+            return switch (@typeInfo(T)) {
+                .Float => switch (@typeInfo(OtherType)) {
+                    .Float => |_| Vec2(OtherType).from(@floatCast(self.x), @floatCast(self.y)),
+                    .Int => |_| Vec2(OtherType).from(@intFromFloat(self.x), @intFromFloat(self.y)),
+                    else => @panic("type not supported")
+                },
+                .Int => switch (@typeInfo(OtherType)) {
+                    .Int => |_| Vec2(OtherType).from(@intCast(self.x), @intCast(self.y)),
+                    .Float => |_| Vec2(OtherType).from(@floatFromInt(self.x), @floatFromInt(self.y)),
+                    else => @panic("type not supported")
+                },
+                else => @panic("type not supported")
+            };
         }
 
         pub fn add(self: Self, other: Self) Self {
@@ -59,11 +62,13 @@ pub fn Vec2(comptime T: type) type {
         }
         
         pub fn normalized(self: Self) Self {
-            if (comptime std.meta.trait.isFloat(T)) {
-                const mag = self.magnitude();
-                return Self.from(self.x / mag, self.y / mag);
+            switch (@typeInfo(T)) {
+                .Float => {
+                    const mag = self.magnitude();
+                    return Self.from(self.x / mag, self.y / mag);
+                },
+                else => @compileError("type " ++ @typeName(T) ++ " is not a floating point number")
             }
-            else @compileError("type " ++ @typeName(T) ++ " is not a floating point number");
         }
 
         pub fn perpendicular(self: Self) Self {
@@ -889,10 +894,6 @@ pub const BoundingBoxSide = enum {
 pub fn BoundingBox(comptime T: type) type {
     return struct {
 
-        comptime {
-            std.debug.assert(std.meta.trait.isFloat(T) or std.meta.trait.isIntegral(T));
-        }
-
         const Self = @This();
         const Pair = struct {
             x: T, y: T,
@@ -918,25 +919,19 @@ pub fn BoundingBox(comptime T: type) type {
         }
 
         pub inline fn to(self: Self, comptime OtherType: type) BoundingBox(OtherType) {
-            const self_is_float = comptime std.meta.trait.isFloat(T);
-            const other_is_float = comptime std.meta.trait.isFloat(OtherType);
-            if (self_is_float) {
-                if (other_is_float) {
-                    return BoundingBox(OtherType).from(@floatCast(self.top), @floatCast(self.bottom), @floatCast(self.left), @floatCast(self.right));
-                }
-                else {
-                    return BoundingBox(OtherType).from(@intFromFloat(self.top), @intFromFloat(self.bottom), @intFromFloat(self.left), @intFromFloat(self.right));
-
-                }
-            }
-            else {
-                if (other_is_float) {
-                    return BoundingBox(OtherType).from(@floatFromInt(self.top), @floatFromInt(self.bottom), @floatFromInt(self.left), @floatFromInt(self.right));
-                }
-                else {
-                    return BoundingBox(OtherType).from(@intCast(self.top), @intCast(self.bottom), @intCast(self.left), @intCast(self.right));
-                }
-            }
+            return switch (@typeInfo(T)) {
+                .Float => switch (@typeInfo(OtherType)) {
+                    .Float => |_| BoundingBox(OtherType).from(@floatCast(self.top), @floatCast(self.bottom), @floatCast(self.left), @floatCast(self.right)),
+                    .Int => |_| BoundingBox(OtherType).from(@intFromFloat(self.top), @intFromFloat(self.bottom), @intFromFloat(self.left), @intFromFloat(self.right)),
+                    else => @panic("type not supported")
+                },
+                .Int => switch (@typeInfo(OtherType)) {
+                    .Int => |_| BoundingBox(OtherType).from(@intCast(self.top), @intCast(self.bottom), @intCast(self.left), @intCast(self.right)),
+                    .Float => |_| BoundingBox(OtherType).from(@floatFromInt(self.top), @floatFromInt(self.bottom), @floatFromInt(self.left), @floatFromInt(self.right)),
+                    else => @panic("type not supported")
+                },
+                else => @panic("type not supported")
+            };
         }
 
         pub inline fn side(self: Self, s: BoundingBoxSide) T {

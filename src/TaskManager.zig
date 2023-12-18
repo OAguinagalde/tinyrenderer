@@ -16,8 +16,8 @@ arena: std.heap.ArenaAllocator,
 tasks: std.StringHashMap(Task),
 
 pub fn init(allocator: std.mem.Allocator) TaskManager {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    var task_map = std.StringHashMap(Task).init(allocator);
+    const arena = std.heap.ArenaAllocator.init(allocator);
+    const task_map = std.StringHashMap(Task).init(allocator);
     return .{
         .arena = arena,
         .tasks = task_map,
@@ -39,8 +39,8 @@ pub fn register(self: *TaskManager, id: []const u8, cb: *const CallbackType, con
     // allocate enough space to store the task until it gets completed and freed on `finish`
     const size = context_size+id.len;
     var task_storage = try self.arena.allocator().alloc(u8, size);
-    var id_storage: []u8 = task_storage[0..id.len];
-    var context_storage: []u8 = task_storage[id.len..size];
+    const id_storage: []u8 = task_storage[0..id.len];
+    const context_storage: []u8 = task_storage[id.len..size];
     std.debug.assert(context_size == context_storage.len);
     std.mem.copy(u8, id_storage, id);
     std.mem.copy(u8, context_storage, core.byte_slice(&context_value));        

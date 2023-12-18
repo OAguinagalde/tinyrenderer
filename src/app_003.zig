@@ -2240,7 +2240,7 @@ pub const Resources = struct {
         var name_starting_index: usize = 0;
         inline for (@typeInfo(Assets.Levels).Enum.fields) |field| {
             const slice = try self.strings.addManyAsSlice(field.name.len);
-            std.mem.copy(u8, slice, field.name);
+            @memcpy(slice, field.name);
             const level = Assets.Levels.get(@enumFromInt(field.value));
             try self.levels.append(.{
                 .name = .{.index = name_starting_index, .length = field.name.len},

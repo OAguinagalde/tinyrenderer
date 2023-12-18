@@ -22,7 +22,7 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
             
             // And that it is made out of `type`s only.
             const tuple: std.builtin.Type.Struct = tuple_info.Struct;
-            inline for (tuple.fields) |field| {
+            for (tuple.fields) |field| {
                 const ith_value = @field(types, field.name);
                 if (@TypeOf(ith_value) != type) @compileError("expected `type`s only, found  " ++ @typeName(@TypeOf(ith_value)));
             }
@@ -59,14 +59,14 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
         const set_without_components = std.bit_set.IntegerBitSet(32).initEmpty();
 
         pub fn init(allocator: std.mem.Allocator) !Self {
-            var self = Self {
+            const self = Self {
                 .entities = try std.ArrayList(EntityData).initCapacity(allocator, MAX_ENTITIES),
                 .deletedEntities = try std.ArrayList(u32).initCapacity(allocator, MAX_ENTITIES),
                 .allocator = allocator,
             };
             inline for (@typeInfo(@TypeOf(types)).Struct.fields) |field| {
                 const t = @field(types, field.name);
-                var container = getComponentContainer(t);
+                const container = getComponentContainer(t);
                 container.* = try std.ArrayList(t).initCapacity(allocator, MAX_ENTITIES);
                 _ = try container.*.addManyAsArray(MAX_ENTITIES);
             }
@@ -100,32 +100,32 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
         pub fn getComponent(self: Self, comptime T: type, entity: Entity) !?*T {
             var entity_data: EntityData = self.entities.items[entity.id];
             if (entity_data.version != entity.version) return error.RemovedEntity;
-            var component_id = getComponentId(T);
+            const component_id = getComponentId(T);
             if (entity_data.components.isSet(component_id)) {
-                var component_container = getComponentContainer(T);
+                const component_container = getComponentContainer(T);
                 return &component_container.*.items[entity.id];
             }
             return null;
         }
 
         pub fn setComponent(self: *Self, comptime T: type, entity: Entity) !*T {
-            var entity_data = &self.entities.items[entity.id];
+            const entity_data = &self.entities.items[entity.id];
             if (entity_data.*.version != entity.version) return error.RemovedEntity;
-            var component_id = getComponentId(T);
+            const component_id = getComponentId(T);
             entity_data.*.components.set(component_id);
-            var component_container = getComponentContainer(T);
+            const component_container = getComponentContainer(T);
             return &component_container.*.items[entity.id];
         }
 
         pub fn removeComponent(self: *Self, comptime T: type, entity: Entity) !void {
-            var entity_data: *EntityData = &self.entities.items[entity.id];
+            const entity_data: *EntityData = &self.entities.items[entity.id];
             if (entity_data.*.version != entity.version) return error.RemovedEntity;
-            var component_id = getComponentId(T);
+            const component_id = getComponentId(T);
             entity_data.*.components.unset(component_id);
         }
 
         pub fn deleteEntity(self: *Self, entity: Entity) !void {
-            var entity_data = &self.entities.items[entity.id];
+            const entity_data = &self.entities.items[entity.id];
             if (entity_data.*.version != entity.version) return error.RemovedEntity;
             entity_data.*.version += 1;
             entity_data.*.components = set_without_components;
@@ -159,7 +159,7 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
                     
                     const tuple: std.builtin.Type.Struct = tuple_info.Struct;
                     comptime var bit_field = set_without_components;
-                    inline for (tuple.fields) |field| {
+                    for (tuple.fields) |field| {
                         const ith_type = @field(view_types, field.name);
                         const component_id = getComponentId(ith_type);
                         bit_field.set(component_id);
@@ -206,10 +206,10 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
             std.debug.print("Entity {} on version {}\n", .{entity.id, entity.version});
             inline for (@typeInfo(@TypeOf(types)).Struct.fields) |field| {
                 const t = @field(types, field.name);
-                var component_id = getComponentId(t);
+                const component_id = getComponentId(t);
                 if (entity_data.components.isSet(component_id)) {
-                    var component_container = getComponentContainer(t);
-                    var component = &component_container.*.items[entity.id];
+                    const component_container = getComponentContainer(t);
+                    const component = &component_container.*.items[entity.id];
                     std.debug.print("- Component {s} set to {?}\n", .{@typeName(t), component.*});
                 }
                 else std.debug.print("- Component {s} set to -\n", .{@typeName(t)});
@@ -221,7 +221,7 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
             std.debug.print("Size of Entity {}, total space allocated {} bytes ({} kb)\n", .{@sizeOf(EntityData), self.entities.capacity * @sizeOf(EntityData), self.entities.capacity * @sizeOf(EntityData) / 1024});
             inline for (@typeInfo(@TypeOf(types)).Struct.fields) |field| {
                 const t = @field(types, field.name);
-                var container = getComponentContainer(t);
+                const container = getComponentContainer(t);
                 std.debug.print("container for {s} has {} / {} | total space allocated {} bytes ({} kb)\n", .{ @typeName(t), container.*.items.len, container.*.capacity, @sizeOf(t) * MAX_ENTITIES, @sizeOf(t) * MAX_ENTITIES / 1024});
             }
         }
@@ -247,7 +247,7 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
 
             inline for (@typeInfo(@TypeOf(types)).Struct.fields, 0..) |field, i| {
                 const t = @field(types, field.name);
-                var container = getComponentContainer(t);
+                const container = getComponentContainer(t);
                 container_stats[i] = ContainerStats {
                     .count = container.items.len,
                     .allocated_bytes_kb = @sizeOf(t) * MAX_ENTITIES / 1024
@@ -313,11 +313,11 @@ test "view" {
 
     std.debug.print("Create 10 Position. Also set Color for 3 and 7\n", .{});
     for (0..10) |i| {
-        var e = try ecs.newEntity();
-        var pos = try ecs.setComponent(Position, e);
+        const e = try ecs.newEntity();
+        const pos = try ecs.setComponent(Position, e);
         pos.* = .{.x = 7, .y = 10};
         if (i == 3 or i == 7) {
-            var color = try ecs.setComponent(Color, e);
+            const color = try ecs.setComponent(Color, e);
             color.* = .{
                 .r = 123,
                 .g = 124,
@@ -334,11 +334,11 @@ test "view" {
     std.debug.print("Iterate those with Position. Change Position of 3. Delete 7\n", .{});
     var it = ECS.view(.{Position}).iterator();
     while (it.next(&ecs)) |e| {
-        var pos = (try ecs.getComponent(Position, e)).?;
+        const pos = (try ecs.getComponent(Position, e)).?;
         if (e.id == 3) {
             pos.* = .{.x = 999, .y = 999};
         }
-        var color = try ecs.getComponent(Color, e);
+        const color = try ecs.getComponent(Color, e);
         if (color) |c| std.debug.print("{}: {?} {?}\n", .{e.id, pos, c})
         else std.debug.print("{}: {?}\n", .{e.id, pos});
 
@@ -348,8 +348,8 @@ test "view" {
     std.debug.print("Iterate those with Position and Color\n", .{});
     var it2 = ECS.view(.{Position, Color}).iterator();
     while (it2.next(&ecs)) |e| {
-        var pos = (try ecs.getComponent(Position, e)).?;
-        var color = (try ecs.getComponent(Color, e)).?;
+        const pos = (try ecs.getComponent(Position, e)).?;
+        const color = (try ecs.getComponent(Color, e)).?;
         std.debug.print("{}: {?} {?}\n", .{e.id, pos, color});
     }
 }

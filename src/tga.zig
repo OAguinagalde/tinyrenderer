@@ -199,10 +199,9 @@ pub fn from_file(comptime expected_pixel_type: type, allocator: std.mem.Allocato
     var file = std.fs.cwd().openFile(file_path, .{}) catch return error.CantOpenFile;
     defer file.close();
     const stats = try file.stat();
-    var buffer = try allocator.alloc(u8, stats.size);
+    const buffer = try allocator.alloc(u8, stats.size);
     defer allocator.free(buffer);
     const read = try file.readAll(buffer);
     std.debug.assert(read == stats.size);
     return try from_bytes(expected_pixel_type, allocator, buffer);
 }
-        

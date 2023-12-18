@@ -66,7 +66,7 @@ pub const GraphicsPipelineConfiguration = struct {
         // TODO what exactly should I do with declarations?
         // according to the compiler, when I put any declaration whatsoever I ger `error: reified structs must have no decls`
         // not sure what that means
-        var declarations: []const std.builtin.Type.Declaration = &[_]std.builtin.Type.Declaration {
+        const declarations: []const std.builtin.Type.Declaration = &[_]std.builtin.Type.Declaration {
             // .{ .name = "" },
         };
         const requirements = std.builtin.Type {
@@ -651,7 +651,7 @@ pub fn GraphicsPipeline(
                     const a: *const field.type = &@field(data[0], field.name);
                     const b: *const field.type = &@field(data[1], field.name);
                     const c: *const field.type = &@field(data[2], field.name);
-                    var interpolated_result: field.type = switch (@typeInfo(field.type)) {
+                    const interpolated_result: field.type = switch (@typeInfo(field.type)) {
                         .Float => a.* * w + b.* * u + c.* * v,
                         .Int => @intFromFloat( @as(f32,@floatFromInt(a.*)) * w + @as(f32,@floatFromInt(b.*)) * u + @as(f32,@floatFromInt(c.*)) * v ),
                         .Struct => |s| interpolate_struct: {
@@ -699,7 +699,7 @@ pub fn GraphicsPipeline(
                     const a: *const field.type = &@field(data[0], field.name);
                     const b: *const field.type = &@field(data[1], field.name);
                     const c: *const field.type = &@field(data[2], field.name);
-                    var interpolated_result: field.type = switch (@typeInfo(field.type)) {
+                    const interpolated_result: field.type = switch (@typeInfo(field.type)) {
                         .Float => blk: {
                             const fa: f32 = a.* / correction_values[0];
                             const fb: f32 = b.* / correction_values[1];
@@ -831,7 +831,7 @@ pub const GraphicsPipelineQuads2DConfiguration = struct {
                 .alignment = @alignOf(Vector4f)
             }
         };
-        var declarations: []const std.builtin.Type.Declaration = &[_]std.builtin.Type.Declaration {};
+        const declarations: []const std.builtin.Type.Declaration = &[_]std.builtin.Type.Declaration {};
         const requirements = std.builtin.Type {
             .Struct = .{
                 .is_tuple = false,
@@ -1007,7 +1007,7 @@ pub fn GraphicsPipelineQuads2D(
                     const tr: *const field.type = &@field(data[2], field.name);
                     const tl: *const field.type = &@field(data[3], field.name);
 
-                    var interpolated_result: field.type = switch (@typeInfo(field.type)) {
+                    const interpolated_result: field.type = switch (@typeInfo(field.type)) {
                         .Float => bilinear_interpolation(bl.*, br.*, tr.*, tl.*, x, y),
                         .Int => @intFromFloat(bilinear_interpolation(@floatFromInt(bl.*), @floatFromInt(br.*), @floatFromInt(tr.*), @floatFromInt(tl.*), x, y)),
                         .Struct => |s| interpolate_struct: {

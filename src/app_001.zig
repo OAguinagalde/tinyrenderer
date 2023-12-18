@@ -849,7 +849,7 @@ pub fn Pool(comptime T: type) type {
         total: usize,
 
         pub fn init_capacity(allocator: std.mem.Allocator, num: usize) std.mem.Allocator.Error!Self {
-            var self = Self {
+            const self = Self {
                 .marked_deleted = try std.ArrayList(usize).initCapacity(allocator, num),
                 .data = try std.ArrayList(T).initCapacity(allocator, num),
                 .index = 0,
@@ -913,10 +913,10 @@ const Visual = struct {
 };
 
 fn render_animation_in_place(pool: *AnimationSystem, anim: RuntimeAnimation, pos: Vector2f, flipped: bool, frame: usize) !Entity {
-    var e = try pool.newEntity();
-    var animation = try pool.setComponent(RuntimeAnimation, e);
-    var kill_frame = try pool.setComponent(KillAtFrame, e);
-    var visual = try pool.setComponent(Visual, e);
+    const e = try pool.newEntity();
+    const animation = try pool.setComponent(RuntimeAnimation, e);
+    const kill_frame = try pool.setComponent(KillAtFrame, e);
+    const visual = try pool.setComponent(Visual, e);
     animation.* = anim;
     kill_frame.* = frame + anim.animation.duration - 1;
     visual.* = .{
@@ -961,9 +961,9 @@ pub const ParticleDescriptor = struct {
 pub fn particle_create(particles: *Particles, descriptor: ParticleDescriptor) !void {
     const particle = try particles.newEntity();
     var physical = try particles.setComponent(Physics.PhysicalObject, particle);
-    var life = try particles.setComponent(ParticleLife, particle);
-    var pos = try particles.setComponent(Vector2f, particle);
-    var render_data = try particles.setComponent(ParticleRenderData, particle);
+    const life = try particles.setComponent(ParticleLife, particle);
+    const pos = try particles.setComponent(Vector2f, particle);
+    const render_data = try particles.setComponent(ParticleRenderData, particle);
     physical.* = Physics.PhysicalObject.from(descriptor.position, descriptor.weight);
     physical.velocity = descriptor.speed;
     life.* = descriptor.life;
