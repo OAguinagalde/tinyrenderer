@@ -198,6 +198,14 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         try map_editor.separator(0);
         try map_editor.separator(0);
         
+        var is_dragging_enabled = map_editor_data.edit_action_type == .modify_position_of_selected_item;
+        if (try map_editor.button("drag things", &is_dragging_enabled)) {
+            map_editor_data.edit_action_type = .modify_position_of_selected_item;
+        }
+
+        try map_editor.separator(0);
+        try map_editor.separator(0);
+        
         const entity_spawner_menu = map_editor;
         {
             if (entity_spawner_menu_data.option_selected) |selected| try entity_spawner_menu.text_line_fmt("Selected: {}", .{selected})
@@ -311,7 +319,84 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                         });
                     }
                 },
-                .modify_position_of_selected_item => {},
+                .modify_position_of_selected_item => {
+                    
+                    const static_data = struct {
+                        var dragged_index: ?usize = null;
+                        var last_draged_drame: usize = 0;
+                        fn stop_dragging() void {
+                            dragged_index = null;
+                        }
+                        fn start_dragging(i: usize) void {
+                            dragged_index = i;
+                        }
+                    };
+                    
+                    // NOTE if we were not dragging on the previous frame, it means that
+                    // at some point we stopped dragging any item so reset the dragging related state
+                    if (static_data.last_draged_drame != ud.frame - 1) static_data.stop_dragging();
+
+                    if (static_data.dragged_index == null) {
+                        // If we are not dragging anything from previous frames but are trying to drag something, find what it is, and set it as dragging
+                        var index_offset: usize = undefined;
+                        const map_tile_clicked_u8 = map_tile_clicked.to(u8);
+
+                        index_offset = 0;
+                        for (state.resources.junctions.items, 0..) |junction, index| {
+                            if (junction.a.equal(map_tile_clicked_u8)) {
+                                static_data.start_dragging(index_offset + index*2);
+                                break;
+                            }
+                            else if (junction.b.equal(map_tile_clicked_u8)) {
+                                static_data.start_dragging(index_offset + index*2 + 1);
+                                break;
+                            }
+                        }
+
+                        index_offset += state.resources.junctions.items.len*2;
+                        if (static_data.dragged_index == null) for (state.resources.entity_spawners.items, 0..) |entity_spawner, index| {
+                            if (entity_spawner.pos.equal(map_tile_clicked_u8)) {
+                                static_data.start_dragging(index_offset + index);
+                                break;
+                            }
+                        };
+
+                        index_offset += state.resources.entity_spawners.items.len;
+                        if (static_data.dragged_index == null) for (state.resources.environment_particle_emitters.items, 0..) |particle_emitter, index| {
+                            if (particle_emitter.pos.equal(map_tile_clicked_u8)) {
+                                static_data.start_dragging(index_offset + index);
+                                break;
+                            }
+                        };
+                    }
+
+                    if (static_data.dragged_index) |dragged_index| {
+                        // `dragged_index` is already being dragged from previous frames
+                        // we can calculate the exact item we are dragging since 
+                        if (dragged_index<state.resources.junctions.items.len*2) {
+                            const real_index = @divFloor(dragged_index, 2);
+                            const junction = &state.resources.junctions.items[real_index];
+                            if (real_index*2 == dragged_index) junction.a = map_tile_clicked.to(u8)
+                            else junction.b = map_tile_clicked.to(u8);
+                        }
+                        else if (dragged_index < state.resources.junctions.items.len*2 + state.resources.entity_spawners.items.len) {
+                            const offset_index: usize = state.resources.junctions.items.len*2;
+                            const real_index = dragged_index - offset_index;
+                            const entity_spawner = &state.resources.entity_spawners.items[real_index];
+                            entity_spawner.pos = map_tile_clicked.to(u8);
+                            
+                        }
+                        else if (dragged_index < state.resources.junctions.items.len*2 + state.resources.entity_spawners.items.len + state.resources.environment_particle_emitters.items.len) {
+                            const offset_index: usize = state.resources.junctions.items.len*2 + state.resources.entity_spawners.items.len;
+                            const real_index = dragged_index - offset_index;
+                            const particle_emitter = &state.resources.environment_particle_emitters.items[real_index];
+                            particle_emitter.pos = map_tile_clicked.to(u8);
+                        }
+                        else unreachable;
+
+                        static_data.last_draged_drame = ud.frame;
+                    }
+                },
                 .none => {},
             }
         }
@@ -330,6 +415,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 if (map_editor_data.map_tile_bb.contains(junction.a.to(usize))) {
                     const position = junction.a.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
                     try state.renderer_quads.add_sprite_from_atlas_index(exit_sprite_id, position, .{});
+
                 }
                 if (map_editor_data.map_tile_bb.contains(junction.b.to(usize))) {
                     const position = junction.b.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
@@ -657,23 +743,13 @@ fn Container(comptime id: []const u8) type {
         var highlight_color_a: RGBA = undefined;
         var highlight_color_b: RGBA = undefined;
         var text_color: RGBA = undefined;
-        var strings: Strings = undefined;
-        var strings_ephemeral: Strings = undefined;
-        var draggable_previous_position: ?Vec2(f32) = null;
-        var dragged_frames: usize = 0;
-        
-        var name_hover: bool = false;
-        var name: ?[]const u8 = null;
-        var elements: std.ArrayList(GuiElement) = undefined;
-        var elements_text_lines: std.ArrayList(String) = undefined;
-        var elements_buttons: std.ArrayList(Button) = undefined;
-        var selectable_options: std.ArrayList(SelectableOptions) = undefined;
-        var surface_with_grids: std.ArrayList(SurfaceWithSelectableGridElement(platform.OutPixelType)) = undefined;
         
         var total_bb: BoundingBox(f32) = undefined;
         var column_bb: BoundingBox(f32) = undefined;
         var other_columns_bb: BoundingBox(f32) = undefined;
 
+        var draggable_previous_position: ?Vec2(f32) = null;
+        var dragged_frames: usize = 0;
         var container_active: bool = true;
         var pos: Vec2(f32) = undefined;
         var mouse_position: Vec2(f32) = undefined;
@@ -682,19 +758,12 @@ fn Container(comptime id: []const u8) type {
 
         var allocator: std.mem.Allocator = undefined;
 
-        fn begin(_allocator: std.mem.Allocator, _name: []const u8, _pos: Vec2(f32), _mouse_position: Vec2(f32), _mouse_click: bool, _mouse_down: bool, pixel_buffer: Buffer2D(platform.OutPixelType), mvp_matrix: M33, viewport_matrix: M33) !bool {
+        fn begin(_allocator: std.mem.Allocator, name: []const u8, _pos: Vec2(f32), _mouse_position: Vec2(f32), _mouse_click: bool, _mouse_down: bool, pixel_buffer: Buffer2D(platform.OutPixelType), mvp_matrix: M33, viewport_matrix: M33) !bool {
             _ = id;
             allocator = _allocator;
             if (!initialized) {
                 initialized = true;
                 renderer = try Renderer(platform.OutPixelType).init(allocator);
-                strings = Strings.init(allocator);
-                strings_ephemeral = Strings.init(allocator);
-                elements = std.ArrayList(GuiElement).init(allocator);
-                elements_text_lines = std.ArrayList(String).init(allocator);
-                elements_buttons = std.ArrayList(Button).init(allocator);
-                selectable_options = std.ArrayList(SelectableOptions).init(allocator);
-                surface_with_grids = std.ArrayList(SurfaceWithSelectableGridElement(platform.OutPixelType)).init(allocator);
                 
                 text_color = RGBA.from(BGR, @bitCast(Assets.palette[1]));
                 highlight_color_a = RGBA.from(BGR, @bitCast(Assets.palette[2]));
@@ -708,19 +777,11 @@ fn Container(comptime id: []const u8) type {
                 pos = _pos;
             }
             // reset the data for a new frame
-            name = null;
-            name_hover = false;
             
-            total_bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, @max(pos.x + total_bb.width(), (1+char_width)*@as(f32,@floatFromInt(_name.len))));
+            total_bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, @max(pos.x + total_bb.width(), (1+char_width)*@as(f32,@floatFromInt(name.len))));
             column_bb = BoundingBox(f32).from(pos.y, pos.y, pos.x, pos.x);
             other_columns_bb = column_bb;
 
-            elements_text_lines.clearRetainingCapacity();
-            elements.clearRetainingCapacity();
-            elements_buttons.clearRetainingCapacity();
-            selectable_options.clearRetainingCapacity();
-            surface_with_grids.clearRetainingCapacity();
-            strings_ephemeral.clear();
             mouse_position = _mouse_position;
             mouse_click = _mouse_click and dragged_frames<8;
             mouse_down = _mouse_down;
@@ -734,8 +795,8 @@ fn Container(comptime id: []const u8) type {
             var header_bb = BoundingBox(f32).from(total_bb.top, total_bb.top - text_line_height, total_bb.left, total_bb.right);
             total_bb.bottom = header_bb.bottom;
             column_bb.bottom -= text_line_height;
-            name = strings.to_slice(try strings.get_or_create(_name));
             
+            var name_hover = false;
             if (header_bb.contains(mouse_position)) {
                 name_hover = true;
                 if (mouse_click)  {
@@ -764,10 +825,8 @@ fn Container(comptime id: []const u8) type {
                 if (mouse_down and header_bb.contains(mouse_position)) draggable_previous_position = mouse_position;
             }
 
-            if (name) |n| {
-                try renderer.add_quad_from_bb(header_bb, if (name_hover) highlight_color_a else highlight_color_b);
-                try renderer.add_text(header_bb.bl().add(Vec2(f32).from(1,1)), "{s}", .{n}, text_color);
-            }
+            try renderer.add_quad_from_bb(header_bb, if (name_hover) highlight_color_a else highlight_color_b);
+            try renderer.add_text(header_bb.bl().add(Vec2(f32).from(1,1)), "{s}", .{name}, text_color);
             
             return container_active;
         }
@@ -974,7 +1033,6 @@ fn Container(comptime id: []const u8) type {
         
         fn separator(extra_width: f32) !void {
             const padding = 1;
-            try elements.append(.{.index = 0, .element_type = .separator, .height = extra_width+2});
             const separator_bb = increment_column_bb(extra_width + 2*padding, 0);
             const separator_line_bb = BoundingBox(f32).from(separator_bb.top-padding, separator_bb.bottom+padding, separator_bb.left + padding, separator_bb.right - padding);
             try renderer.add_quad_from_bb(separator_line_bb, highlight_color_a);
