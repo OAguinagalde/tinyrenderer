@@ -129,8 +129,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     if (ud.mwheel > 0) state.zoom += 1;
     if (ud.mwheel < 0) state.zoom -= 1;
 
-    if (ud.key_pressed('J') and mouse_is_in_map_editor) try state.resources.junctions.append(.{.a = mouse_tile_in_map.to(u8), .b = mouse_tile_in_map.to(u8) });    
-
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
 
@@ -139,6 +137,18 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const mvp_matrix = projection_matrix.multiply(view_matrix);
     const viewport_matrix = M33.viewport(0, 0, w, h);
     const projection_matrix_screen = M33.orthographic_projection(0, w, h, 0);
+
+    
+    const junctions_menu_data = struct {
+        var option_selected: ?usize = null;
+        var option_hovered: ?usize = null;
+        const options: []const []const u8 = blk: {
+            var opts: []const []const u8 = &[_][]const u8 {};
+            opts = opts ++ &[_][]const u8{"add junction"};
+            opts = opts ++ &[_][]const u8{"delete junction"};
+            break :blk opts;
+        };
+    };
 
     const entity_spawner_menu_data = struct {
         var option_selected: ?usize = null;
@@ -175,7 +185,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     };
     // paint the map, add an entity spawner, add a particle emitter, drag currently hovered item (and what item it is...)
     const MapEditActionType = enum {
-        none, modify_map, modify_entity_spawners, modify_particle_emitters, modify_position_of_selected_item, modify_level_boxes
+        none, modify_map, modify_entity_spawners, modify_particle_emitters, modify_position_of_selected_item, modify_level_boxes, modify_junctions
     };
     const map_editor_data = struct {
         const size = Vec2(usize).from(50,30);
@@ -199,15 +209,25 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         try map_editor.separator(0);
         
         var is_dragging_enabled = map_editor_data.edit_action_type == .modify_position_of_selected_item;
-        if (try map_editor.button("drag things", &is_dragging_enabled)) {
+        if (try map_editor.button("drag things around", &is_dragging_enabled)) {
             map_editor_data.edit_action_type = .modify_position_of_selected_item;
         }
 
         var is_modifying_level_boxes = map_editor_data.edit_action_type == .modify_level_boxes;
-        if (try map_editor.button("change level boxes", &is_modifying_level_boxes)) {
+        if (try map_editor.button("modify level boxes", &is_modifying_level_boxes)) {
             map_editor_data.edit_action_type = .modify_level_boxes;
         }
 
+        const junctions_menu = map_editor;
+        {
+            if (junctions_menu_data.option_selected) |selected| try junctions_menu.text_line_fmt("Selected: {}", .{selected})
+            else try junctions_menu.text_line("Select one...");
+            const selection_grid = try junctions_menu.selection_grid_from_text_options(junctions_menu_data.options, &junctions_menu_data.option_selected, &junctions_menu_data.option_hovered);
+            if (selection_grid.tile_clicked()) |_| {
+                map_editor_data.edit_action_type = .modify_junctions;
+            }
+        }
+        
         try map_editor.separator(0);
         try map_editor.separator(0);
         
@@ -481,6 +501,26 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                         }
                         
                         static_data.last_frame_modified = ud.frame;
+                    }
+                },
+                .modify_junctions => {
+                    const option_selected = junctions_menu_data.option_selected.?;
+                    // NOTE the last option is hardcoded to be "delete" which is the only way of deleting entity spawners currently
+                    if (option_selected == junctions_menu_data.options.len-1) {
+                        for (state.resources.junctions.items, 0..) |junction, i| {
+                            if (junction.a.equal(map_tile_clicked)) {
+                                _ = state.resources.junctions.orderedRemove(i);
+                                break;
+                            }
+                            if (junction.b.equal(map_tile_clicked)) {
+                                _ = state.resources.junctions.orderedRemove(i);
+                                break;
+                            }
+                        }
+                    }
+                    else {
+                        try state.resources.junctions.append(.{ .a = map_tile_clicked, .b = map_tile_clicked });
+                        map_editor_data.edit_action_type = .modify_position_of_selected_item;
                     }
                 },
                 .none => {},
