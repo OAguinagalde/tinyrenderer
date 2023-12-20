@@ -175,7 +175,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     };
     // paint the map, add an entity spawner, add a particle emitter, drag currently hovered item (and what item it is...)
     const MapEditActionType = enum {
-        none, modify_map, modify_entity_spawners, modify_particle_emitters, modify_position_of_selected_item
+        none, modify_map, modify_entity_spawners, modify_particle_emitters, modify_position_of_selected_item, modify_level_boxes
     };
     const map_editor_data = struct {
         const size = Vec2(usize).from(50,30);
@@ -201,6 +201,11 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         var is_dragging_enabled = map_editor_data.edit_action_type == .modify_position_of_selected_item;
         if (try map_editor.button("drag things", &is_dragging_enabled)) {
             map_editor_data.edit_action_type = .modify_position_of_selected_item;
+        }
+
+        var is_modifying_level_boxes = map_editor_data.edit_action_type == .modify_level_boxes;
+        if (try map_editor.button("change level boxes", &is_modifying_level_boxes)) {
+            map_editor_data.edit_action_type = .modify_level_boxes;
         }
 
         try map_editor.separator(0);
@@ -395,6 +400,87 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                         else unreachable;
 
                         static_data.last_draged_drame = ud.frame;
+                    }
+                },
+                .modify_level_boxes => {
+
+                    const BoxAndSide = struct {
+                        index: usize,
+                        side: math.BoundingBoxSide,
+                    };
+
+                    const static_data = struct {
+                        var box_being_modified: ?BoxAndSide = null;
+                        var last_frame_modified: usize = 0;
+                        fn stop_dragging() void {
+                            box_being_modified = null;
+                        }
+                        fn start_dragging(i: usize, side: math.BoundingBoxSide) void {
+                            box_being_modified = .{
+                                .index = i,
+                                .side = side,
+                            };
+                        }
+                    };
+
+                    // NOTE if we were not dragging on the previous frame, it means that
+                    // at some point we stopped dragging any item so reset the dragging related state
+                    if (static_data.last_frame_modified != ud.frame - 1) static_data.stop_dragging();
+
+                    // If we are not dragging anything from previous frames but are trying to drag something, find what it is, and set it as dragging
+                    if (static_data.box_being_modified == null) {
+                                                
+                        for (state.resources.levels.items, 0..) |l, i| {
+                            
+                            const level_bb = blk: {
+                                var bb = l.bb;
+                                bb.right += 1;
+                                bb.top += 1;
+                                break :blk bb;
+                            };
+
+                            const distance = 1;
+                            if (@abs(@as(i32,@intCast(level_bb.left)) - @as(i32,@intCast(map_tile_clicked.x))) < distance and map_tile_clicked.y > level_bb.bottom and map_tile_clicked.y < level_bb.top) {
+                                static_data.start_dragging(i, .left);
+                                break;
+                            }
+                            else if (@abs(@as(i32,@intCast(level_bb.right)) - @as(i32,@intCast(map_tile_clicked.x))) < distance and map_tile_clicked.y > level_bb.bottom and map_tile_clicked.y < level_bb.top) {
+                                static_data.start_dragging(i, .right);
+                                break;
+                            }
+                            else if (@abs(@as(i32,@intCast(level_bb.top)) - @as(i32,@intCast(map_tile_clicked.y))) < distance and map_tile_clicked.x > level_bb.left and map_tile_clicked.x < level_bb.right) {
+                                static_data.start_dragging(i, .top);
+                                break;
+                            }
+                            else if (@abs(@as(i32,@intCast(level_bb.bottom)) - @as(i32,@intCast(map_tile_clicked.y))) < distance and map_tile_clicked.x > level_bb.left and map_tile_clicked.x < level_bb.right) {
+                                static_data.start_dragging(i, .bottom);
+                                break;
+                            }
+                        }
+                    }
+
+                    if (static_data.box_being_modified) |level_bb_being_modified| {
+
+                        const l = &state.resources.levels.items[level_bb_being_modified.index];
+                        const level_bb = l.bb;
+
+                        // the level bounding box is being modified
+                        if (!level_bb.contains(map_tile_clicked)) switch (level_bb_being_modified.side) {
+                            // Its being made larger
+                            .top => if (map_tile_clicked.y > level_bb.top) { l.bb.top = map_tile_clicked.y; },
+                            .bottom => if (map_tile_clicked.y < level_bb.bottom) { l.bb.bottom = map_tile_clicked.y; },
+                            .left => if (map_tile_clicked.x < level_bb.left) { l.bb.left = map_tile_clicked.x; },
+                            .right => if (map_tile_clicked.x > level_bb.right) { l.bb.right = map_tile_clicked.x; },
+                        }
+                        else switch (level_bb_being_modified.side) {
+                            // Its being made smaller
+                            .top => if (map_tile_clicked.y < level_bb.top) { l.bb.top = map_tile_clicked.y; },
+                            .bottom => if (map_tile_clicked.y > level_bb.bottom) { l.bb.bottom = map_tile_clicked.y; },
+                            .left => if (map_tile_clicked.x > level_bb.left) { l.bb.left = map_tile_clicked.x; },
+                            .right => if (map_tile_clicked.x < level_bb.right) { l.bb.right = map_tile_clicked.x; },
+                        }
+                        
+                        static_data.last_frame_modified = ud.frame;
                     }
                 },
                 .none => {},
@@ -790,7 +876,7 @@ fn Container(comptime id: []const u8) type {
             // NOTE this is a hack until I have layers in the renderer. Since I dont know the full size of the container yet
             // once I know it later on the call to `end()` I will then alter these values here for the correct ones.
             // TODO fix this hack
-            try renderer.add_quad_from_bb(BoundingBox(f32).from(0,0,0,0), background_color);
+            try renderer.add_quad_from_bb(BoundingBox(f32).from(1,0,0,1), background_color);
 
             var header_bb = BoundingBox(f32).from(total_bb.top, total_bb.top - text_line_height, total_bb.left, total_bb.right);
             total_bb.bottom = header_bb.bottom;
@@ -1264,8 +1350,9 @@ pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type
             }
 
             pub fn add_quad_from_bb(self: *Batch, bb: BoundingBox(f32), tint: RGBA) !void {
-                const pos = Vector2f.from(bb.left, bb.bottom);
                 const size = Vector2f.from(bb.right - bb.left, bb.top - bb.bottom);
+                if (size.x == 0 or size.y == 0) return;
+                const pos = Vector2f.from(bb.left, bb.bottom);
                 const vertices = [4] shader.Vertex {
                     .{ .pos = .{ .x = pos.x,          .y = pos.y          }, .tint = tint },
                     .{ .pos = .{ .x = pos.x + size.x, .y = pos.y          }, .tint = tint },
