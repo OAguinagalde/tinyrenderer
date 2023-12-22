@@ -953,14 +953,14 @@ pub fn GraphicsPipelineQuads2D(
             if (bb.top == 0) return;
             if (bb.right == 0) return;
 
-            var y = bb.top-1;
-            while (y >= bb.bottom) : (y -= 1) {
+            var y = bb.bottom;
+            while (y < bb.top) : (y += 1) {
                 const percentage_y: f32 = (@as(f32, @floatFromInt(y))-quad[0].y+0.5) / height_f;
                 std.debug.assert(percentage_y <= 1 and percentage_y >= 0);
 
                 var x = bb.left;
                 while (x < bb.right) : (x += 1) {
-                    const percentage_x: f32 = (@as(f32, @floatFromInt(x))-quad[3].x+0.5) / width_f;
+                    const percentage_x: f32 = (@as(f32, @floatFromInt(x))-quad[0].x+0.5) / width_f;
                     std.debug.assert(percentage_x <= 1 and percentage_x >= 0);
 
                     const interpolated_invariants: invariant_type = interpolate(invariant_type, invariants, percentage_x, percentage_y);
@@ -973,10 +973,6 @@ pub fn GraphicsPipelineQuads2D(
                     else pixel_buffer.set(x, y, final_color);
 
                 }
-                
-                // NOTE(Oscar) because y is unsigned, and the y-=1 happens even after the last cycle of the while, meaning that
-                // if bottom is 0, y will still do -1 assigning -1 to an unsigned number and it will break in debug builds
-                if (y == bb.bottom) break;
             }
         }
 

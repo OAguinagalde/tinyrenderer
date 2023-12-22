@@ -46,13 +46,7 @@ pub fn main() !void {
 
 const text_scale = 1;
 const State = struct {
-    debug_text_renderer: TextRenderer(platform.OutPixelType, 1024, text_scale),
-    text_renderer: TextRenderer(platform.OutPixelType, 1024, text_scale),
-    renderer: tic80.Renderer(platform.OutPixelType, tic80.Shader(platform.OutPixelType)),
-    renderer_quads: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, null)),
-    renderer_blending: tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, 0)),
-    renderer_shapes: ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)),
-    renderer_surfaces: StandardQuadRenderer(platform.OutPixelType),
+    renderer: Renderer(platform.OutPixelType),
     level_background: Assets.LevelBackgroundDescriptor,
     rng_engine: std.rand.DefaultPrng,
     random: std.rand.Random,
@@ -68,13 +62,7 @@ const State = struct {
 var state: State = undefined;
 
 pub fn init(allocator: std.mem.Allocator) anyerror!void {
-    state.debug_text_renderer = try TextRenderer(platform.OutPixelType, 1024, text_scale).init(allocator);
-    state.text_renderer = try TextRenderer(platform.OutPixelType, 1024, text_scale).init(allocator);
-    state.renderer = try tic80.Renderer(platform.OutPixelType, tic80.Shader(platform.OutPixelType)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    state.renderer_quads = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, null)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    state.renderer_blending = try tic80.QuadRenderer(platform.OutPixelType, tic80.QuadShader(platform.OutPixelType, 0)).init(allocator, Assets.palette, Assets.atlas_tiles);
-    state.renderer_shapes = try ShapeRenderer(platform.OutPixelType, RGB.from(255,255,255)).init(allocator);
-    state.renderer_surfaces = try StandardQuadRenderer(platform.OutPixelType).init(allocator);
+    state.renderer = try Renderer(platform.OutPixelType).init(allocator);
     state.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
     state.rng_engine = std.rand.DefaultPrng.init(@intCast(platform.timestamp()));
     state.random = state.rng_engine.random();
@@ -91,7 +79,6 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
-
     const h: f32 = @floatFromInt(ud.pixel_buffer.height);
     const w: f32 = @floatFromInt(ud.pixel_buffer.width);
     const zoom: f32 = @floatFromInt(state.zoom); _ = zoom;
@@ -109,7 +96,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     // represents the tile x, y where the mouse is, assuming that tile size is 8
     // and that the coordinate 0, 0 is the bottom left pixel of the tile 0, 0
     const mouse_tile = Vector2f.from(@floor(mouse_world.x/8), @floor(mouse_world.y/8));
-    const mouse_tile_in_map = mouse_tile.add(Vector2f.from(@floatFromInt(state.level_background.bb.left), @floatFromInt(state.level_background.bb.bottom)));
     const map_editor_world_coords_bb = blk: {
         var bb = state.level_background.bb;
         bb.top += 1;
@@ -117,7 +103,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         break :blk bb.scale(Vec2(usize).from(8,8)).to(f32);
     };
     _ = map_editor_world_coords_bb;
-    const mouse_is_in_map_editor = state.level_background.bb.to(f32).contains(mouse_tile);
     
     const MouseState = struct {
         var busy = false;
@@ -132,12 +117,13 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
 
-    const view_matrix = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
-    const projection_matrix = M33.orthographic_projection(0, w, h, 0);
-    const mvp_matrix = projection_matrix.multiply(view_matrix);
+    // const view_matrix = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
+    // const projection_matrix = M33.orthographic_projection(0, w, h, 0);
+    // const mvp_matrix = projection_matrix.multiply(view_matrix);
+    // _ = mvp_matrix;
+
     const viewport_matrix = M33.viewport(0, 0, w, h);
     const projection_matrix_screen = M33.orthographic_projection(0, w, h, 0);
-
     
     const junctions_menu_data = struct {
         var option_selected: ?usize = null;
@@ -270,13 +256,13 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 }
                 if (sprite_selector_window_data.quick_select_indices[i]) |sprite_index| {
                     const sprite_uv_bb = BoundingBox(usize).from_indexed_grid(Vec2(usize).from(16,16), Vec2(usize).from(8,8), sprite_index, true);
-                    try sprite_quick_select_grid.fill_index_with_palette_based_textured_quad(i, sprite_uv_bb.to(f32), Assets.atlas_tiles_buffer, @constCast(&Assets.palette));
+                    try sprite_quick_select_grid.fill_index_with_palette_based_textured_quad(i, sprite_uv_bb.to(f32), Buffer2D(u4).from(&state.resources.sprite_atlas, 8*16), @constCast(&Assets.palette));
                 }
             }
             try sprite_quick_select_grid.highlight_selection_and_hover();
 
             const sprite_grid = sprite_selector_window.selection_grid(Vec2(usize).from(16,16), Vec2(usize).from(8,8), &sprite_selector_window_data.sprite_selected, &sprite_selector_window_data.sprite_hovered);
-            try sprite_grid.fill_with_palette_based_texture(Assets.atlas_tiles_buffer, @constCast(&Assets.palette));
+            try sprite_grid.fill_with_palette_based_texture(Buffer2D(u4).from(&state.resources.sprite_atlas, 8*16), @constCast(&Assets.palette));
             try sprite_grid.highlight_selection_and_hover();
             
             if (sprite_grid.tile_clicked()) |index| {
@@ -531,21 +517,23 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
         // NOTE the map editor is rendered separately to a surface and after the surface is done its paited onto the grid itself
         {
+            state.renderer.set_context(map_editor_data.surface, M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0), M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8));
+
             // render the map
-            try state.renderer_quads.add_map(state.resources.map, map_editor_data.map_tile_bb, Vector2f.from(0,0));
+            try state.renderer.add_map(Vec2(usize).from(8,8), Vec2(usize).from(16,16), @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8), &state.resources.map, map_editor_data.map_tile_bb, BoundingBox(f32).from_bl_size(Vector2f.from(0,0),Vector2f.from(map_editor_data.size.x*8, map_editor_data.size.y*8)));
 
             // render the level junctions
             for (state.resources.junctions.items) |junction| {
-                const exit_sprite_id = 143;
+                const exit_sprite_id = 127;
                 // TODO add line renderer pipeline, which batches lines and renders them all together I guess?
                 if (map_editor_data.map_tile_bb.contains(junction.a.to(usize))) {
                     const position = junction.a.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
-                    try state.renderer_quads.add_sprite_from_atlas_index(exit_sprite_id, position, .{});
+                    try state.renderer.add_sprite_from_atlas_by_index(Vec2(usize).from(8,8), Vec2(usize).from(16,16), @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8), exit_sprite_id, BoundingBox(f32).from_bl_size(position, Vec2(f32).from(8,8)));
 
                 }
                 if (map_editor_data.map_tile_bb.contains(junction.b.to(usize))) {
                     const position = junction.b.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
-                    try state.renderer_quads.add_sprite_from_atlas_index(exit_sprite_id, position, .{});
+                    try state.renderer.add_sprite_from_atlas_by_index(Vec2(usize).from(8,8), Vec2(usize).from(16,16), @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8), exit_sprite_id, BoundingBox(f32).from_bl_size(position, Vec2(f32).from(8,8)));
                 }
             }
 
@@ -553,30 +541,19 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             for (state.resources.environment_particle_emitters.items) |particle_emitter| {
                 if (!map_editor_data.map_tile_bb.contains(particle_emitter.pos.to(usize))) continue;
                 // for now, the "icon" of a particle emitter is the sprite with index 1 (it looks like a weird portal cube thing)
-                const particle_emitter_sprite_id = 1;
+                const particle_emitter_sprite_id = 241;
                 const position = particle_emitter.pos.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
-                try state.renderer_quads.add_sprite_from_atlas_index(particle_emitter_sprite_id, position, .{});
+                try state.renderer.add_sprite_from_atlas_by_index(Vec2(usize).from(8,8), Vec2(usize).from(16,16), @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8), particle_emitter_sprite_id, BoundingBox(f32).from_bl_size(position, Vec2(f32).from(8,8)));
             }
 
-            state.renderer_quads.render(
-                map_editor_data.surface,
-                M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
-                M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
-            );
-         
             // render entity spawners
             for (state.resources.entity_spawners.items) |entity_spawner| {
                 if (!map_editor_data.map_tile_bb.contains(entity_spawner.pos.to(usize))) continue;
                 // use the first sprite of the default animation as the sprite of the spawner
                 const spawner_sprite_id = Assets.EntityDescriptor.from(@enumFromInt(entity_spawner.entity_type)).default_animation.sprites[0];
                 const position = entity_spawner.pos.to(f32).scale(8).substract(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
-                try state.renderer_blending.add_sprite_from_atlas_index(spawner_sprite_id, position, .{});
+                try state.renderer.add_sprite_from_atlas_by_index(Vec2(usize).from(8,8), Vec2(usize).from(16,16), @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8), spawner_sprite_id, BoundingBox(f32).from_bl_size(position, Vec2(f32).from(8,8)));
             }
-            state.renderer_blending.render(
-                map_editor_data.surface,
-                M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
-                M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
-            );
 
             // render the sub level bounding boxes
             for (state.resources.levels.items) |*l| {
@@ -586,14 +563,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 level_bb.top += 1;
                 level_bb = level_bb.scale(Vec2(f32).from(8,8)).offset_negative(map_editor_data.map_tile_bb.bl().scale(8).to(f32));
                 const color: RGBA = @bitCast(@as(u32,0xffffffff));
-                try state.renderer_shapes.add_quad_border(level_bb, 1, color);
+                try state.renderer.add_quad_border(level_bb, 1, color);
             }
-            state.renderer_shapes.render(
-                map_editor_data.surface,
-                M33.orthographic_projection(0, map_editor_data.size.x*8, map_editor_data.size.y*8, 0),
-                M33.viewport(0, 0, map_editor_data.size.x*8, map_editor_data.size.y*8)
-            );
 
+            try state.renderer.flush_all();
         }
 
         try map_editor_tile_grid.fill_with_texture(map_editor_data.surface);
@@ -601,235 +574,76 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     }
     try map_editor.end();
     
-    if (false) {
-
-    // level bounding boxes
-    {
-        const LevelModifyState = struct {
-            var index: u8 = undefined;
-            var side: math.BoundingBoxSide = undefined;
-            var active = false;
-            fn unset() void {
-                std.debug.assert(active);
-                std.debug.assert(MouseState.busy);
-                MouseState.busy = false;
-                active = false;
-            }
-            fn set(_index: u8, _side: math.BoundingBoxSide) void {
-                std.debug.assert(!active);
-                std.debug.assert(!MouseState.busy);
-                MouseState.busy = true;
-                active = true;
-                index = _index;
-                side = _side;
-            }
-        };
-        for (state.resources.levels.items, 0..) |*l, i| {
-            const level_index: u8 = @intCast(i);
-            const level_bb_f32 = l.bb.to(f32);
-            var level_bb = level_bb_f32;
-            level_bb.right += 1;
-            level_bb.top += 1;
-            level_bb = level_bb.scale(Vec2(f32).from(8,8));
-            const color: RGBA = if (level_bb.contains(mouse_world)) @bitCast(@as(u32,0xff00ffff)) else @bitCast(@as(u32,0xffffffff));
-            try state.renderer_shapes.add_quad_border(level_bb, 1, color);
-            
-            // conditions to start modifying the level bb
-            if (!MouseState.busy and !LevelModifyState.active and ud.mouse_left_down) {
-                if (@abs(level_bb.left - mouse_world.x) < 4 and mouse_world.y > level_bb.bottom and mouse_world.y < level_bb.top) LevelModifyState.set(level_index, .left)
-                else if (@abs(level_bb.right - mouse_world.x) < 4 and mouse_world.y > level_bb.bottom and mouse_world.y < level_bb.top) LevelModifyState.set(level_index, .right)
-                else if (@abs(level_bb.top - mouse_world.y) < 4 and mouse_world.x > level_bb.left and mouse_world.x < level_bb.right) LevelModifyState.set(level_index, .top)
-                else if (@abs(level_bb.bottom - mouse_world.y) < 4 and mouse_world.x > level_bb.left and mouse_world.x < level_bb.right) LevelModifyState.set(level_index, .bottom);
-            }
-            
-            if (LevelModifyState.active and LevelModifyState.index == level_index) {
-                // conditions to stop modifying the level bb 
-                if (!ud.mouse_left_down) LevelModifyState.unset()
-                else {
-                    // change the level bb
-                    if (!level_bb.contains(mouse_world)) switch (LevelModifyState.side) {
-                        .top => if (mouse_tile_in_map.y < 136 and mouse_tile_in_map.y>level_bb_f32.top) { l.bb.top = @intFromFloat(mouse_tile_in_map.y); },
-                        .bottom => if (mouse_tile_in_map.y >= 0 and mouse_tile_in_map.y<level_bb_f32.bottom) { l.bb.bottom = @intFromFloat(mouse_tile_in_map.y); },
-                        .left => if (mouse_tile_in_map.x >= 0 and mouse_tile_in_map.x<level_bb_f32.left) { l.bb.left = @intFromFloat(mouse_tile_in_map.x); },
-                        .right => if (mouse_tile_in_map.x < 240 and mouse_tile_in_map.x>level_bb_f32.right) { l.bb.right = @intFromFloat(mouse_tile_in_map.x); },
-                    }
-                    else switch (LevelModifyState.side) {
-                        .top => if (mouse_tile_in_map.y < 136 and mouse_tile_in_map.y<level_bb_f32.top) { l.bb.top = @intFromFloat(mouse_tile_in_map.y); },
-                        .bottom => if (mouse_tile_in_map.y >= 0 and mouse_tile_in_map.y>level_bb_f32.bottom) { l.bb.bottom = @intFromFloat(mouse_tile_in_map.y); },
-                        .left => if (mouse_tile_in_map.x >= 0 and mouse_tile_in_map.x>level_bb_f32.left) { l.bb.left = @intFromFloat(mouse_tile_in_map.x); },
-                        .right => if (mouse_tile_in_map.x < 240 and mouse_tile_in_map.x<level_bb_f32.right) { l.bb.right = @intFromFloat(mouse_tile_in_map.x); },
-                    }
-                }
-            }
-        }
-        var map_tile_bb = state.level_background.bb.to(f32);
-        map_tile_bb.right += 1;
-        map_tile_bb.top += 1;
-        const map_bb = map_tile_bb.offset(Vec2(f32).from(-map_tile_bb.left, -map_tile_bb.bottom)).scale(Vec2(f32).from(8,8));
-        try state.renderer_shapes.add_quad_border(map_bb, 1, @bitCast(@as(u32,0xffffffff)));
-        state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+    const sprite_editor_data = struct {
+        var sprite_selected: usize = 0;
+        var sprite_editor_cell_selected: ?usize = 0;
+        var sprite_editor_cell_hovered: ?usize = null;
+        var palette_selected: ?usize = 0;
+        var palette_hovered: ?usize = null;
+        var surface_sprite: Buffer2D(platform.OutPixelType) = undefined;
+        var surface_palette: Buffer2D(platform.OutPixelType) = undefined;
+        var initialized = false;
+    };
+    if (!sprite_editor_data.initialized) {
+        sprite_editor_data.initialized = true;
+        sprite_editor_data.surface_sprite = Buffer2D(platform.OutPixelType).from(try ud.allocator.alloc(platform.OutPixelType, 8*8*8*8), 8*8);
+        sprite_editor_data.surface_palette = Buffer2D(platform.OutPixelType).from(try ud.allocator.alloc(platform.OutPixelType, 16), 8);
+        for (Assets.palette, 0..) |color, i| sprite_editor_data.surface_palette.data[i] = platform.OutPixelType.from(BGR, @bitCast(color));
     }
+    const sprite_editor = Container("sprite_editor");
+    if (try sprite_editor.begin(ud.allocator, "sprite editor", Vec2(f32).from(10,h-100), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
+        
+        if (sprite_selector_window_data.sprite_selected) |selected| sprite_editor_data.sprite_selected = selected;
 
-    // draw the level junctions
-    {
-        const JunctionModifyState = struct {
-            var active = false;
-            var ix: u8 = undefined;
-            var a: bool = undefined;
-            fn set(_ix: u8, _a: bool) void {
-                std.debug.assert(!active);
-                std.debug.assert(!MouseState.busy);
-                MouseState.busy = true;
-                active = true;
-                ix = _ix;
-                a = _a;
+        try sprite_editor.text_line_fmt("Selected: {}", .{sprite_editor_data.sprite_selected});
+        
+        const palette_grid = sprite_editor.selection_grid(Vec2(usize).from(8,2), Vec2(usize).from(4,4), &sprite_editor_data.palette_selected, &sprite_editor_data.palette_hovered);
+        try palette_grid.fill_with_texture(sprite_editor_data.surface_palette);
+        try palette_grid.highlight_selection_and_hover();
+        
+        const sprite_grid = sprite_editor.selection_grid(Vec2(usize).from(8,8), Vec2(usize).from(8,8), &sprite_editor_data.sprite_editor_cell_selected, &sprite_editor_data.sprite_editor_cell_hovered);
+        if (sprite_grid.tile_clicking()) |pixel_index| {
+            if (sprite_editor_data.palette_selected) |palette_index| {
+                const sprite_x = sprite_editor_data.sprite_selected % 16;
+                const sprite_y = @divFloor(sprite_editor_data.sprite_selected, 16);
+                const x = 8*sprite_x + (pixel_index % 8);
+                const y = 8*sprite_y + @divFloor(pixel_index, 8);
+                state.resources.sprite_atlas[x + y*(8*16)] = @intCast(palette_index);
             }
-            fn unset() void {
-                std.debug.assert(active);
-                std.debug.assert(MouseState.busy);
-                MouseState.busy = false;
-                active = false;
-            }
-        };
-        for (state.resources.junctions.items, 0..) |*junction, i| {
-            const index: u8 = @intCast(i);
-            
-            // TODO add way to remove junction
-
-            var hover: i32 = 0;
-            if (state.level_background.bb.to(f32).contains(mouse_tile)) {
-                const mt = mouse_tile.to(u8);
-                if (mt.x == junction.a.x and mt.y == junction.a.y) {
-                    // hover junction a
-                    hover = 1;
-                }
-                else if (mt.x == junction.b.x and mt.y == junction.b.y) {
-                    // hover junction b
-                    hover = 2;
-                }
-            }
-
-            if (JunctionModifyState.active) {
-                if (!ud.mouse_left_down) JunctionModifyState.unset()
-                else if (JunctionModifyState.ix == index) {
-                    if (mouse_is_in_map_editor and JunctionModifyState.a) {
-                        junction.a = mouse_tile.to(u8);
-                    }
-                    else if (mouse_is_in_map_editor and !JunctionModifyState.a) {
-                        junction.b = mouse_tile.to(u8);
-                    }
-                }
-            }
-            else {
-                // condition to start modifying a junction
-                if (hover > 0 and ud.mouse_left_down and !MouseState.busy) {
-                    JunctionModifyState.set(index, hover == 1);
-                }
-            }
-
-            const exist_sprite_id = 143;
-            try state.renderer_quads.add_sprite_from_atlas_index(exist_sprite_id, junction.a.to(f32).scale(8), .{});
-            try state.renderer_quads.add_sprite_from_atlas_index(exist_sprite_id, junction.b.to(f32).scale(8), .{});
-            if (hover != 0) {
-                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(junction.b.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xff000066)));
-                try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(junction.a.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xff000066)));
-            }
-            
-            // TODO add line renderer pipeline, which batches lines and renders them all together I guess?
-            // 
-            //     try state.renderer_lines.add_line(junction.a, junction.b, @bitCast(@as(u32,0x0000ffaa)));
-            // 
         }
-        state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
-        state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
+
+        state.renderer.set_context(sprite_editor_data.surface_sprite, M33.orthographic_projection(0, 8, 8, 0), M33.viewport(0, 0, 8*8, 8*8));
+        try state.renderer.add_sprite_from_atlas_by_index(Vec2(usize).from(8, 8), Vec2(usize).from(16, 16), @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 8*16), sprite_editor_data.sprite_selected, BoundingBox(f32).from(8,0,0,8));
+        try state.renderer.flush_all();
+
+        try sprite_grid.fill_with_texture(sprite_editor_data.surface_sprite);
+        try sprite_grid.highlight_selection_and_hover();
     }
-    
-        // move spawners in the map
-        {
-            const EntitySpawnerModifyState = struct {
-                var active = false;
-                var index: u8 = undefined;
-                fn set(_ix: u8) void {
-                    std.debug.assert(!active);
-                    std.debug.assert(!MouseState.busy);
-                    MouseState.busy = true;
-                    active = true;
-                    index = _ix;
-                }
-                fn unset() void {
-                    std.debug.assert(active);
-                    std.debug.assert(MouseState.busy);
-                    MouseState.busy = false;
-                    active = false;
-                }
-            };
-            for (state.resources.entity_spawners.items, 0..) |*entity_spawner, i| {
-                const index: u8 = @intCast(i);
-                const hovering: bool = mouse_is_in_map_editor and mouse_tile.to(u8).equal(entity_spawner.pos);
-                
-                if (!MouseState.busy and !EntitySpawnerModifyState.active and hovering and ud.mouse_left_down) EntitySpawnerModifyState.set(index);
-                
-                if (EntitySpawnerModifyState.active) {
-                    if (!ud.mouse_left_down) EntitySpawnerModifyState.unset()
-                    else if (EntitySpawnerModifyState.index == index) {
-                        if (mouse_is_in_map_editor) entity_spawner.pos = mouse_tile.to(u8);
-                    } 
-                }
+    try sprite_editor.end();
 
-                // use the first sprite of the default animation as the sprite of the spawner
-                const spawner_sprite_id = Assets.EntityDescriptor.from(@enumFromInt(entity_spawner.entity_type)).default_animation.sprites[0];
-                try state.renderer_quads.add_sprite_from_atlas_index(spawner_sprite_id, entity_spawner.pos.to(f32).scale(8), .{});
-                if (hovering) {
-                    try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(entity_spawner.pos.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xffffffff)));
-                }
-            }
-            state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
-            state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
-        }
-    
-        // Move emitters in the map
-        {
-            const ParticleEmitterModifyState = struct {
-                var active = false;
-                var index: u8 = undefined;
-                fn set(_ix: u8) void {
-                    std.debug.assert(!active);
-                    std.debug.assert(!MouseState.busy);
-                    MouseState.busy = true;
-                    active = true;
-                    index = _ix;
-                }
-                fn unset() void {
-                    std.debug.assert(active);
-                    std.debug.assert(MouseState.busy);
-                    MouseState.busy = false;
-                    active = false;
-                }
-            };
-            for (state.resources.environment_particle_emitters.items, 0..) |*particle_emitter, i| {
-                const index: u8 = @intCast(i);
-                const hovering: bool = mouse_is_in_map_editor and mouse_tile.to(u8).equal(particle_emitter.pos);
-                
-                if (!MouseState.busy and !ParticleEmitterModifyState.active and hovering and ud.mouse_left_down) ParticleEmitterModifyState.set(index);
-                
-                if (ParticleEmitterModifyState.active) {
-                    if (!ud.mouse_left_down) ParticleEmitterModifyState.unset()
-                    else if (ParticleEmitterModifyState.index == index) {
-                        if (mouse_is_in_map_editor) particle_emitter.pos = mouse_tile.to(u8);
-                    }
-                }
-
-                // use the first sprite of the default animation as the sprite of the spawner
-                const particle_emitter_sprite_id = 1;
-                try state.renderer_quads.add_sprite_from_atlas_index(particle_emitter_sprite_id, particle_emitter.pos.to(f32).scale(8), .{});
-                if (hovering) {
-                    try state.renderer_shapes.add_quad_border(BoundingBox(f32).from_br_size(particle_emitter.pos.to(f32).scale(8), Vec2(f32).from(8, 8)), 1, @bitCast(@as(u32,0xffffffff)));
-                }
-            }
-            state.renderer_quads.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
-            state.renderer_shapes.render(ud.pixel_buffer, mvp_matrix, viewport_matrix);
-        }
-    }
+    // const text_grid_window_data = struct {
+    //     var selected: ?usize = 0;
+    //     var hovered: ?usize = null;
+    //     var surface: Buffer2D(platform.OutPixelType) = undefined;
+    //     var initialized: bool = false;
+    // };
+    // if (!text_grid_window_data.initialized) {
+    //     text_grid_window_data.initialized = true;
+    //     text_grid_window_data.surface = Buffer2D(platform.OutPixelType).from(try ud.allocator.alloc(platform.OutPixelType, 128*128), 128);
+    // }
+    // const text_grid_windows = Container("text_grid_windows");
+    // if (try text_grid_windows.begin(ud.allocator, "text_grid_windows", Vec2(f32).from(50,h-400), mouse_window, ud.mouse_left_clicked, ud.mouse_left_down, ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
+    //     try text_grid_windows.text_line_fmt("Selected: {}", .{text_grid_window_data.selected.?});        
+    //     const grid = text_grid_windows.selection_grid(Vec2(usize).from(128/8,128/8), Vec2(usize).from(8,8), &text_grid_window_data.selected, &text_grid_window_data.hovered);        
+    //     text_grid_window_data.surface.clear(platform.OutPixelType.from(RGBA, RGBA.make(255,255,255,255)));
+    //     var s = try StandardQuadRenderer(platform.OutPixelType, RGBA).init(ud.allocator);
+    //     try s.add_blit_texture_to_bb(BoundingBox(f32).from(128,0,0,128), font.texture);
+    //     s.render(text_grid_window_data.surface, M33.orthographic_projection(0, 128, 128, 0), M33.viewport(0, 0, 128, 128));
+    //     s.deinit();
+    //     try grid.fill_with_texture(text_grid_window_data.surface);
+    //     try grid.highlight_selection_and_hover();
+    // }
+    // try text_grid_windows.end();
 
     // debug overlay
     const dw = Container("debug_window");
@@ -859,8 +673,8 @@ fn Container(comptime id: []const u8) type {
     
         const Self = @This();
 
-        const text_line_height = state.text_renderer.height()+3;
-        const char_width = state.text_renderer.width()+1;
+        const text_line_height = TextRenderer(platform.OutPixelType, 1024, text_scale).char_height+3;
+        const char_width = TextRenderer(platform.OutPixelType, 1024, text_scale).char_width+1;
 
         var renderer: Renderer(platform.OutPixelType) = undefined;
 
@@ -1435,13 +1249,13 @@ pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type
     };
 }
 
-pub fn StandardQuadRenderer(comptime output_pixel_type: type) type {
+pub fn StandardQuadRenderer(comptime output_pixel_type: type, comptime texture_pixel_type: type) type {
     return struct {
 
         const shader = struct {
 
             pub const Context = struct {
-                texture: Buffer2D(output_pixel_type),
+                texture: Buffer2D(texture_pixel_type),
                 mvp_matrix: M33,
             };
 
@@ -1476,7 +1290,7 @@ pub fn StandardQuadRenderer(comptime output_pixel_type: type) type {
                 struct {
                     inline fn fragment_shader(context: Context, invariants: Invariant) output_pixel_type {
                         const sample = context.texture.point_sample(true, invariants.uv);
-                        return output_pixel_type.from(output_pixel_type, sample);
+                        return output_pixel_type.from(texture_pixel_type, sample);
                     }
                 }.fragment_shader,
             );
@@ -1486,7 +1300,7 @@ pub fn StandardQuadRenderer(comptime output_pixel_type: type) type {
 
         allocator: std.mem.Allocator,
         vertex_buffer: std.ArrayList(shader.Vertex),
-        texture: Buffer2D(output_pixel_type),
+        texture: Buffer2D(texture_pixel_type),
 
         pub fn init(allocator: std.mem.Allocator) !Self {
             var self: Self = undefined;
@@ -1496,13 +1310,13 @@ pub fn StandardQuadRenderer(comptime output_pixel_type: type) type {
             return self;
         }
 
-        pub fn add_blit_texture_to_bb(self: *Self, bb: BoundingBox(f32), texture: Buffer2D(output_pixel_type)) !void {
+        pub fn add_blit_texture_to_bb(self: *Self, bb: BoundingBox(f32), texture: Buffer2D(texture_pixel_type)) !void {
             self.texture = texture;
             const vertex_buffer = [4] shader.Vertex {
-                .{ .pos = bb.bl(), .uv = Vec2(f32).from(0, 1) }, // 0 - bottom left
-                .{ .pos = bb.br(), .uv = Vec2(f32).from(1, 1) }, // 1 - bottom right
-                .{ .pos = bb.tr(), .uv = Vec2(f32).from(1, 0) }, // 2 - top right
-                .{ .pos = bb.tl(), .uv = Vec2(f32).from(0, 0) }, // 3 - top left
+                .{ .pos = bb.bl(), .uv = Vec2(f32).from(0, 0) }, // 0 - bottom left
+                .{ .pos = bb.br(), .uv = Vec2(f32).from(1, 0) }, // 1 - bottom right
+                .{ .pos = bb.tr(), .uv = Vec2(f32).from(1, 1) }, // 2 - top right
+                .{ .pos = bb.tl(), .uv = Vec2(f32).from(0, 1) }, // 3 - top left
             };
             try self.vertex_buffer.appendSlice(&vertex_buffer);
         }
@@ -1522,12 +1336,12 @@ pub fn StandardQuadRenderer(comptime output_pixel_type: type) type {
 
         const Batch = struct {
             vertex_buffer: std.ArrayList(shader.Vertex),
-            texture: Buffer2D(output_pixel_type),
+            texture: Buffer2D(texture_pixel_type),
             pixel_buffer: Buffer2D(output_pixel_type),
             mvp_matrix: M33,
             viewport_matrix: M33,
 
-            fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33, texture: Buffer2D(output_pixel_type)) Batch {
+            fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33, texture: Buffer2D(texture_pixel_type)) Batch {
                 return .{
                     .vertex_buffer = std.ArrayList(shader.Vertex).init(allocator),
                     .texture = texture,
@@ -1642,21 +1456,29 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
             var buff: [max_size_per_print]u8 = undefined;
             const str = try std.fmt.bufPrint(&buff, fmt, args);
             for (str, 0..) |_c, i| {
+                    
                 const c = switch (_c) {
-                    // 97...122 => _c-32,
+                    // NOTE for whatever reason the font I'm using has uppercase and lowercase reversed?
+                    // so make everything lower case (which will show up as an upper case and looks better)
+                    // 'A'..'Z' -> 'a'..'z'
                     65...90 => _c+32,
                     else => _c
                 };
+                
                 // x and y are the bottom left of the quad
                 const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width + @as(f32, @floatFromInt(i));
                 const y: f32 = pos.y;
                 
+                const cy: f32 = @floatFromInt(15 - @divFloor(c,16));
+                const cx: f32 = @floatFromInt(c % 16);
+                
                 // texture left and right
-                const u_1: f32 = @as(f32, @floatFromInt(c%16)) * base_width + pad_left;
-                const u_2: f32 = u_1 + base_width - pad_left - pad_right;
+                const u_1: f32 = cx * base_width + pad_left;
+                const u_2: f32 = (cx+1) * base_width - pad_right;
+                
                 // texture top and bottom. Note that the texture is invertex so the mat here is also inverted
-                const v_1: f32 = (@as(f32, @floatFromInt(c/16)) + 1) * base_height - pad_bottom;
-                const v_2: f32 = @as(f32, @floatFromInt(c/16)) * base_height + pad_top;
+                const v_1: f32 = cy * base_height + pad_bottom;
+                const v_2: f32 = (cy+1) * base_height - pad_top;
 
                 // NOTE the texture is reversed hence the weird uv coordinates
                 const vertices = [4] Shader.Vertex {
@@ -1710,20 +1532,29 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
                 var buff: [max_size_per_print]u8 = undefined;
                 const str = try std.fmt.bufPrint(&buff, fmt, args);
                 for (str, 0..) |_c, i| {
+                    
                     const c = switch (_c) {
+                        // NOTE for whatever reason the font I'm using has uppercase and lowercase reversed?
+                        // so make everything lower case (which will show up as an upper case and looks better)
+                        // 'A'..'Z' -> 'a'..'z'
                         65...90 => _c+32,
                         else => _c
                     };
+                    
                     // x and y are the bottom left of the quad
                     const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width + @as(f32, @floatFromInt(i));
                     const y: f32 = pos.y;
                     
+                    const cy: f32 = @floatFromInt(15 - @divFloor(c,16));
+                    const cx: f32 = @floatFromInt(c % 16);
+                    
                     // texture left and right
-                    const u_1: f32 = @as(f32, @floatFromInt(c%16)) * base_width + pad_left;
-                    const u_2: f32 = u_1 + base_width - pad_left - pad_right;
+                    const u_1: f32 = cx * base_width + pad_left;
+                    const u_2: f32 = (cx+1) * base_width - pad_right;
+                    
                     // texture top and bottom. Note that the texture is invertex so the mat here is also inverted
-                    const v_1: f32 = (@as(f32, @floatFromInt(c/16)) + 1) * base_height - pad_bottom;
-                    const v_2: f32 = @as(f32, @floatFromInt(c/16)) * base_height + pad_top;
+                    const v_1: f32 = cy * base_height + pad_bottom;
+                    const v_2: f32 = (cy+1) * base_height - pad_top;
 
                     // NOTE the texture is reversed hence the weird uv coordinates
                     const vertices = [4] Shader.Vertex {
@@ -1827,12 +1658,12 @@ pub fn PaletteBasedTexturedQuadRenderer(comptime output_pixel_type: type, compti
 
         pub fn add_sprite_from_atlas_by_index(self: *Self, comptime grid_cell_dimensions: Vec2(usize), comptime grid_dimensions: Vec2(usize), sprite_index: usize, dest_bb: BoundingBox(f32), parameters: ExtraParameters) !void {
             const colf: f32 = @floatFromInt(sprite_index % grid_dimensions.x);
-            const rowf: f32 = @floatFromInt(@divFloor(sprite_index, grid_dimensions.y));
+            const rowf: f32 = @floatFromInt(@divFloor(sprite_index, grid_dimensions.x));
             var vertices = [4] shader.Vertex {
-                .{ .pos = dest_bb.bl(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + 0                      , rowf*grid_cell_dimensions.y + grid_cell_dimensions.y) }, // 0 - bottom left
-                .{ .pos = dest_bb.br(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + grid_cell_dimensions.x , rowf*grid_cell_dimensions.y + grid_cell_dimensions.y) }, // 1 - bottom right
-                .{ .pos = dest_bb.tr(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + grid_cell_dimensions.x , rowf*grid_cell_dimensions.y + 0                     ) }, // 2 - top right
-                .{ .pos = dest_bb.tl(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + 0                      , rowf*grid_cell_dimensions.y + 0                     ) }, // 3 - top left
+                .{ .pos = dest_bb.bl(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + 0                      , rowf*grid_cell_dimensions.y + 0) }, // 0 - bottom left
+                .{ .pos = dest_bb.br(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + grid_cell_dimensions.x , rowf*grid_cell_dimensions.y + 0) }, // 1 - bottom right
+                .{ .pos = dest_bb.tr(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + grid_cell_dimensions.x , rowf*grid_cell_dimensions.y + grid_cell_dimensions.y ) }, // 2 - top right
+                .{ .pos = dest_bb.tl(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + 0                      , rowf*grid_cell_dimensions.y + grid_cell_dimensions.y ) }, // 3 - top left
             };
             if (parameters.mirror_horizontally) {
                 vertices[0].uv.x = colf*grid_cell_dimensions.x + grid_cell_dimensions.x;
@@ -1894,22 +1725,22 @@ pub fn PaletteBasedTexturedQuadRenderer(comptime output_pixel_type: type, compti
 
             pub fn add_palette_based_textured_quad(self: *Batch, dest_bb: BoundingBox(f32), src_bb: BoundingBox(f32)) !void {
                 var vertices = [4] shader.Vertex {
-                    .{ .pos = dest_bb.bl(), .uv = src_bb.tl() }, // 0 - bottom left
-                    .{ .pos = dest_bb.br(), .uv = src_bb.tr() }, // 1 - bottom right
-                    .{ .pos = dest_bb.tr(), .uv = src_bb.br() }, // 2 - top right
-                    .{ .pos = dest_bb.tl(), .uv = src_bb.bl() }, // 3 - top left
+                    .{ .pos = dest_bb.bl(), .uv = src_bb.bl() }, // 0 - bottom left
+                    .{ .pos = dest_bb.br(), .uv = src_bb.br() }, // 1 - bottom right
+                    .{ .pos = dest_bb.tr(), .uv = src_bb.tr() }, // 2 - top right
+                    .{ .pos = dest_bb.tl(), .uv = src_bb.tl() }, // 3 - top left
                 };
                 try self.vertex_buffer.appendSlice(&vertices);
             }
 
             pub fn add_sprite_from_atlas_by_index(self: *Batch, comptime grid_cell_dimensions: Vec2(usize), comptime grid_dimensions: Vec2(usize), sprite_index: usize, dest_bb: BoundingBox(f32), parameters: ExtraParameters) !void {
                 const colf: f32 = @floatFromInt(sprite_index % grid_dimensions.x);
-                const rowf: f32 = @floatFromInt(@divFloor(sprite_index, grid_dimensions.y));
+                const rowf: f32 = @floatFromInt(@divFloor(sprite_index, grid_dimensions.x));
                 var vertices = [4] shader.Vertex {
-                    .{ .pos = dest_bb.bl(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + 0                      , rowf*grid_cell_dimensions.y + grid_cell_dimensions.y) }, // 0 - bottom left
-                    .{ .pos = dest_bb.br(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + grid_cell_dimensions.x , rowf*grid_cell_dimensions.y + grid_cell_dimensions.y) }, // 1 - bottom right
-                    .{ .pos = dest_bb.tr(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + grid_cell_dimensions.x , rowf*grid_cell_dimensions.y + 0                     ) }, // 2 - top right
-                    .{ .pos = dest_bb.tl(), .uv = Vec2(f32).from(colf*grid_cell_dimensions.x + 0                      , rowf*grid_cell_dimensions.y + 0                     ) }, // 3 - top left
+                    .{ .pos = dest_bb.bl(), .uv = Vec2(f32).from((colf+0)*grid_cell_dimensions.x, (rowf+0)*grid_cell_dimensions.y) }, // 0 - bottom left
+                    .{ .pos = dest_bb.br(), .uv = Vec2(f32).from((colf+1)*grid_cell_dimensions.x, (rowf+0)*grid_cell_dimensions.y) }, // 1 - bottom right
+                    .{ .pos = dest_bb.tr(), .uv = Vec2(f32).from((colf+1)*grid_cell_dimensions.x, (rowf+1)*grid_cell_dimensions.y) }, // 2 - top right
+                    .{ .pos = dest_bb.tl(), .uv = Vec2(f32).from((colf+0)*grid_cell_dimensions.x, (rowf+1)*grid_cell_dimensions.y) }, // 3 - top left
                 };
                 if (parameters.mirror_horizontally) {
                     vertices[0].uv.x = colf*grid_cell_dimensions.x + grid_cell_dimensions.x;
@@ -1959,7 +1790,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
 
         const TextRendererImpl = TextRenderer(output_pixel_type, 1024, text_scale);
         const ShapeRendererImpl = ShapeRenderer(output_pixel_type, RGB.from(255,255,255));
-        const SurfaceRendererImpl = StandardQuadRenderer(output_pixel_type);
+        const SurfaceRendererImpl = StandardQuadRenderer(output_pixel_type, output_pixel_type);
         const PaletteBasedTexturedQuadRendererImpl = PaletteBasedTexturedQuadRenderer(output_pixel_type, null);
 
         allocator: std.mem.Allocator,
@@ -2105,6 +1936,54 @@ pub fn Renderer(comptime output_pixel_type: type) type {
             new_batch.* = TextRendererImpl.Batch.init(self.allocator, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
             try new_batch.add_text(pos, fmt, args, tint);
         }
+        
+        pub fn add_sprite_from_atlas_by_index(self: *Self, comptime grid_cell_dimensions: Vec2(usize), comptime grid_dimensions: Vec2(usize), palette: *tic80.Palette, palette_based_texture: Buffer2D(tic80.PaletteIndex), sprite_index: usize, dest_bb: BoundingBox(f32)) !void {
+            const correct_renderer = RendererType.palette_based_textured_quad_renderer;
+            if (self.current_batch.renderer_type == correct_renderer) {
+                const batch = &self.batches_palette_based_textured_quads.items[self.current_batch.index];
+                // if the batch is using same palette and texture, keep using it
+                if (batch.palette_based_texture.data.ptr == palette_based_texture.data.ptr and batch.palette == palette) {
+                    try batch.add_sprite_from_atlas_by_index(grid_cell_dimensions, grid_dimensions, sprite_index, dest_bb, .{});
+                    return;
+                }
+            }
+
+            // save previous batch
+            if (self.current_batch.renderer_type != .none) try self.batches.append(self.current_batch);
+
+            // initialize and set new batch
+            self.current_batch = .{
+                .renderer_type = correct_renderer,
+                .index = self.batches_palette_based_textured_quads.items.len
+            };
+            const new_batch = try self.batches_palette_based_textured_quads.addOne();
+            new_batch.* = try PaletteBasedTexturedQuadRendererImpl.Batch.init(self.allocator, palette, palette_based_texture, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
+            try new_batch.add_sprite_from_atlas_by_index(grid_cell_dimensions, grid_dimensions, sprite_index, dest_bb, .{});
+        }
+
+        pub fn add_map(self: *Self, comptime grid_cell_dimensions: Vec2(usize), comptime grid_dimensions: Vec2(usize), palette: *tic80.Palette, palette_based_texture: Buffer2D(tic80.PaletteIndex), map: *[136][240]u8, map_bb: BoundingBox(usize), dest_bb: BoundingBox(f32)) !void {
+            const correct_renderer = RendererType.palette_based_textured_quad_renderer;
+            if (self.current_batch.renderer_type == correct_renderer) {
+                const batch = &self.batches_palette_based_textured_quads.items[self.current_batch.index];
+                // if the batch is using same palette and texture, keep using it
+                if (batch.palette_based_texture.data.ptr == palette_based_texture.data.ptr and batch.palette == palette) {
+                    try batch.add_map(grid_cell_dimensions, grid_dimensions, map, map_bb, dest_bb);
+                    return;
+                }
+            }
+
+            // save previous batch
+            if (self.current_batch.renderer_type != .none) try self.batches.append(self.current_batch);
+
+            // initialize and set new batch
+            self.current_batch = .{
+                .renderer_type = correct_renderer,
+                .index = self.batches_palette_based_textured_quads.items.len
+            };
+            const new_batch = try self.batches_palette_based_textured_quads.addOne();
+            new_batch.* = try PaletteBasedTexturedQuadRendererImpl.Batch.init(self.allocator, palette, palette_based_texture, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
+            try new_batch.add_map(grid_cell_dimensions, grid_dimensions, map, map_bb, dest_bb);
+        }
 
         pub fn flush_all(self: *Self) !void {
             if (self.current_batch.renderer_type == .none) return;
@@ -2169,6 +2048,7 @@ pub const Resources = struct {
     allocator: std.mem.Allocator,
     strings: std.ArrayList(u8),
     map: [136][240]u8,
+    sprite_atlas: [8*8 * 16*16]tic80.PaletteIndex,
     levels: std.ArrayList(LevelDescriptor),
     junctions: std.ArrayList(LevelJunctionDescriptor),
     entity_spawners: std.ArrayList(EntitySpawner),
@@ -2179,6 +2059,7 @@ pub const Resources = struct {
             .allocator = allocator,
             .strings = std.ArrayList(u8).init(allocator),
             .map = undefined,
+            .sprite_atlas = undefined,
             .levels = std.ArrayList(LevelDescriptor).init(allocator),
             .junctions = std.ArrayList(LevelJunctionDescriptor).init(allocator),
             .entity_spawners = std.ArrayList(EntitySpawner).init(allocator),
@@ -2199,6 +2080,16 @@ pub const Resources = struct {
         for (self.map) |byte_row| {
             // write the map
             _ = try serialized_data.writer().write(byte_row[0..]);
+        }
+        if (true) {
+            var i: usize = 0;
+            while (i < self.sprite_atlas.len) : (i+=2) {
+                const a: u8 = @intCast(self.sprite_atlas[i]);
+                const b: u8 = @intCast(self.sprite_atlas[i+1]);
+                const the_byte: u8 = (a<<4 | b);
+                _ = try serialized_data.writer().writeByte(the_byte);
+            }
+            // std.log.debug("wrote {}/2 bytes", .{i});
         }
         // write the level count
         // NOTE just int cast to u8, force level count to be less than 256
@@ -2248,10 +2139,37 @@ pub const Resources = struct {
         var new_resources = Resources.init(self.allocator);
         const map_data_start: [*]u8 = @ptrCast(&new_resources.map);
         const map_underlying_bytes: []u8 = @ptrCast(map_data_start[0..240*136]);
+        // const sprite_atlas_data_start: [*]u8 = @ptrCast(&new_resources.sprite_atlas);
+        // const sprite_atlas_underlying_bytes: []u8 = @ptrCast(sprite_atlas_data_start[0..(8*8*16*16)/2]);
         const file = try std.fs.cwd().openFile(file_name, .{});
         defer file.close();
         // read the map
-        _ = try file.reader().read(map_underlying_bytes);
+        if (true) {
+            _ = try file.reader().read(map_underlying_bytes);
+            // for (map_underlying_bytes) |*data| {
+            //     const index = data.*;
+            //     const prev_x = index % 16;
+            //     const prev_y = @divFloor(index,16);
+            //     data.* = 16*(15-prev_y) + prev_x;
+            // }
+        }
+        else {
+            // @memcpy(&map_underlying_bytes, &Assets.map);
+            // new_resources.map = Assets.map;
+        }
+        if (true) {
+            var bytes: [(8*8*16*16)/2]u8 = undefined;
+            _ = try file.reader().read(&bytes);
+            for (bytes, 0..) |the_byte, i| {
+                const a: u8 = the_byte>>4;
+                const b: u8 = (the_byte<<4)>>4;
+                new_resources.sprite_atlas[2*i] = @intCast(a);
+                new_resources.sprite_atlas[2*i+1] = @intCast(b);
+            }
+        }
+        else {
+            @memcpy(&new_resources.sprite_atlas, &Assets.atlas_tiles_normalized);
+        }
         // read the level count
         const level_count: usize = @intCast(try file.reader().readByte());
         var name_starting_index: usize = 0;
@@ -2788,18 +2706,16 @@ pub const Assets = struct {
         }
     };
 
-    pub const animation_attack_0 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 65, 66, 67 }, 30);
-    pub const animation_attack_1 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 37, 38, 39, 40, 41 }, 10);
-    pub const animation_fire = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 139, 140 }, 15);
-    pub const animation_wings = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 113, 114 }, 30);
-    pub const animation_slime = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 178, 179 }, 60);
-    pub const animation_knight_1 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 176, 177 }, 60);
-    pub const animation_knight_2 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 180, 181 }, 60);
-    pub const animation_penguin = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 192, 193 }, 60);
-    pub const animation_archer = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 160, 161 }, 120);
-    pub const animation_player_idle = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 35, 51 }, 60);
-    pub const animation_player_walk = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 35, 36 }, 10);
-    pub const animation_preparing_attack = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 97, 98, 0, 0, 100, 99 }, 18);
+    pub const animation_attack_1 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 213, 214, 215, 216, 217 }, 10);
+    pub const animation_wings = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 129, 130 }, 30);
+    pub const animation_slime = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 66, 67 }, 60);
+    pub const animation_knight_1 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 64, 65 }, 60);
+    pub const animation_knight_2 = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 68, 69 }, 60);
+    pub const animation_penguin = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 48, 49 }, 60);
+    pub const animation_archer = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 80, 81 }, 120);
+    pub const animation_player_idle = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 211, 195 }, 60);
+    pub const animation_player_walk = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 211, 212 }, 10);
+    pub const animation_preparing_attack = AnimationDescriptor.from( &[_]tic80.AtlasIndex { 145, 146, 0, 0, 147, 148 }, 18);
     
     pub const config = struct {
         pub const player = struct {
@@ -2858,15 +2774,16 @@ pub const Assets = struct {
         var texture_data: [8*8*16*16]tic80.PaletteIndex = undefined;
         for (atlas_tiles, 0..) |sprite, sprite_index| {
             const atlas_col = sprite_index % 16;
-            const atlas_row = @divFloor(sprite_index, 16);
+            // NOTE I want the atlas sprite 0  to start from bottom left and grow upwards so inverse y
+            const atlas_row = 15 - @divFloor(sprite_index, 16);
             @setEvalBranchQuota(1000000);
             for (sprite, 0..) |palette_index, pixel_index| {
                 const sprite_col = pixel_index % 8;
-                const sprite_row = @divFloor(pixel_index, 8);
+                // NOTE textures 0,0 start bottom left on this renderer so inverse the y in every sprite
+                const sprite_row = 7 - @divFloor(pixel_index, 8);
 
                 const dest_x = atlas_col*8 + sprite_col;
-                // NOTE I want the atlas sprite 0  to start from bottom left and grow upwards so inverse y
-                const dest_y = (15 - atlas_row)*8 + sprite_row;
+                const dest_y = atlas_row*8 + sprite_row;
                 texture_data[dest_x + dest_y*16*8] = palette_index;
             }
         }

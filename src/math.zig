@@ -971,8 +971,8 @@ pub fn BoundingBox(comptime T: type) type {
             return from(_tl.y, _br.y, _tl.x, _br.x);
         }
 
-        pub inline fn from_br_size(_br: anytype, size: anytype) Self {
-            return from(_br.y+size.y, _br.y, _br.x, _br.x+size.x);
+        pub inline fn from_bl_size(_bl: anytype, size: anytype) Self {
+            return from(_bl.y+size.y, _bl.y, _bl.x, _bl.x+size.x);
         }
 
         pub inline fn from_indexed_grid(grid_dimensions: Vec2(T), grid_cell_dimensions: Vec2(T), index: T, inverse_y: bool) Self {
