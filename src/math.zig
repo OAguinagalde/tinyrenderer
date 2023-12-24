@@ -986,6 +986,10 @@ pub fn BoundingBox(comptime T: type) type {
             return point.x >= self.left and point.x <= self.right and point.y >= self.bottom and point.y <= self.top;
         }
 
+        pub inline fn get_inner_bb_with_padding(self: Self, padding: T) BoundingBox(T) {
+            return BoundingBox(T).from(self.top - padding, self.bottom + padding, self.left + padding, self.right - padding);
+        }
+
         pub inline fn contains_exclusive(self: Self, point: anytype) bool {
             return point.x >= self.left and point.x < self.right and point.y >= self.bottom and point.y < self.top;
         }
