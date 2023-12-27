@@ -35,7 +35,7 @@ let importObject = {
     },
 };
 
-const wasm_module_path = "lib/wasm_app.wasm";
+const wasm_module_path = "bin/wasm_app.wasm";
 const canvas_id = "wasm_app_canvas";
 // > `instantiateStreaming` compiles and instantiates a WebAssembly module directly from a
 // > streamed underlying source. This is the most efficient, optimized way to load Wasm code.
@@ -54,6 +54,7 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     const wasm_request_buffer = result.instance.exports.wasm_request_buffer;
     const wasm_get_static_buffer = result.instance.exports.wasm_get_static_buffer;
     const wasm_set_mouse = result.instance.exports.wasm_set_mouse;
+    const wasm_set_dt = result.instance.exports.wasm_set_dt;
 
     // This is the 256 bytes buffer used to interface js code and wasm code
     const interface_buffer_ptr = wasm_get_static_buffer();
@@ -97,12 +98,16 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     canvas_context.clearRect(0, 0, canvas.width, canvas.height);
     const canvas_pixel_size = 4;
 
+    var timestamp_previous = performance.now();
     const tick_interval_seconds = 1/60;
     setInterval(
         () => {
             wasm_set_mouse(mousePos.x, mousePos.y);
-            new Uint8Array(memory.buffer).set(new Uint8Array(keys), interface_buffer_ptr);
+            new Uint8Array(memory.buffer).set(keys, interface_buffer_ptr);
+            const timestamp_now = performance.now();
+            wasm_set_dt(timestamp_now - timestamp_previous);
             wasm_tick();
+            timestamp_previous = timestamp_now;
             
             const pixel_data_offset = wasm_get_canvas_pixels();
             const module_pixel_data = new Uint8Array(memory.buffer).slice(
@@ -127,13 +132,13 @@ window.addEventListener("keydown", (e)=> {
     const char = e.key.charCodeAt(0) - 32;
     const is_valid_key = char >= 0 && char < 256;
     if (!is_valid_key) return;
-    console.log(char + "down");
+    // console.log(String.fromCharCode(char) + "(" + char + ") down");
     keys[char] = true;
 });
 window.addEventListener("keyup", (e)=> {
     const char = e.key.charCodeAt(0) - 32;
     const is_valid_key = char >= 0 && char < 256;
     if (!is_valid_key) return;
-    console.log(char + "up");
+    // console.log(String.fromCharCode(char) + "(" + char + ") up");
     keys[char] = false;
 });

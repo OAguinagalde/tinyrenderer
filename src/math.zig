@@ -136,11 +136,13 @@ pub fn Vec3(comptime T: type) type {
         }
         
         pub fn normalized(self: Self) Self {
-            if (comptime std.meta.trait.isFloat(T)) {
-                const mag = self.magnitude();
-                return Self.from(self.x / mag, self.y / mag, self.z / mag);
+            switch (@typeInfo(T)) {
+                .Float => {
+                    const mag = self.magnitude();
+                    return Self.from(self.x / mag, self.y / mag, self.z / mag);
+                },
+                else => @compileError("type " ++ @typeName(T) ++ " is not a floating point number")
             }
-            else @compileError("type " ++ @typeName(T) ++ " is not a floating point number");
         }
 
         pub fn perspective_division(self: Self) Vec2(T) {

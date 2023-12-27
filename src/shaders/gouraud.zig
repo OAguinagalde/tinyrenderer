@@ -51,7 +51,7 @@ pub fn Shader(comptime output_pixel_type: type, comptime texture_pixel_type: typ
             struct {
                 fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector4f {
                     const position_camera_space = context.view_model_matrix.apply_to_vec3(vertex.pos);
-                    const light_direction = context.light_position_camera_space.substract(position_camera_space.discard_w()).normalized();
+                    const light_direction = context.light_position_camera_space.substract(position_camera_space.perspective_division()).normalized();
                     out_invariant.light_intensity = std.math.clamp(vertex.normal.normalized().dot(light_direction), 0, 1);
                     out_invariant.texture_uv = vertex.uv;
                     return context.projection_matrix.apply_to_vec4(position_camera_space);

@@ -144,17 +144,17 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         if (state.camera.direction.y < 0.95 and state.camera.direction.y > -0.95) {
             state.camera.direction = state.camera.direction.add(real_up.scale(-@as(f32, @floatFromInt(ud.mouse_d.y))*mouse_sensitivity));
         }
-        state.camera.direction.normalize();
+        state.camera.direction = state.camera.direction.normalized();
     }
     
     // camera position with AWSD and QE
     const unit: f32 = 0.02*(ud.ms / 16.6666);
-    if (ud.keys['W']) state.camera.position = state.camera.position.add(state.camera.direction.scale(unit));
-    if (ud.keys['S']) state.camera.position = state.camera.position.add(state.camera.direction.scale(-unit));
-    if (ud.keys['A']) state.camera.position = state.camera.position.add(real_right.scale(-unit));
-    if (ud.keys['D']) state.camera.position = state.camera.position.add(real_right.scale(unit));
-    if (ud.keys['Q']) state.camera.position.y += unit;
-    if (ud.keys['E']) state.camera.position.y -= unit;
+    if (ud.key_pressing('W')) state.camera.position = state.camera.position.add(state.camera.direction.scale(unit));
+    if (ud.key_pressing('S')) state.camera.position = state.camera.position.add(state.camera.direction.scale(-unit));
+    if (ud.key_pressing('A')) state.camera.position = state.camera.position.add(real_right.scale(-unit));
+    if (ud.key_pressing('D')) state.camera.position = state.camera.position.add(real_right.scale(unit));
+    if (ud.key_pressing('Q')) state.camera.position.y += unit;
+    if (ud.key_pressing('E')) state.camera.position.y -= unit;
 
     // calculate view_matrix, projection_matrix and viewport_matrix
     const looking_at: Vector3f = state.camera.position.add(state.camera.direction);
@@ -167,7 +167,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     if (true) {
         const horizontally_spinning_position = Vector3f { .x = std.math.cos(@as(f32, @floatCast(state.time)) / 2000), .y = 0, .z = 4 + std.math.sin(@as(f32, @floatCast(state.time)) / 2000) };
         const render_context = GouraudShader.Context {
-            .light_position_camera_space = view_matrix.apply_to_vec3(horizontally_spinning_position).discard_w(),
+            .light_position_camera_space = view_matrix.apply_to_vec3(horizontally_spinning_position).perspective_division(),
             .projection_matrix = projection_matrix,
             .texture = state.texture,
             .texture_height = state.texture.height,
@@ -188,7 +188,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         // const texture_data = app.texture.rgba.data;
         const tw: f32 = @floatFromInt(state.texture.width);
         const th: f32 = @floatFromInt(state.texture.height);
-        var quad_context = QuadShaderRgb.Context {
+        const quad_context = QuadShaderRgb.Context {
             .texture = state.texture,
             .projection_matrix =
                 projection_matrix.multiply(
@@ -217,7 +217,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         const texture = @import("text.zig").font.texture;
         const tw: f32 = @floatFromInt(texture.width);
         const th: f32 = @floatFromInt(texture.height);
-        var quad_context = QuadShaderRgba.Context {
+        const quad_context = QuadShaderRgba.Context {
             .texture = texture,
             .projection_matrix =
                 projection_matrix.multiply(

@@ -92,18 +92,30 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
         pub fn print(self: *Self, pos: Vector2f, comptime fmt: []const u8, args: anytype, tint: RGBA) !void {
             var buff: [max_size_per_print]u8 = undefined;
             const str = try std.fmt.bufPrint(&buff, fmt, args);
-            for (str, 0..) |c, i| {
-
+            for (str, 0..) |_c, i| {
+                    
+                const c = switch (_c) {
+                    // NOTE for whatever reason the font I'm using has uppercase and lowercase reversed?
+                    // so make everything lower case (which will show up as an upper case and looks better)
+                    // 'A'..'Z' -> 'a'..'z'
+                    65...90 => _c+32,
+                    else => _c
+                };
+                
                 // x and y are the bottom left of the quad
                 const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width + @as(f32, @floatFromInt(i));
                 const y: f32 = pos.y;
                 
+                const cy: f32 = @floatFromInt(15 - @divFloor(c,16));
+                const cx: f32 = @floatFromInt(c % 16);
+                
                 // texture left and right
-                const u_1: f32 = @as(f32, @floatFromInt(c%16)) * base_width + pad_left;
-                const u_2: f32 = u_1 + base_width - pad_left - pad_right;
+                const u_1: f32 = cx * base_width + pad_left;
+                const u_2: f32 = (cx+1) * base_width - pad_right;
+                
                 // texture top and bottom. Note that the texture is invertex so the mat here is also inverted
-                const v_1: f32 = (@as(f32, @floatFromInt(c/16)) + 1) * base_height - pad_bottom;
-                const v_2: f32 = @as(f32, @floatFromInt(c/16)) * base_height + pad_top;
+                const v_1: f32 = cy * base_height + pad_bottom;
+                const v_2: f32 = (cy+1) * base_height - pad_top;
 
                 // NOTE the texture is reversed hence the weird uv coordinates
                 const vertices = [4] Shader.Vertex {
@@ -137,6 +149,74 @@ pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: 
             );
             self.vertex_buffer.clearRetainingCapacity();
         }
+    
+        const Batch = struct {
+            vertex_buffer: std.ArrayList(Shader.Vertex),
+            pixel_buffer: Buffer2D(out_pixel_type),
+            mvp_matrix: M33,
+            viewport_matrix: M33,
+
+            fn init(allocator: std.mem.Allocator, pixel_buffer: Buffer2D(out_pixel_type), mvp_matrix: M33, viewport_matrix: M33) Batch {
+                return .{
+                    .vertex_buffer = std.ArrayList(Shader.Vertex).init(allocator),
+                    .pixel_buffer = pixel_buffer,
+                    .mvp_matrix = mvp_matrix,
+                    .viewport_matrix = viewport_matrix,
+                };
+            }
+
+            pub fn add_text(self: *Batch, pos: Vector2f, comptime fmt: []const u8, args: anytype, tint: RGBA) !void {
+                var buff: [max_size_per_print]u8 = undefined;
+                const str = try std.fmt.bufPrint(&buff, fmt, args);
+                for (str, 0..) |_c, i| {
+                    
+                    const c = switch (_c) {
+                        // NOTE for whatever reason the font I'm using has uppercase and lowercase reversed?
+                        // so make everything lower case (which will show up as an upper case and looks better)
+                        // 'A'..'Z' -> 'a'..'z'
+                        65...90 => _c+32,
+                        else => _c
+                    };
+                    
+                    // x and y are the bottom left of the quad
+                    const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width + @as(f32, @floatFromInt(i));
+                    const y: f32 = pos.y;
+                    
+                    const cy: f32 = @floatFromInt(15 - @divFloor(c,16));
+                    const cx: f32 = @floatFromInt(c % 16);
+                    
+                    // texture left and right
+                    const u_1: f32 = cx * base_width + pad_left;
+                    const u_2: f32 = (cx+1) * base_width - pad_right;
+                    
+                    // texture top and bottom. Note that the texture is invertex so the mat here is also inverted
+                    const v_1: f32 = cy * base_height + pad_bottom;
+                    const v_2: f32 = (cy+1) * base_height - pad_top;
+
+                    // NOTE the texture is reversed hence the weird uv coordinates
+                    const vertices = [4] Shader.Vertex {
+                        .{ .pos = .{ .x = x,              .y = y               }, .uv = .{ .x = u_1, .y = v_1 }, .tint = tint },
+                        .{ .pos = .{ .x = x + char_width, .y = y               }, .uv = .{ .x = u_2, .y = v_1 }, .tint = tint },
+                        .{ .pos = .{ .x = x + char_width, .y = y + char_height }, .uv = .{ .x = u_2, .y = v_2 }, .tint = tint },
+                        .{ .pos = .{ .x = x,              .y = y + char_height }, .uv = .{ .x = u_1, .y = v_2 }, .tint = tint }
+                    };
+                    
+                    try self.vertex_buffer.appendSlice(&vertices);                
+                }
+            }
+
+            pub fn flush(self: *Batch) void {
+                Shader.Pipeline.render(
+                    self.pixel_buffer,
+                    .{ .mvp_matrix = self.mvp_matrix, },
+                    self.vertex_buffer.items,
+                    self.vertex_buffer.items.len/4,
+                    .{ .viewport_matrix = self.viewport_matrix, }
+                );
+                self.vertex_buffer.clearAndFree();
+            }
+        };
+    
     };
 }
 

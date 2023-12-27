@@ -70,6 +70,9 @@ pub fn Application(comptime app: ApplicationDescription) type {
         pub export fn wasm_tick() void {
             tick();
         }
+        pub export fn wasm_set_dt(dt: f32) void {
+            delta_time = dt;
+        }
         pub export fn wasm_set_mouse(x: i32, y: i32) void {
             mousex = x;
             mousey = y;
@@ -149,6 +152,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
         };
 
         var state: State = undefined;
+        var delta_time: f32 = undefined;
         var mousex: i32 = undefined;
         var mousey: i32 = undefined;
         var static_buffer_for_runtime_use: [1024]u8 = undefined;
@@ -164,8 +168,12 @@ pub fn Application(comptime app: ApplicationDescription) type {
             flog("__memory_base {any} {}", .{state.__memory_base, @as(usize, @intFromPtr(state.__memory_base))});
             state.__table_base = @extern(?[*]u8, .{.name = "__table_base"}).?;
             flog("__table_base {any} {}", .{state.__table_base, @as(usize, @intFromPtr(state.__table_base))});
-            state.__stack_pointer = @extern(?[*]u8, .{.name = "__stack_pointer"}).?;
-            flog("__stack_pointer {any} {}", .{state.__stack_pointer, @as(usize, @intFromPtr(state.__stack_pointer))});
+            // TODO for some reason ever since I updated zig and change this to be an executable without entry point rather than a dynamic library,
+            // trying to get the `__stack_pointer` triggers the error `wasm-ld: invalid relocation data index`... Why?
+            // 
+            //     state.__stack_pointer = @extern(?[*]u8, .{.name = "__stack_pointer"}).?;
+            //     flog("__stack_pointer {any} {}", .{state.__stack_pointer, @as(usize, @intFromPtr(state.__stack_pointer))});
+            // 
             state.__data_end = @extern(?[*]u8, .{.name = "__data_end"}).?;
             flog("__data_end {any} {}", .{state.__data_end, @as(usize, @intFromPtr(state.__data_end))});
             state.__heap_base = @extern(?[*]u8, .{.name = "__heap_base"}).?;
@@ -214,7 +222,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
                 .mouse = state.mouse,
                 .mouse_d = mouse_d,
                 .fps = undefined,
-                .ms = undefined,
+                .ms = delta_time,
             };
 
             const keep_running = app.update(&platform) catch |e| panic(e);
@@ -254,9 +262,9 @@ pub fn Application(comptime app: ApplicationDescription) type {
             const context_and_callback = task_storage[file.len..size];
             
             std.debug.assert(context_size == context_storage.len);
-            std.mem.copy(u8, file_storage, file);
-            std.mem.copy(u8, context_storage, core.byte_slice(&context_value));        
-            std.mem.copy(u8, callback_storage, core.byte_slice(&callback));        
+            @memcpy(file_storage, file);
+            @memcpy(context_storage, core.byte_slice(&context_value));        
+            @memcpy(callback_storage, core.byte_slice(&callback));        
             // the task itself just contains a pointer to the context (its memory is manually managed), and a pointer to the callback (which is static code, so no need to manage its lifetime)
             try self.tasks.put(file_storage, .{ .callback = finish_read_file_task, .context = context_and_callback });
             

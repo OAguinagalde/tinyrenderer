@@ -1,16 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const math = @import("math.zig");
-const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
-const M44 = math.M44;
 const M33 = math.M33;
 const Buffer2D = @import("buffer.zig").Buffer2D;
 const RGB = @import("pixels.zig").RGB;
-const BGRA = @import("pixels.zig").BGRA;
 const RGBA = @import("pixels.zig").RGBA;
-const tic80 = @import("tic80.zig");
 const TextRenderer = @import("text.zig").TextRenderer(platform.OutPixelType, 1024, 1);
 const graphics = @import("graphics.zig");
 
@@ -52,14 +48,16 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
+    
+    ud.pixel_buffer.clear(platform.OutPixelType.from(RGBA, RGBA.make(100, 149, 237,255)));
+
     const h: f32 = @floatFromInt(ud.pixel_buffer.height);
     const w: f32 = @floatFromInt(ud.pixel_buffer.width);
-    ud.pixel_buffer.clear(platform.OutPixelType.from(RGBA, RGBA.make(100, 149, 237,255)));
     
-    if (ud.keys['W']) state.camera.pos = state.camera.pos.add(Vector3f.from(0, 1, 0));
-    if (ud.keys['A']) state.camera.pos = state.camera.pos.add(Vector3f.from(-1, 0, 0));
-    if (ud.keys['S']) state.camera.pos = state.camera.pos.add(Vector3f.from(0, -1, 0));
-    if (ud.keys['D']) state.camera.pos = state.camera.pos.add(Vector3f.from(1, 0, 0));
+    if (ud.key_pressing('W')) state.camera.pos = state.camera.pos.add(Vector3f.from(0, 1, 0));
+    if (ud.key_pressing('A')) state.camera.pos = state.camera.pos.add(Vector3f.from(-1, 0, 0));
+    if (ud.key_pressing('S')) state.camera.pos = state.camera.pos.add(Vector3f.from(0, -1, 0));
+    if (ud.key_pressing('D')) state.camera.pos = state.camera.pos.add(Vector3f.from(1, 0, 0));
     
     const view_matrix = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
     const projection_matrix = M33.orthographic_projection(0, w, h, 0);
@@ -71,65 +69,26 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     
     const text_height = state.text_renderer.height() + 1;
     const text_color = RGBA.from(RGBA, @bitCast(@as(u32, 0xffffffff)));
-    try state.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*0) }, "ms {d: <9.2}", .{ud.ms}, text_color);
-    try state.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*1) }, "frame {}", .{ud.frame}, text_color);
-    try state.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*2) }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, text_color);
-    try state.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*3) }, "mouse {} {}", .{ud.mouse.x, ud.mouse.y}, text_color);
-    try state.text_renderer.print(Vector2f { .x = 5, .y = h - (text_height*4) }, "dimensions {} {}", .{w, h}, text_color);
+    try state.text_renderer.print(Vector2f { .x = 0, .y = h - (text_height*1) }, "ms {d: <9.2}", .{ud.ms}, text_color);
+    try state.text_renderer.print(Vector2f { .x = 0, .y = h - (text_height*2) }, "frame {}", .{ud.frame}, text_color);
+    try state.text_renderer.print(Vector2f { .x = 0, .y = h - (text_height*3) }, "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, text_color);
+    try state.text_renderer.print(Vector2f { .x = 0, .y = h - (text_height*4) }, "mouse {} {}", .{ud.mouse.x, ud.mouse.y}, text_color);
+    try state.text_renderer.print(Vector2f { .x = 0, .y = h - (text_height*5) }, "dimensions {} {}", .{w, h}, text_color);
     state.text_renderer.render_all(
         ud.pixel_buffer,
-        M33.orthographic_projection(0, w, h, 0),
-        M33.viewport(0, 0, w, h)
+        projection_matrix,
+        viewport_matrix
     );
     return true;
 }
 
 const Camera = struct {
     pos: Vector3f,
-    bound_right: f32,
-    bound_left: f32,
-    bound_top: f32,
-    bound_bottom: f32,
-    
     pub fn init(pos: Vector3f) Camera {
         return Camera {
             .pos = pos,
-            .bound_right = undefined,
-            .bound_left = undefined,
-            .bound_top = undefined,
-            .bound_bottom = undefined,
         };
     }
-
-    pub fn set_bounds(self: *Camera, bound_right: f32, bound_left: f32, bound_top: f32, bound_bottom: f32) void {
-        self.bound_right = bound_right;
-        self.bound_left = bound_left;
-        self.bound_top = bound_top;
-        self.bound_bottom = bound_bottom;
-    }
-
-    pub fn move_bounded(self: *Camera, pos: Vector2f, real_width: f32, real_height: f32) void {
-        const bound_width = self.bound_right - self.bound_left;
-        const bound_height = self.bound_top - self.bound_bottom;
-
-        // center the camera on the bound area
-        self.pos.x = self.bound_left - (real_width/2) + (bound_width/2);
-        if (bound_width > real_width) {
-            // if the bounds are bigger than the screen, pan it without showing the outside of the bounds
-            const half_diff = (bound_width - real_width)/2;
-            const c = self.pos.x;
-            self.pos.x = std.math.clamp(pos.x-(real_width/2), c-half_diff, c+half_diff);
-        }
-        
-        self.pos.y = self.bound_bottom - (real_height/2) + (bound_height/2);
-        if (bound_height > real_height) {
-            const half_diff = (bound_height - real_height)/2;
-            const c = self.pos.y;
-            self.pos.y = std.math.clamp(pos.y-(real_height/2), c-half_diff, c+half_diff);
-        }
-
-    }
-
 };
 
 pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type {

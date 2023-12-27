@@ -85,7 +85,7 @@ pub fn build(b: *Builder) !void {
         // 64 kb per page
         const number_of_pages = 200;
         const optimization_options = b.standardOptimizeOption(.{});
-        const lib = b.addSharedLibrary(.{
+        const exe = b.addExecutable(.{
             .name = "wasm_app",
             .root_source_file = .{ .path = root_file },
             .target = .{
@@ -95,23 +95,24 @@ pub fn build(b: *Builder) !void {
             .optimize = optimization_options,
         });
         
+        // Executable with no entry-point since js will manage that
+        exe.entry = .disabled;
         // for a wasm library to export symbols one needs to specify the -rdynamic flag
         // meaning that if this is not true, the wasm runtime wont be able to call exported functions
-        lib.rdynamic = true;
-        
+        exe.rdynamic = true;
         // meaning that the runtime that loads our wasm module (js) will provide the
         // memory that our wasm module will work with (the `WebAssembly.Memory` object)
-        lib.import_memory = true;
+        exe.import_memory = true;
         // the provided memory doesnt change, it is excatly `number_of_pages * page_size`
         // so both `initial_memory` and `max_memory` are the same
-        lib.initial_memory = std.wasm.page_size * number_of_pages;
-        lib.max_memory = std.wasm.page_size * number_of_pages;
+        exe.initial_memory = std.wasm.page_size * number_of_pages;
+        exe.max_memory = std.wasm.page_size * number_of_pages;
         // Out of that memory, we reserve 1 page for the shadow stack
-        lib.stack_size = std.wasm.page_size;
+        exe.stack_size = std.wasm.page_size;
         // we could reserve an X ammount of memory out of the provided memory, for example for
         // io mapping or something similar. This is the case with tic80 for instance
         // 
-        //    lib.global_base = X;
+        //    exe.global_base = X;
         // 
 
         // There is 3 things that need to happen to build the project for wasm:
@@ -119,7 +120,7 @@ pub fn build(b: *Builder) !void {
         // 2. copy the index.html which has the canvas
         // 3. copy the js logic which links the canvas and the wasm module
         // 3. copy resources
-        var step_compile_wasm_library = b.addInstallArtifact(lib, .{});
+        var step_compile_wasm_executable = b.addInstallArtifact(exe, .{});
         var step_copy_res = b.addInstallDirectory(.{
             .source_dir = .{.path="res"},
             .install_dir = .{.custom="./"},
@@ -129,7 +130,7 @@ pub fn build(b: *Builder) !void {
         var step_copy_js = b.addInstallFile(.{.path="src/wasm_app_canvas_loader.js"}, "./wasm_app_canvas_loader.js");
         // NOTE InstallStep is just how zig calls the "main build task", by itself it does nothing
         // but by making it depend on other tasks, it will run those first
-        b.getInstallStep().dependOn(&step_compile_wasm_library.step);
+        b.getInstallStep().dependOn(&step_compile_wasm_executable.step);
         b.getInstallStep().dependOn(&step_copy_res.step);
         b.getInstallStep().dependOn(&step_copy_html.step);
         b.getInstallStep().dependOn(&step_copy_js.step);
@@ -146,16 +147,16 @@ pub fn build(b: *Builder) !void {
 
 }
 
-// Allows you to `@import(name)` any data into a compilation unit:
-// 
-//     embed_str_as_module(b, "pub const SomeConstant: usize = 1337;", "constants.zig", lib);
-// 
-// Then somewhere in the lib's code:
-// 
-//     const constants = @import("constants.zig");
-//     std.log.debug("{}", .{constants.SomeConstant});
-// 
-// which will print "1337"
+/// Allows you to `@import(name)` any data into a compilation unit:
+/// 
+///     embed_str_as_module(b, "pub const SomeConstant: usize = 1337;", "constants.zig", lib);
+/// 
+/// Then somewhere in the lib's code:
+/// 
+///     const constants = @import("constants.zig");
+///     std.log.debug("{}", .{constants.SomeConstant});
+/// 
+/// which will print "1337"
 fn embed_str_as_module(b: *std.Build, comptime str: []const u8, comptime name: []const u8, compilation: *std.Build.Step.Compile) void {
     const step_tool_runner = b.addRunArtifact(b.addExecutable(.{
         .name = "Embed data as anonymous module",
