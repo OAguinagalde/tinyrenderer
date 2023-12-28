@@ -60,6 +60,10 @@ pub fn Application(comptime app: ApplicationDescription) type {
                 const data: struct { ptr: [*]u8, len: usize } = .{ .ptr = @ptrFromInt(a), .len = b };
                 state.tasks.?.finish(id, data);
             }
+            else {
+                flog("unrecognized event received!", .{});
+                @panic("");
+            }
         }
         pub export fn wasm_request_buffer(len: usize) [*]u8 {
             return @ptrCast(state.allocator.alloc(u8, len) catch |e| panic(e));
@@ -73,9 +77,10 @@ pub fn Application(comptime app: ApplicationDescription) type {
         pub export fn wasm_set_dt(dt: f32) void {
             delta_time = dt;
         }
-        pub export fn wasm_set_mouse(x: i32, y: i32) void {
+        pub export fn wasm_set_mouse(x: i32, y: i32, down: i32) void {
             mousex = x;
             mousey = y;
+            mousedown = down == 1;
         }
 
         const WasmLoggingAllocator = struct {
@@ -136,6 +141,8 @@ pub fn Application(comptime app: ApplicationDescription) type {
             pixel_buffer: Buffer2D(RGBA),
             frame_index: usize,
             tasks: ?TaskManager,
+            mouse_down: bool,
+            mouse_clicked: bool,
             
             fba: std.heap.FixedBufferAllocator,
             wla: WasmLoggingAllocator,
@@ -155,6 +162,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
         var delta_time: f32 = undefined;
         var mousex: i32 = undefined;
         var mousey: i32 = undefined;
+        var mousedown: bool = undefined;
         var static_buffer_for_runtime_use: [1024]u8 = undefined;
 
         fn init() void {
@@ -195,6 +203,8 @@ pub fn Application(comptime app: ApplicationDescription) type {
             state.h = @intCast(state.pixel_buffer.height);
             state.mouse = undefined;
             state.frame_index = 0;
+            state.mouse_down = false;
+            state.mouse_clicked = false;
 
             app.init(state.allocator) catch |e| panic(e);
         }
@@ -210,6 +220,11 @@ pub fn Application(comptime app: ApplicationDescription) type {
             for (static_buffer_for_runtime_use[0..256], 0..) |byte, i| state.keys[i] = byte == 1;
             const mouse_d = Vector2i { .x = mousex - state.mouse.x, .y = mousey - state.mouse.y };
             state.mouse = Vector2i { .x = mousex, .y = mousey };
+            
+            if (!state.mouse_down and mousedown) {
+                state.mouse_clicked = true;
+            }
+            state.mouse_down = mousedown;
 
             var platform = UpdateData {
                 .pixel_buffer = state.pixel_buffer,
@@ -223,12 +238,16 @@ pub fn Application(comptime app: ApplicationDescription) type {
                 .mouse_d = mouse_d,
                 .fps = undefined,
                 .ms = delta_time,
+                .mouse_left_down = state.mouse_down,
+                .mouse_left_clicked = state.mouse_clicked,
+                .mwheel = undefined,
             };
 
             const keep_running = app.update(&platform) catch |e| panic(e);
             if (!keep_running) {
                 // Too bad, there is no stopping!!!
             }
+            state.mouse_clicked = false;
             state.keys_old = state.keys;
             state.frame_index += 1;
         }
@@ -295,6 +314,9 @@ pub const UpdateData = struct {
     fps: usize,
     ms: f32,
     frame: usize,
+    mouse_left_down: bool,
+    mouse_left_clicked: bool,
+    mwheel: i32,
 
     pub fn key_pressing(ud: *const UpdateData, key: usize) bool {
         return ud.keys[key];

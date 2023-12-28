@@ -4,6 +4,7 @@ const math = @import("math.zig");
 const graphics = @import("graphics.zig");
 const physics = @import("physics.zig");
 const font = @import("text.zig").font;
+const core = @import("core.zig");
 
 const BoundingBox = math.BoundingBox;
 const Vec2 = math.Vec2;
@@ -89,22 +90,62 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.texts = undefined; // texts are set on load_level
     state.debug = true;
     state.renderer = try Renderer(platform.OutPixelType).init(allocator);
-    state.resource_file_name = "resources.bin";
+    state.resource_file_name = "res/resources.bin";
     state.resources = Resources.init(allocator);
-    try state.resources.load_from_file(state.resource_file_name);
-    try load_level(Vec2(u8).from(5, 1), 0);
+    if (builtin.os.tag == .windows) {
+        const file = try std.fs.cwd().openFile(state.resource_file_name, .{});
+        defer file.close();
+        try state.resources.load_from_bytes(file.reader());
+        try load_level(Vec2(u8).from(5, 1), 0);
+        finished = true;
+    }
+    else {
+
+        const resources_loading_stuff = struct {
+
+            const Context = struct {
+                allocator: std.mem.Allocator,
+                resources: *Resources,
+            };
+
+            fn finish_loading_resource_file(bytes: []const u8, context: []const u8) !void {
+                var ctx: Context = undefined;
+                core.value(&ctx, context);
+                defer ctx.allocator.free(bytes);
+                var fbs = std.io.fixedBufferStream(bytes);
+                const reader = fbs.reader(); 
+                try ctx.resources.*.load_from_bytes(reader);
+                try load_level(Vec2(u8).from(5, 1), 0);
+                finished = true;
+            }
+
+        };
+
+        try Application.read_file(state.resource_file_name, resources_loading_stuff.finish_loading_resource_file, resources_loading_stuff.Context { .allocator = allocator, .resources = &state.resources });
+    }
 }
 
-pub fn update(ud: *platform.UpdateData) anyerror!bool {
+var finished = false;
 
+pub fn update(ud: *platform.UpdateData) anyerror!bool {
+    if (!finished) return true;
     const h: f32 = @floatFromInt(ud.pixel_buffer.height);
     const w: f32 = @floatFromInt(ud.pixel_buffer.width);
 
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
 
-    if (ud.key_pressed('L')) try state.resources.load_from_file(state.resource_file_name);
     if (ud.key_pressed('R')) try load_level(Vec2(u8).from(5, 1), ud.frame);
+
+    if (ud.key_pressed('L')) {
+            if (builtin.os.tag == .windows) {
+                const file = try std.fs.cwd().openFile(state.resource_file_name, .{});
+                defer file.close();
+                try state.resources.load_from_bytes(file.reader());
+            } else {
+
+            }
+    }
     if (ud.key_pressed('G')) state.debug = !state.debug;
     
     if (state.player.attack_start_frame > 0 and ud.frame - state.player.attack_start_frame >= Assets.config.player.attack.cooldown) {

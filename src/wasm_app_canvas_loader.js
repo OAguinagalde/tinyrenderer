@@ -102,7 +102,7 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
     const tick_interval_seconds = 1/60;
     setInterval(
         () => {
-            wasm_set_mouse(mousePos.x, mousePos.y);
+            wasm_set_mouse(mousePos.x, mousePos.y, mouse_down);
             new Uint8Array(memory.buffer).set(keys, interface_buffer_ptr);
             const timestamp_now = performance.now();
             wasm_set_dt(timestamp_now - timestamp_previous);
@@ -120,6 +120,14 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), importObject).then((re
         },
         tick_interval_seconds * 1000
     );
+});
+
+let mouse_down = 0;
+window.addEventListener('mouseup', (e) => {
+    mouse_down = 0;
+});
+window.addEventListener('mousedown', (e) => {
+    mouse_down = 1;
 });
 
 let mousePos = { x: undefined, y: undefined };
