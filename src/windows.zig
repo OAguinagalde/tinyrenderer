@@ -33,7 +33,9 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
         pub fn run() !void {
             
-            const allocator = std.heap.page_allocator;
+            const AllocatorType = std.heap.GeneralPurposeAllocator(.{});
+            var allocator_master = AllocatorType {};
+            const allocator = allocator_master.allocator();
             const instance_handle = win32.GetModuleHandleW(null);
             if (instance_handle == null) {
                 std.log.debug("win32.GetModuleHandleW == NULL. Last error: {any}", .{win32.GetLastError()});
@@ -261,6 +263,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
                     }
                     _ = win32.ReleaseDC(window_handle, device_context_handle.?);
                 }
+                _ = allocator_master.detectLeaks();
             }
 
         }
