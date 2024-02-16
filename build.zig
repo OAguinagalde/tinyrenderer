@@ -1,7 +1,7 @@
 const std = @import("std");
-const Builder = std.build.Builder;
+const Build = std.Build;
 
-pub fn build(b: *Builder) !void {
+pub fn build(b: *Build) !void {
 
     const target_win32 = b.option([]const u8, "win32", "default compilation for win32");
     const target_wasm = b.option([]const u8, "wasm", "default compilation for wasm");
@@ -13,9 +13,11 @@ pub fn build(b: *Builder) !void {
         const tracy_callstack = b.option(bool, "tracy-callstack", "Include callstack information with Tracy data. Does nothing if -Dtracy is not provided") orelse (tracy != null);
         const tracy_allocation = b.option(bool, "tracy-allocation", "Include allocation information with Tracy data. Does nothing if -Dtracy is not provided") orelse (tracy != null);
 
-        // const target = b.standardTargetOptions(.{});
         const optimization_options = b.standardOptimizeOption(.{});
-        const target: std.zig.CrossTarget = .{ .os_tag = .windows };
+        const target = b.resolveTargetQuery(.{
+            .os_tag = .windows
+        });
+
         const exe = b.addExecutable(.{
             .name = "windows",
             .root_source_file = .{ .path = root_file },
@@ -25,12 +27,12 @@ pub fn build(b: *Builder) !void {
 
         // https://github.com/marlersoft/zigwin32 - e61d5e9 - 21.0.3-preview
         const win32 = b.createModule(.{
-            .source_file = .{ .path = "dep/zigwin32/win32.zig" },
+            .root_source_file = .{ .path = "dep/zigwin32/win32.zig" },
         });
-        exe.addModule("win32", win32);
+        exe.root_module.addImport("win32", win32);
         
         // imgui
-        if (false) {
+        // if (true) {
             exe.linkLibCpp();
             exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui.cpp" }, .flags = &[_] []const u8 {""} });
             exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_draw.cpp" }, .flags = &[_] []const u8 {""} });
@@ -39,14 +41,14 @@ pub fn build(b: *Builder) !void {
             exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_widgets.cpp" }, .flags = &[_] []const u8 {""} });
             exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/cimgui.cpp" }, .flags = &[_] []const u8 {""} });
             exe.addIncludePath(.{ .path = "dep/cimgui" });
-        }
+        // }
 
         b.installArtifact(exe);
         var step_run = b.addRunArtifact(exe);
         run_step.dependOn(&step_run.step);
 
         const exe_options = b.addOptions();
-        exe.addOptions("build_options", exe_options);
+        exe.root_module.addOptions("build_options", exe_options);
 
         exe_options.addOption(bool, "enable_tracy", tracy != null);
         exe_options.addOption(bool, "enable_tracy_callstack", tracy_callstack);
@@ -57,8 +59,8 @@ pub fn build(b: *Builder) !void {
                 &[_][]const u8{ tracy_path, "public", "TracyClient.cpp" },
             ) catch unreachable;
 
-            // On mingw, we need to opt into windows 7+ to get some features required by tracy.
-            const tracy_c_flags: []const []const u8 = if (target.isWindows() and target.getAbi() == .gnu)
+            // const tracy_c_flags: []const []const u8 = if (target.isWindows() and target.getAbi() == .gnu)
+            const tracy_c_flags: []const []const u8 = if (target.result.isMinGW())
                 &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined", "-D_WIN32_WINNT=0x601" }
             else
                 &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined" };
@@ -67,12 +69,12 @@ pub fn build(b: *Builder) !void {
             exe.addCSourceFile(.{ .file = .{.path = client_cpp }, .flags = tracy_c_flags });
             
             // if (!enable_llvm) {
-                exe.linkSystemLibraryName("c++");
+                exe.linkSystemLibrary("c++");
             // }
 
             exe.linkLibC();
 
-            if (target.isWindows()) {
+            if (target.result.os.tag == .windows) {
                 exe.linkSystemLibrary("dbghelp");
                 exe.linkSystemLibrary("ws2_32");
             }
@@ -85,13 +87,16 @@ pub fn build(b: *Builder) !void {
         // 64 kb per page
         const number_of_pages = 200;
         const optimization_options = b.standardOptimizeOption(.{});
+        
+        const target = b.resolveTargetQuery(.{
+            .cpu_arch = .wasm32,
+            .os_tag = .freestanding,
+        });
+
         const exe = b.addExecutable(.{
             .name = "wasm_app",
             .root_source_file = .{ .path = root_file },
-            .target = .{
-                .cpu_arch = .wasm32,
-                .os_tag = .freestanding,
-            },
+            .target = target,
             .optimize = optimization_options,
         });
         
