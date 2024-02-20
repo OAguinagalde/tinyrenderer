@@ -34,7 +34,9 @@ const Application = platform.Application(.{
 // in that funciton is executed, which in turn references the exported functions, making it so
 // that those are "found" by zig and properly exported.
 comptime {
-    _ = Application.run;
+    if (@This() == @import("root")) {
+        _ = Application.run;
+    }
 }
 
 pub fn main() !void {
