@@ -158,7 +158,7 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
                     }
                     
                     const tuple: std.builtin.Type.Struct = tuple_info.Struct;
-                    comptime var bit_field = set_without_components;
+                    var bit_field = set_without_components;
                     for (tuple.fields) |field| {
                         const ith_type = @field(view_types, field.name);
                         const component_id = getComponentId(ith_type);
