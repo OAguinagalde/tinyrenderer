@@ -1776,6 +1776,9 @@ pub fn Renderer(comptime output_pixel_type: type) type {
             blend: bool = false,
         };
 
+        const total_number_of_renderer_types = @typeInfo(RendererType).Enum.fields.len;
+        batches_created_per_type: [total_number_of_renderer_types] usize,
+
         allocator: std.mem.Allocator,
 
         batches: std.ArrayList(BatchDescriptor),
@@ -1807,7 +1810,9 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                 .index = 0,
                 .renderer_type = .none
             };
-            
+
+            for (0..total_number_of_renderer_types) |i| self.batches_created_per_type[i] = 0;
+
             return self;
         }
 
@@ -1832,6 +1837,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                 .renderer_type = correct_renderer,
                 .index = self.batches_shapes.items.len
             };
+            self.batches_created_per_type[@intFromEnum(correct_renderer)] += 1;
             const new_batch = try self.batches_shapes.addOne();
             new_batch.* = ShapeRendererImpl.Batch.init(self.allocator, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
             try new_batch.add_quad_from_bb(bb, tint);
@@ -1852,6 +1858,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                 .renderer_type = correct_renderer,
                 .index = self.batches_shapes.items.len
             };
+            self.batches_created_per_type[@intFromEnum(correct_renderer)] += 1;
             const new_batch = try self.batches_shapes.addOne();
             new_batch.* = ShapeRendererImpl.Batch.init(self.allocator, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
             try new_batch.add_quad_border(bb, thickness, tint);
@@ -1876,6 +1883,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                 .renderer_type = correct_renderer,
                 .index = self.batches_palette_based_textured_quads.items.len
             };
+            self.batches_created_per_type[@intFromEnum(correct_renderer)] += 1;
             const new_batch = try self.batches_palette_based_textured_quads.addOne();
             new_batch.* = try PaletteBasedTexturedQuadRendererImpl.Batch.init(self.allocator, palette, palette_based_texture, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
             try new_batch.add_palette_based_textured_quad(dest_bb, src_bb);
@@ -1897,6 +1905,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                 .renderer_type = correct_renderer,
                 .index = self.batches_surfaces.items.len
             };
+            self.batches_created_per_type[@intFromEnum(correct_renderer)] += 1;
             const new_batch = try self.batches_surfaces.addOne();
             new_batch.* = SurfaceRendererImpl.Batch.init(self.allocator, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix, texture);
             try new_batch.add_blit_texture_to_bb(bb);
@@ -1917,6 +1926,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                 .renderer_type = correct_renderer,
                 .index = self.batches_text.items.len
             };
+            self.batches_created_per_type[@intFromEnum(correct_renderer)] += 1;
             const new_batch = try self.batches_text.addOne();
             new_batch.* = TextRendererImpl.Batch.init(self.allocator, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
             try new_batch.add_text(pos, fmt, args, tint);
@@ -1942,6 +1952,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                     .renderer_type = correct_renderer,
                     .index = self.batches_palette_based_textured_quads_blended.items.len
                 };
+                self.batches_created_per_type[@intFromEnum(correct_renderer)] += 1;
                 const new_batch = try self.batches_palette_based_textured_quads_blended.addOne();
                 new_batch.* = try PaletteBasedTexturedQuadRendererBlendedImpl.Batch.init(self.allocator, palette, palette_based_texture, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
                 try new_batch.add_sprite_from_atlas_by_index(grid_cell_dimensions, grid_dimensions, sprite_index, dest_bb, .{ .mirror_horizontally = parameters.mirror_horizontally });
@@ -1965,6 +1976,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                     .renderer_type = correct_renderer,
                     .index = self.batches_palette_based_textured_quads.items.len
                 };
+                self.batches_created_per_type[@intFromEnum(correct_renderer)] += 1;
                 const new_batch = try self.batches_palette_based_textured_quads.addOne();
                 new_batch.* = try PaletteBasedTexturedQuadRendererImpl.Batch.init(self.allocator, palette, palette_based_texture, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
                 try new_batch.add_sprite_from_atlas_by_index(grid_cell_dimensions, grid_dimensions, sprite_index, dest_bb, .{ .mirror_horizontally = parameters.mirror_horizontally });
@@ -1990,6 +2002,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                 .renderer_type = correct_renderer,
                 .index = self.batches_palette_based_textured_quads.items.len
             };
+            self.batches_created_per_type[@intFromEnum(correct_renderer)] += 1;
             const new_batch = try self.batches_palette_based_textured_quads.addOne();
             new_batch.* = try PaletteBasedTexturedQuadRendererImpl.Batch.init(self.allocator, palette, palette_based_texture, self.pixel_buffer, self.mvp_matrix, self.viewport_matrix);
             try new_batch.add_map(grid_cell_dimensions, grid_dimensions, map, map_bb, dest_bb);
@@ -1999,8 +2012,14 @@ pub fn Renderer(comptime output_pixel_type: type) type {
             if (self.current_batch.renderer_type == .none) return;
             try self.batches.append(self.current_batch);
 
+            // TODO count the number of batches that have been created per pipeline
+            // and then here count the number of batches gone through. The numbers should match, and if not, then there is a bug and memory is leaking
+            var batch_counter_per_type: [total_number_of_renderer_types] usize = undefined;
+            for (0..total_number_of_renderer_types) |i| batch_counter_per_type[i] = 0;
+
             var total: usize = 0;
             for (self.batches.items) |batch| {
+                batch_counter_per_type[@intFromEnum(batch.renderer_type)] += 1;
                 const index = batch.index;
                 switch (batch.renderer_type) {
                     .shape => {
@@ -2027,6 +2046,10 @@ pub fn Renderer(comptime output_pixel_type: type) type {
                 }
                 total += 1;
             }
+
+            // Dont check on .none
+            for (1..total_number_of_renderer_types) |i| std.debug.assert(batch_counter_per_type[i] == self.batches_created_per_type[i]);
+            for (0..total_number_of_renderer_types) |i| self.batches_created_per_type[i] = 0;
 
             self.batches.clearRetainingCapacity();
             self.batches_shapes.clearRetainingCapacity();
