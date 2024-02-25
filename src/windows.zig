@@ -35,6 +35,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
             
             const AllocatorType = std.heap.GeneralPurposeAllocator(.{});
             var allocator_master = AllocatorType {};
+            defer _ = allocator_master.detectLeaks();
             const allocator = allocator_master.allocator();
             const instance_handle = win32.GetModuleHandleW(null);
             if (instance_handle == null) {
@@ -263,7 +264,6 @@ pub fn Application(comptime app: ApplicationDescription) type {
                     }
                     _ = win32.ReleaseDC(window_handle, device_context_handle.?);
                 }
-                _ = allocator_master.detectLeaks();
             }
 
         }

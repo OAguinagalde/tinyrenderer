@@ -149,7 +149,9 @@ pub fn build(b: *Build) !void {
         step_run.dependOn(b.getInstallStep());
         run_step.dependOn(step_run);
     }
-
+    else {
+        return error.NoBuildTargetDefined;
+    }
 }
 
 /// Allows you to `@import(name)` any data into a compilation unit:

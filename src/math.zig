@@ -91,16 +91,19 @@ pub fn Vec3(comptime T: type) type {
         }
 
         pub inline fn to(self: Self, comptime OtherType: type) Vec3(OtherType) {
-            const self_is_float = comptime std.meta.trait.isFloat(T);
-            const other_is_float = comptime std.meta.trait.isFloat(OtherType);
-            if (self_is_float) {
-                if (other_is_float) return Vec3(OtherType).from(@floatCast(self.x), @floatCast(self.y), @floatCast(self.z))
-                else return Vec3(OtherType).from(@intFromFloat(self.x), @intFromFloat(self.y), @intFromFloat(self.z));
-            }
-            else {
-                if (other_is_float) return Vec3(OtherType).from(@floatFromInt(self.x), @floatFromInt(self.y), @floatFromInt(self.z))
-                else return Vec3(OtherType).from(@intCast(self.x), @intCast(self.y), @intCast(self.z));
-            }
+            return switch (@typeInfo(T)) {
+                .Float => switch (@typeInfo(OtherType)) {
+                    .Float => |_| Vec3(OtherType).from(@floatCast(self.x), @floatCast(self.y), @floatCast(self.z)),
+                    .Int => |_| Vec3(OtherType).from(@intFromFloat(self.x), @intFromFloat(self.y), @intFromFloat(self.z)),
+                    else => @compileError("type not supported")
+                },
+                .Int => switch (@typeInfo(OtherType)) {
+                    .Int => |_| Vec3(OtherType).from(@intCast(self.x), @intCast(self.y), @intCast(self.z)),
+                    .Float => |_| Vec3(OtherType).from(@floatFromInt(self.x), @floatFromInt(self.y), @floatFromInt(self.z)),
+                    else => @compileError("type not supported")
+                },
+                else => @compileError("type not supported")
+            };
         }
 
         pub fn add(self: Self, other: Self) Self {
