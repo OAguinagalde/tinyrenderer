@@ -131,6 +131,24 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
         };
 
+        const Out = struct {
+            len: usize = 0,
+            buffer: [1024]u8 = undefined,
+            /// buffers until the last character of `fmt` is '\n', then flush to the console with `flog`
+            pub fn print(self: *Out, comptime fmt: []const u8, args: anytype) !void {
+                const result = std.fmt.bufPrint(self.buffer[self.len..], fmt, args) catch |e| {
+                    flog("Error {any} found in `Out` buffered writer used on Allocator logging", .{e});
+                    panic(e);
+                };
+                self.len = self.len + result.len;
+                if (fmt[fmt.len-1] == '\n') {
+                    flog("{s}", .{self.buffer[0..result.len]});
+                    self.len = 0;
+                }
+                else return;
+            }
+        };
+
         const State = struct {
             w: i32,
             h: i32,
@@ -146,6 +164,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
             
             fba: std.heap.FixedBufferAllocator,
             wla: WasmLoggingAllocator,
+            // wtwla: std.heap.LogToWriterAllocator(Out),
             allocator: std.mem.Allocator,
             random: std.rand.Random,
             random_internal_implementation: std.rand.Xoshiro256,
@@ -193,6 +212,8 @@ pub fn Application(comptime app: ApplicationDescription) type {
             flog("heap length {}", .{heap.len});
             
             state.fba = std.heap.FixedBufferAllocator.init(heap);
+            // state.wtwla = std.heap.LogToWriterAllocator(Out).init(state.fba.allocator(), .{});
+            // state.allocator = state.wtwla.allocator();
             state.wla = WasmLoggingAllocator { .child_allocator = state.fba.allocator() };
             state.allocator = state.wla.allocator();
 
