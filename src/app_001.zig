@@ -103,27 +103,37 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     }
     else {
 
-        const resources_loading_stuff = struct {
+        if (true) {
+            const bytes = Application.read_file_sync(state.resource_file_name);
+            defer allocator.free(bytes);
+            var fbs = std.io.fixedBufferStream(bytes);
+            try state.resources.load_from_bytes(fbs.reader());
+            try load_level(Vec2(u8).from(5, 1), 0);
+            finished = true;
+        }
+        else {
+            const resources_loading_stuff = struct {
 
-            const Context = struct {
-                allocator: std.mem.Allocator,
-                resources: *Resources,
+                const Context = struct {
+                    allocator: std.mem.Allocator,
+                    resources: *Resources,
+                };
+
+                fn finish_loading_resource_file(bytes: []const u8, context: []const u8) !void {
+                    var ctx: Context = undefined;
+                    core.value(&ctx, context);
+                    defer ctx.allocator.free(bytes);
+                    var fbs = std.io.fixedBufferStream(bytes);
+                    const reader = fbs.reader(); 
+                    try ctx.resources.*.load_from_bytes(reader);
+                    try load_level(Vec2(u8).from(5, 1), 0);
+                    finished = true;
+                }
+
             };
 
-            fn finish_loading_resource_file(bytes: []const u8, context: []const u8) !void {
-                var ctx: Context = undefined;
-                core.value(&ctx, context);
-                defer ctx.allocator.free(bytes);
-                var fbs = std.io.fixedBufferStream(bytes);
-                const reader = fbs.reader(); 
-                try ctx.resources.*.load_from_bytes(reader);
-                try load_level(Vec2(u8).from(5, 1), 0);
-                finished = true;
-            }
-
-        };
-
-        try Application.read_file(state.resource_file_name, resources_loading_stuff.finish_loading_resource_file, resources_loading_stuff.Context { .allocator = allocator, .resources = &state.resources });
+            try Application.read_file(state.resource_file_name, resources_loading_stuff.finish_loading_resource_file, resources_loading_stuff.Context { .allocator = allocator, .resources = &state.resources });
+        }
     }
 }
 
@@ -140,13 +150,17 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     if (ud.key_pressed('R')) try load_level(Vec2(u8).from(5, 1), ud.frame);
 
     if (ud.key_pressed('L')) {
-            if (builtin.os.tag == .windows) {
-                const file = try std.fs.cwd().openFile(state.resource_file_name, .{});
-                defer file.close();
-                try state.resources.load_from_bytes(file.reader());
-            } else {
-
-            }
+        if (builtin.os.tag == .windows) {
+            const file = try std.fs.cwd().openFile(state.resource_file_name, .{});
+            defer file.close();
+            try state.resources.load_from_bytes(file.reader());
+        } else {
+            const bytess = Application.read_file_sync(state.resource_file_name);
+            defer ud.allocator.free(bytess);
+            var fbss = std.io.fixedBufferStream(bytess);
+            const readerr = fbss.reader();
+            try state.resources.load_from_bytes(readerr);
+        }
     }
     if (ud.key_pressed('G')) state.debug = !state.debug;
     

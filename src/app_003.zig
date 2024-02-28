@@ -59,41 +59,18 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     if (builtin.os.tag == .windows) {
         const file = try std.fs.cwd().openFile(state.resource_file_name, .{});
         defer file.close();
-        // try state.resources.load_from_bytes(file.reader());
-        var fbs = std.io.fixedBufferStream(try file.reader().readAllAlloc(allocator, 999999));
+        const bytes = try file.reader().readAllAlloc(allocator, 999999);
+        var fbs = std.io.fixedBufferStream(bytes);
         const reader = fbs.reader(); 
-        // for (0..10) |i| {
-        //     const b = try reader.readByte();
-        //     std.log.debug("b[{}]: {}", .{i, b});
-        // }
         try state.resources.load_from_bytes(reader);
         finished = true;
-    }
+    }  
     else {
-
-        const resources_loading_stuff = struct {
-
-            const Context = struct {
-                allocator: std.mem.Allocator,
-                resources: *Resources,
-            };
-
-            fn finish_loading_resource_file(bytes: []const u8, context: []const u8) !void {
-                var ctx: Context = undefined;
-                core.value(&ctx, context);
-                // for (bytes, 0..) |b, i| {
-                //     if (i < 10) Application.flog("b[{}]: {}", .{i, b});
-                // }
-                defer ctx.allocator.free(bytes);
-                var fbs = std.io.fixedBufferStream(bytes);
-                const reader = fbs.reader(); 
-                try ctx.resources.*.load_from_bytes(reader);
-                finished = true;
-            }
-
-        };
-
-        try Application.read_file(state.resource_file_name, resources_loading_stuff.finish_loading_resource_file, resources_loading_stuff.Context { .allocator = allocator, .resources = &state.resources });
+        const bytes = Application.read_file_sync(state.resource_file_name);
+        defer allocator.free(bytes);
+        var fbs = std.io.fixedBufferStream(bytes);
+        try state.resources.load_from_bytes(fbs.reader());
+        finished = true;
     }
 }
 

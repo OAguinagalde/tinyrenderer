@@ -9,9 +9,10 @@ const RGBA = @import("pixels.zig").RGBA;
 const RGB = @import("pixels.zig").RGB;
 
 // functions provided by the wasm module caller (in js, the `env` object passed to `instantiateStreaming`)
-pub extern fn console_log(str: [*]const u8, len: usize) void;
-pub extern fn milli_since_epoch() usize;
-pub extern fn fetch(str: [*]const u8, len: usize) void;
+pub extern fn js_console_log(str: [*]const u8, len: usize) void;
+pub extern fn js_milli_since_epoch() usize;
+pub extern fn js_read_file_synch(file_name_ptr: [*]const u8, file_name_len: usize, out_ptr: *[*]u8, out_size: *usize) void;
+pub extern fn js_read_file_asynch(file_name_ptr: [*]const u8, file_name_len: usize) void;
 
 pub fn Application(comptime app: ApplicationDescription) type {
     return struct {
@@ -164,6 +165,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
             
             fba: std.heap.FixedBufferAllocator,
             wla: WasmLoggingAllocator,
+            // gpa: std.heap.GeneralPurposeAllocator(.{}),
             // wtwla: std.heap.LogToWriterAllocator(Out),
             allocator: std.mem.Allocator,
             random: std.rand.Random,
@@ -186,7 +188,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
         fn init() void {
             
-            const random_seed = milli_since_epoch();
+            const random_seed = js_milli_since_epoch();
             state.random_internal_implementation = std.rand.DefaultPrng.init(random_seed);
             state.random = state.random_internal_implementation.random();
 
@@ -211,10 +213,13 @@ pub fn Application(comptime app: ApplicationDescription) type {
             const heap: []u8 = @ptrCast(zero[@intFromPtr(state.__heap_base)..@intFromPtr(state.__heap_end)]);
             flog("heap length {}", .{heap.len});
             
-            state.fba = std.heap.FixedBufferAllocator.init(heap);
             // state.wtwla = std.heap.LogToWriterAllocator(Out).init(state.fba.allocator(), .{});
             // state.allocator = state.wtwla.allocator();
+            state.fba = std.heap.FixedBufferAllocator.init(heap);
             state.wla = WasmLoggingAllocator { .child_allocator = state.fba.allocator() };
+            // state.gpa = std.heap.GeneralPurposeAllocator(.{}) {
+            //     .backing_allocator = state.wla.allocator()
+            // };
             state.allocator = state.wla.allocator();
 
             state.tasks = TaskManager.init(state.allocator);
@@ -308,12 +313,18 @@ pub fn Application(comptime app: ApplicationDescription) type {
             // the task itself just contains a pointer to the context (its memory is manually managed), and a pointer to the callback (which is static code, so no need to manage its lifetime)
             try self.tasks.put(file_storage, .{ .callback = finish_read_file_task, .context = context_and_callback });
             
-            fetch(file.ptr, file.len);
+            js_read_file_asynch(file.ptr, file.len); 
+        }
+        pub fn read_file_sync(file: []const u8) []const u8 {
+            var out_ptr: [*]u8 = undefined;
+            var out_size: usize = undefined; 
+            js_read_file_synch(file.ptr, file.len, &out_ptr, &out_size);
+            return out_ptr[0..out_size];
         }
         pub fn flog(comptime fmt: []const u8, args: anytype) void {
             var buffer: [1024*2]u8 = undefined;
             const str = std.fmt.bufPrint(&buffer, fmt, args) catch "flog failed"[0..];
-            console_log(str.ptr, str.len);
+            js_console_log(str.ptr, str.len);
         }
         fn panic(e: anyerror) noreturn {
             flog("panic {any}", .{e});
@@ -360,5 +371,5 @@ pub const ApplicationDescription = struct {
 };
 
 pub fn timestamp() i64 {
-    return @intCast(milli_since_epoch());
+    return @intCast(js_milli_since_epoch());
 }
