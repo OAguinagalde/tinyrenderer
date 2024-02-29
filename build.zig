@@ -31,18 +31,6 @@ pub fn build(b: *Build) !void {
         });
         exe.root_module.addImport("win32", win32);
         
-        // imgui
-        // if (true) {
-            exe.linkLibCpp();
-            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui.cpp" }, .flags = &[_] []const u8 {""} });
-            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_draw.cpp" }, .flags = &[_] []const u8 {""} });
-            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_demo.cpp" }, .flags = &[_] []const u8 {""} });
-            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_tables.cpp" }, .flags = &[_] []const u8 {""} });
-            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_widgets.cpp" }, .flags = &[_] []const u8 {""} });
-            exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/cimgui.cpp" }, .flags = &[_] []const u8 {""} });
-            exe.addIncludePath(.{ .path = "dep/cimgui" });
-        // }
-
         b.installArtifact(exe);
         var step_run = b.addRunArtifact(exe);
         run_step.dependOn(&step_run.step);
@@ -113,7 +101,7 @@ pub fn build(b: *Build) !void {
         exe.initial_memory = std.wasm.page_size * number_of_pages;
         exe.max_memory = std.wasm.page_size * number_of_pages;
         // Out of that memory, we reserve 1 page for the shadow stack
-        exe.stack_size = std.wasm.page_size;
+        exe.stack_size = std.wasm.page_size * 2;
         // we could reserve an X ammount of memory out of the provided memory, for example for
         // io mapping or something similar. This is the case with tic80 for instance
         // 
@@ -141,7 +129,7 @@ pub fn build(b: *Build) !void {
         b.getInstallStep().dependOn(&step_copy_js.step);
 
         // TODO make a ultra simple web server just for serving the wasm project lol
-        var step_run = addRunCodeStep(b, struct {
+        var step_run = run_coded_as_step(b, struct {
             fn code() void {
                 std.log.info("You can test the project at zig-out/index.html", .{});
             }
@@ -177,7 +165,7 @@ fn embed_str_as_module(b: *std.Build, comptime str: []const u8, comptime name: [
     compilation.step.dependOn(&step_tool_runner.step);
 }
 
-fn addRunCodeStep(builder: *std.Build, comptime code: fn()void) *std.Build.Step {
+fn run_coded_as_step(builder: *std.Build, comptime code: fn () void) *std.Build.Step {
     const step = builder.allocator.create(std.Build.Step) catch @panic("OOM");
     step.* = std.Build.Step.init(.{
         .id = .custom,
@@ -192,4 +180,15 @@ fn addRunCodeStep(builder: *std.Build, comptime code: fn()void) *std.Build.Step 
         }.code_runner,
     });
     return step;
+}
+
+fn compile_and_link_imgui(exe: *std.Build.Step.Compile) void {
+    exe.linkLibCpp();
+    exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui.cpp" }, .flags = &[_] []const u8 {""} });
+    exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_draw.cpp" }, .flags = &[_] []const u8 {""} });
+    exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_demo.cpp" }, .flags = &[_] []const u8 {""} });
+    exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_tables.cpp" }, .flags = &[_] []const u8 {""} });
+    exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/imgui/imgui_widgets.cpp" }, .flags = &[_] []const u8 {""} });
+    exe.addCSourceFile(.{ .file = .{ .path = "dep/cimgui/cimgui.cpp" }, .flags = &[_] []const u8 {""} });
+    exe.addIncludePath(.{ .path = "dep/cimgui" });
 }
