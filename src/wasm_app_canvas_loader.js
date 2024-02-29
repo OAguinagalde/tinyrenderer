@@ -65,19 +65,6 @@ let things_available_to_the_wasm_module = {
             new Uint32Array(memory.buffer, out_size_ptr, 1).set([file_content_length]);
         },
 
-        js_read_file_asynch: (file_name_ptr, file_name_len) => {
-            const file_name_str = decoder.decode(memory.buffer.slice(file_name_ptr, file_name_ptr+file_name_len));
-            console.log("INFO: fetch", file_name_str, "request from wasm module...")
-            fetch(file_name_str).then(r => r.arrayBuffer()).then(buffer => {
-                const ptr = window.instance.exports.wasm_request_buffer(buffer.byteLength);
-                new Uint8Array(memory.buffer).set(new Uint8Array(buffer), ptr);
-                const event = "buffer:" + file_name_str;
-                const interface_buffer_ptr = window.instance.exports.wasm_get_static_buffer();
-                new Uint8Array(memory.buffer).set(encoder.encode(event), interface_buffer_ptr);
-                window.instance.exports.wasm_send_event(event.length, ptr, buffer.byteLength);
-            });
-        },
-
     },
 };
 

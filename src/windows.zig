@@ -355,7 +355,14 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
             return win32.DefWindowProcW(window_handle, message_type, w_param, l_param);
         }
-
+        
+        pub fn read_file_sync(allocator: std.mem.Allocator, file_name: []const u8) ![]const u8 {
+            const file = try std.fs.cwd().openFile(file_name, .{});
+            defer file.close();
+            const file_stats = try file.stat();
+            const bytes = try file.reader().readAllAlloc(allocator, file_stats.size);
+            return bytes;
+        }
     };
 }
 

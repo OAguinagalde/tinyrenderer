@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const TaskManager = @import("TaskManager.zig");
 const math = @import("math.zig");
 const core = @import("core.zig");
 const Vector2i = math.Vector2i;
@@ -12,7 +11,6 @@ const RGB = @import("pixels.zig").RGB;
 pub extern fn js_console_log(str: [*]const u8, len: usize) void;
 pub extern fn js_milli_since_epoch() usize;
 pub extern fn js_read_file_synch(file_name_ptr: [*]const u8, file_name_len: usize, out_ptr: *[*]u8, out_size: *usize) void;
-pub extern fn js_read_file_asynch(file_name_ptr: [*]const u8, file_name_len: usize) void;
 
 pub fn Application(comptime app: ApplicationDescription) type {
     return struct {
@@ -47,6 +45,8 @@ pub fn Application(comptime app: ApplicationDescription) type {
             out_h.* = app.desired_height;
         }
         pub export fn wasm_send_event(len: usize, a: usize, b: usize) void {
+            _ = a;
+            _ = b;
             const event: []const u8 = wasm_get_static_buffer()[0..len];
             flog("event received {s}", .{event});
             var tokens = std.mem.tokenize(u8, event, ":");
@@ -56,18 +56,20 @@ pub fn Application(comptime app: ApplicationDescription) type {
                     flog("mouse down!", .{});
                 }
             }
-            else if (std.mem.eql(u8, event_type, "buffer")) {
-                const id = tokens.next().?;
-                const data: struct { ptr: [*]u8, len: usize } = .{ .ptr = @ptrFromInt(a), .len = b };
-                state.tasks.?.finish(id, data);
-            }
             else {
                 flog("unrecognized event received!", .{});
                 @panic("");
             }
         }
         pub export fn wasm_request_buffer(len: usize) [*]u8 {
-            return @ptrCast(state.allocator.alloc(u8, len) catch |e| panic(e));
+            const allocator = allocator_set_somewhere_else orelse {
+                flog("`wasm_request_buffer` failed because no allocator was set beforehand!", .{});
+                panic(error.allocatorNeverSet);
+            };
+            return @ptrCast(allocator.alloc(u8, len) catch |e| {
+                flog("`wasm_request_buffer` failed!", .{});
+                panic(e);
+            });
         }
         pub export fn wasm_init() void {
             init();
@@ -159,7 +161,6 @@ pub fn Application(comptime app: ApplicationDescription) type {
             keys_old: [256]bool,
             pixel_buffer: Buffer2D(RGBA),
             frame_index: usize,
-            tasks: ?TaskManager,
             mouse_down: bool,
             mouse_clicked: bool,
             
@@ -185,6 +186,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
         var mousey: i32 = undefined;
         var mousedown: bool = undefined;
         var static_buffer_for_runtime_use: [1024]u8 = undefined;
+        var allocator_set_somewhere_else: ?std.mem.Allocator = null;
 
         fn init() void {
             
@@ -222,7 +224,6 @@ pub fn Application(comptime app: ApplicationDescription) type {
             // };
             state.allocator = state.wla.allocator();
 
-            state.tasks = TaskManager.init(state.allocator);
             state.keys = [1]bool{false} ** 256;
             state.pixel_buffer = Buffer2D(RGBA).from(state.allocator.alloc(RGBA, app.desired_height * app.desired_width) catch |e| panic(e), app.desired_width);
             state.w = @intCast(state.pixel_buffer.width);
@@ -234,15 +235,8 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
             app.init(state.allocator) catch |e| panic(e);
         }
+        
         fn tick() void {
-            
-            // wait for every task resgistered at init() to finish
-            if (state.tasks) |tm| {
-                if (!tm.finished()) return;
-                state.tasks.?.deinit();
-                state.tasks = null;
-            }
-
             for (static_buffer_for_runtime_use[0..256], 0..) |byte, i| state.keys[i] = byte == 1;
             const mouse_d = Vector2i { .x = mousex - state.mouse.x, .y = mousey - state.mouse.y };
             state.mouse = Vector2i { .x = mousex, .y = mousey };
@@ -277,55 +271,27 @@ pub fn Application(comptime app: ApplicationDescription) type {
             state.keys_old = state.keys;
             state.frame_index += 1;
         }
-        fn finish_read_file_task(regist_context: []const u8, completion_context: []const u8) void {
-            var cc: struct { ptr: [*]u8, len: usize } = undefined;
-            core.value(&cc, completion_context);
-            const file_bytes = cc.ptr[0..cc.len];
-            defer state.allocator.free(file_bytes);
 
-            const original_callback_storage = regist_context[0..@sizeOf(*const ReadFileCallback)];
-            var original_callback: *const ReadFileCallback = undefined;
-            core.value(&original_callback, original_callback_storage);
-
-            const original_context_storage = regist_context[@sizeOf(*const ReadFileCallback)..];
-            original_callback(file_bytes, original_context_storage) catch |e| panic(e);
-        }
-
-        pub const ReadFileCallback = fn (bytes: []const u8, context: []const u8) anyerror!void;
-        pub fn read_file(file: []const u8, callback: *const ReadFileCallback, context_value: anytype) !void {
-            const self: *TaskManager = &state.tasks.?;
-            const context_size = @sizeOf(@TypeOf(context_value));
-            const callback_size = @sizeOf(@TypeOf(callback));
-            
-            // allocate enough space to store the task until it gets completed and freed on `finish`
-            const size = context_size+file.len+callback_size;
-            var task_storage = try self.arena.allocator().alloc(u8, size);
-            
-            const file_storage: []u8 = task_storage[0..file.len];
-            const callback_storage: []u8 = task_storage[file.len..file.len+callback_size];
-            const context_storage: []u8 = task_storage[file.len+callback_size..size];
-            const context_and_callback = task_storage[file.len..size];
-            
-            std.debug.assert(context_size == context_storage.len);
-            @memcpy(file_storage, file);
-            @memcpy(context_storage, core.byte_slice(&context_value));        
-            @memcpy(callback_storage, core.byte_slice(&callback));        
-            // the task itself just contains a pointer to the context (its memory is manually managed), and a pointer to the callback (which is static code, so no need to manage its lifetime)
-            try self.tasks.put(file_storage, .{ .callback = finish_read_file_task, .context = context_and_callback });
-            
-            js_read_file_asynch(file.ptr, file.len); 
-        }
-        pub fn read_file_sync(file: []const u8) []const u8 {
+        pub fn read_file_sync(allocator: std.mem.Allocator, file: []const u8) ![]const u8 {
+            std.debug.assert(allocator_set_somewhere_else == null);
             var out_ptr: [*]u8 = undefined;
             var out_size: usize = undefined; 
-            js_read_file_synch(file.ptr, file.len, &out_ptr, &out_size);
+            {
+                // `js_read_file_synch` will call `wasm_request_buffer`, which in turn will rely on `allocator_set_somewhere_else` to be set.
+                // this is a bit of a hack that I'm playing with while I figure out a good strategy to work with allocations and wasm/js and the like.
+                allocator_set_somewhere_else = allocator;
+                defer allocator_set_somewhere_else = null;
+                js_read_file_synch(file.ptr, file.len, &out_ptr, &out_size);
+            }
             return out_ptr[0..out_size];
         }
+        
         pub fn flog(comptime fmt: []const u8, args: anytype) void {
             var buffer: [1024*2]u8 = undefined;
             const str = std.fmt.bufPrint(&buffer, fmt, args) catch "flog failed"[0..];
             js_console_log(str.ptr, str.len);
         }
+        
         fn panic(e: anyerror) noreturn {
             flog("panic {any}", .{e});
             @panic("ERROR");

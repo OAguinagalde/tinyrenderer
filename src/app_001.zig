@@ -51,8 +51,6 @@ pub fn main() !void {
 // TODO exclamation mark when slimes start attacking
 // TODO transparent overlay on poison pool
 // TODO trigger areas
-// TODO torch flame particles
-// TODO particle emitters on torches and poisonous waters etc
 // TODO tools
 
 const State = struct {
@@ -94,53 +92,15 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.renderer = try Renderer(platform.OutPixelType).init(allocator);
     state.resource_file_name = "res/resources.bin";
     state.resources = Resources.init(allocator);
-    if (builtin.os.tag == .windows) {
-        const file = try std.fs.cwd().openFile(state.resource_file_name, .{});
-        defer file.close();
-        try state.resources.load_from_bytes(file.reader());
-        try load_level(Vec2(u8).from(5, 1), 0);
-        finished = true;
-    }
-    else {
-
-        if (true) {
-            const bytes = Application.read_file_sync(state.resource_file_name);
-            defer allocator.free(bytes);
-            var fbs = std.io.fixedBufferStream(bytes);
-            try state.resources.load_from_bytes(fbs.reader());
-            try load_level(Vec2(u8).from(5, 1), 0);
-            finished = true;
-        }
-        else {
-            const resources_loading_stuff = struct {
-
-                const Context = struct {
-                    allocator: std.mem.Allocator,
-                    resources: *Resources,
-                };
-
-                fn finish_loading_resource_file(bytes: []const u8, context: []const u8) !void {
-                    var ctx: Context = undefined;
-                    core.value(&ctx, context);
-                    defer ctx.allocator.free(bytes);
-                    var fbs = std.io.fixedBufferStream(bytes);
-                    const reader = fbs.reader(); 
-                    try ctx.resources.*.load_from_bytes(reader);
-                    try load_level(Vec2(u8).from(5, 1), 0);
-                    finished = true;
-                }
-
-            };
-
-            try Application.read_file(state.resource_file_name, resources_loading_stuff.finish_loading_resource_file, resources_loading_stuff.Context { .allocator = allocator, .resources = &state.resources });
-        }
-    }
+    // load the resources
+    const bytes = try Application.read_file_sync(allocator, state.resource_file_name);
+    defer allocator.free(bytes);
+    try state.resources.load_from_bytes(bytes);
+    // load the level
+    try load_level(Vec2(u8).from(5, 1), 0);
 }
 
-var finished = false;
-
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
-    if (!finished) return true;
     const h: f32 = @floatFromInt(ud.pixel_buffer.height);
     const w: f32 = @floatFromInt(ud.pixel_buffer.width);
 
@@ -150,17 +110,9 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     if (ud.key_pressed('R')) try load_level(Vec2(u8).from(5, 1), ud.frame);
 
     if (ud.key_pressed('L')) {
-        if (builtin.os.tag == .windows) {
-            const file = try std.fs.cwd().openFile(state.resource_file_name, .{});
-            defer file.close();
-            try state.resources.load_from_bytes(file.reader());
-        } else {
-            const bytess = Application.read_file_sync(state.resource_file_name);
-            defer ud.allocator.free(bytess);
-            var fbss = std.io.fixedBufferStream(bytess);
-            const readerr = fbss.reader();
-            try state.resources.load_from_bytes(readerr);
-        }
+        const bytes = try Application.read_file_sync(ud.allocator, state.resource_file_name);
+        defer ud.allocator.free(bytes);
+        try state.resources.load_from_bytes(bytes);
     }
     if (ud.key_pressed('G')) state.debug = !state.debug;
     

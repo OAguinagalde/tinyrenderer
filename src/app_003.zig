@@ -56,28 +56,12 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.renderer = try Renderer(platform.OutPixelType).init(allocator);
     state.resource_file_name = "res/resources.bin";
     state.resources = Resources.init(allocator);
-    if (builtin.os.tag == .windows) {
-        const file = try std.fs.cwd().openFile(state.resource_file_name, .{});
-        defer file.close();
-        const bytes = try file.reader().readAllAlloc(allocator, 999999);
-        var fbs = std.io.fixedBufferStream(bytes);
-        const reader = fbs.reader(); 
-        try state.resources.load_from_bytes(reader);
-        finished = true;
-    }  
-    else {
-        const bytes = Application.read_file_sync(state.resource_file_name);
-        defer allocator.free(bytes);
-        var fbs = std.io.fixedBufferStream(bytes);
-        try state.resources.load_from_bytes(fbs.reader());
-        finished = true;
-    }
+    const bytes = try Application.read_file_sync(allocator, state.resource_file_name);
+    defer allocator.free(bytes);
+    try state.resources.load_from_bytes(bytes);
 }
 
-var finished = false;
-
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
-    if (!finished) return true;
     const clear_color: BGR = @bitCast(assets.palette[0]);
     ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
     
@@ -96,13 +80,9 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     };
     
     if (ud.key_pressed('L')) {
-            if (builtin.os.tag == .windows) {
-                const file = try std.fs.cwd().openFile(state.resource_file_name, .{});
-                defer file.close();
-                try state.resources.load_from_bytes(file.reader());
-            } else {
-
-            }
+        const bytes = try Application.read_file_sync(ud.allocator, state.resource_file_name);
+        defer ud.allocator.free(bytes);
+        try state.resources.load_from_bytes(bytes);
     }
     if (ud.key_pressed('M')) {
         if (builtin.os.tag == .windows) {
@@ -665,6 +645,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     const dw = Container("debug_window");
     if (try dw.begin(ud.allocator, "debug", Vec2(f32).from(4, h-4), mouse_window, mouse_state.clicked(), mouse_state.down(), ud.pixel_buffer, projection_matrix_screen, viewport_matrix)) {
+        try dw.text_line_fmt("resource {s}", .{state.resource_file_name});
         try dw.text_line_fmt("ms {d: <9.2}", .{ud.ms});
         try dw.text_line_fmt("frame {}", .{ud.frame});
         try dw.text_line_fmt("mouse_window {d:.4} {d:.4}", .{mouse_window.x, mouse_window.y});
@@ -2150,13 +2131,12 @@ pub const Resources = struct {
         try file.writeAll(serialized_data.items);
     }
 
-    pub fn load_from_bytes(self: *Resources, reader: anytype) !void {
+    /// This will clear out the `self` Resources and load it again from the provided reader
+    pub fn load_from_bytes(self: *Resources, bytes: []const u8) !void {
 
-        // TODO this line breaks the wasm target??????? why???? ._.
-        // 
-        //     var new_resources = Resources.init(self.allocator);
-        // 
-        
+        var byte_stream = std.io.fixedBufferStream(bytes);
+        const reader = byte_stream.reader();
+
         self.strings.clearAndFree();
         self.levels.clearAndFree();
         self.junctions.clearAndFree();
@@ -2165,98 +2145,67 @@ pub const Resources = struct {
         self.map = undefined;
         self.sprite_atlas = undefined;
 
-        var new_resources = self;
-        // if (builtin.os.tag != .windows) Application.flog("a {}", .{reader.context.pos});
-        const map_data_start: [*]u8 = @ptrCast(&new_resources.map);
-        // if (builtin.os.tag != .windows) Application.flog("a {}", .{reader.context.pos});
-        const map_underlying_bytes: []u8 = @ptrCast(map_data_start[0..240*136]);
-        // if (builtin.os.tag != .windows) Application.flog("a {}", .{reader.context.pos});
-        // read the map
-        if (true) {
-            _ = try reader.read(map_underlying_bytes);
-            for (map_underlying_bytes, 0..) |*data, i| {
-                const index = data.*;
-                // const prev_x = index % 16;
-                // const prev_y = @divFloor(index,16);
-                if (true) continue;
-                if (i%240 == 0) std.log.debug("map[{},{}] = {}", .{i%240, @divFloor(i,240), index});
-                // data.* = 16*(15-prev_y) + prev_x;
-            }
+        // map
+        const map_data_start: [*]u8 = @ptrCast(&self.map);
+        const map_underlying_bytes: []u8 = map_data_start[0..240*136];
+        _ = try reader.read(map_underlying_bytes);
+        
+        // sprite atlas
+        var palette_indices_buffer: [(8*8*16*16)/2]u8 = undefined;
+        _ = try reader.read(&palette_indices_buffer);
+        for (palette_indices_buffer, 0..) |the_byte, i| {
+            const a: u8 = the_byte>>4;
+            const b: u8 = (the_byte<<4)>>4;
+            self.sprite_atlas[2*i] = @intCast(a);
+            self.sprite_atlas[2*i+1] = @intCast(b);
         }
-        else {
-            // @memcpy(map_underlying_bytes, @constCast(&assets.map));
-            new_resources.map = assets.map;
-            try reader.skipBytes(new_resources.map.len, .{});
-        }
-        if (true) {
-            var _bytes: [(8*8*16*16)/2]u8 = undefined;
-            _ = try reader.read(&_bytes);
-            for (_bytes, 0..) |the_byte, i| {
-                const a: u8 = the_byte>>4;
-                const b: u8 = (the_byte<<4)>>4;
-                new_resources.sprite_atlas[2*i] = @intCast(a);
-                new_resources.sprite_atlas[2*i+1] = @intCast(b);
-                if (true) continue;
-                const pixel1 = 2*i;
-                const pixel_col = pixel1%(8*16);
-                const pixel_row = @divFloor(pixel1, 8*16);
-                const sprite_index_col = 15;
-                const sprite_index_row = 15;
-                if (pixel_col >= 8*sprite_index_col and pixel_col < 8*(sprite_index_col+1) and pixel_row >= 8*sprite_index_row and pixel_row < 8*(sprite_index_row+1)) {
-                    std.log.debug("sprite[{},{}] @({},{}) = {}", .{sprite_index_col, sprite_index_row, pixel_col, pixel_row, @as(u4, @intCast(a))});
-                    std.log.debug("sprite[{},{}] @({},{}) = {}", .{sprite_index_col, sprite_index_row, pixel_col+1, pixel_row, @as(u4, @intCast(b))});
-                }
-            }
-        }
-        else {
-            // @memcpy(&new_resources.sprite_atlas, &assets.atlas_tiles_normalized);
-            new_resources.sprite_atlas = assets.atlas_tiles_normalized;
-            // try reader.skipBytes(new_resources.sprite_atlas.len*2, .{});
-        }
-        // read the level count
+        
+        // levels
         const level_count: usize = @intCast(try reader.readByte());
-        if (false) std.log.debug("level_count {}", .{level_count});
         var name_starting_index: usize = 0;
         for (0..level_count) |_| {
             const name_length: usize = @intCast(try reader.readByte());
-            const slice = try new_resources.strings.addManyAsSlice(name_length);
+            const slice = try self.strings.addManyAsSlice(name_length);
             _ = try reader.read(slice);
             const top = try reader.readByte();
             const bottom = try reader.readByte();
             const left = try reader.readByte();
             const right = try reader.readByte();
-            try new_resources.levels.append(.{
+            try self.levels.append(.{
                 .name = .{.index = name_starting_index, .length = name_length},
                 .bb = BoundingBox(u8).from(top, bottom, left, right)
             });
             name_starting_index += name_length;
         }
-        // read the level junction count
+        
+        // level junctions
         const level_junction_count: usize = @intCast(try reader.readByte());
-        if (false) std.log.debug("level_junction_count {}", .{level_junction_count});
         for (0..level_junction_count) |_| {
             const ax = try reader.readByte();
             const ay = try reader.readByte();
             const bx = try reader.readByte();
             const by = try reader.readByte();
-            try new_resources.junctions.append(.{.a = Vec2(u8).from(ax, ay), .b = Vec2(u8).from(bx, by)});
+            try self.junctions.append(.{.a = Vec2(u8).from(ax, ay), .b = Vec2(u8).from(bx, by)});
         }
+        
+        // entity spawners
         const entity_spawner_count: usize = @intCast(try reader.readByte());
-        if (false) std.log.debug("entity_spawner_count {}", .{entity_spawner_count});
         for (0..entity_spawner_count) |_| {
             const px = try reader.readByte();
             const py = try reader.readByte();
             const entity_type = try reader.readByte();
-            try new_resources.entity_spawners.append(.{.pos = Vec2(u8).from(px, py), .entity_type = entity_type});
+            try self.entity_spawners.append(.{.pos = Vec2(u8).from(px, py), .entity_type = entity_type});
         }
+        
+        // environment particle emitters
         const environment_particle_emitters_count: usize = @intCast(try reader.readByte());
-        if (false) std.log.debug("environment_particle_emitters_count {}", .{environment_particle_emitters_count});
         for (0..environment_particle_emitters_count) |_| {
             const px = try reader.readByte();
             const py = try reader.readByte();
             const emitter_type = try reader.readByte();
-            try new_resources.environment_particle_emitters.append(.{.pos = Vec2(u8).from(px, py), .particle_emitter_type = emitter_type});
+            try self.environment_particle_emitters.append(.{.pos = Vec2(u8).from(px, py), .particle_emitter_type = emitter_type});
         }
+
     }
 
     pub fn get_string(self: *const Resources, string: String) []const u8 {

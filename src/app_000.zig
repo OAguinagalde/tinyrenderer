@@ -63,39 +63,6 @@ const State = struct {
 
 var state: State = undefined;
 
-const ReadTgaContext = struct {
-    allocator: std.mem.Allocator,
-    texture: *Buffer2D(RGB)
-};
-fn read_tga_texture(bytes: []const u8, context: []const u8) !void {
-    var ctx: ReadTgaContext = undefined;
-    core.value(&ctx, context);
-    defer ctx.allocator.free(bytes);
-    ctx.texture.* = try TGA.from_bytes(RGB, ctx.allocator, bytes);
-}
-const ReadObjContext = struct {
-    allocator: std.mem.Allocator,
-    vertex_buffer: *std.ArrayList(GouraudShader.Vertex)
-};
-fn read_obj_model(bytes: []const u8, context: []const u8) !void {
-    var ctx: ReadObjContext = undefined;
-    core.value(&ctx, context);
-    defer ctx.allocator.free(bytes);
-    ctx.vertex_buffer.* = blk: {
-        const buffer = try OBJ.from_bytes(ctx.allocator, bytes);
-        defer ctx.allocator.free(buffer);
-        var i: usize = 0;
-        var vertex_buffer = try std.ArrayList(GouraudShader.Vertex).initCapacity(ctx.allocator, @divExact(buffer.len, 8));
-        while (i < buffer.len) : (i = i + 8) {
-            const pos: Vector3f = .{ .x=buffer[i+0], .y=buffer[i+1], .z=buffer[i+2] };
-            const uv: Vector2f = .{ .x=buffer[i+3], .y=buffer[i+4] };
-            const normal: Vector3f = .{ .x=buffer[i+5], .y=buffer[i+6], .z=buffer[i+7] };
-            vertex_buffer.appendAssumeCapacity(.{ .pos = pos, .uv = uv, .normal = normal });
-        }
-        break :blk vertex_buffer;
-    };
-}
-
 pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.depth_buffer = Buffer2D(f32).from(try allocator.alloc(f32, Application.height*Application.width), @intCast(Application.width));
     state.camera.position = Vector3f { .x = 0, .y = 0, .z = 0 };
@@ -103,10 +70,18 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.camera.direction = Vector3f { .x = 0, .y = 0, .z = 1 };
     state.time = 0;
     state.text_renderer = try TextRenderer.init(allocator);
-    if (builtin.os.tag == .windows) {
-        state.texture = try TGA.from_file(RGB, allocator, "res/african_head_diffuse.tga");
+    // load the head model's texture
+    {
+        const bytes = try Application.read_file_sync(allocator, "res/african_head_diffuse.tga");
+        defer allocator.free(bytes);
+        state.texture = try TGA.from_bytes(RGB, allocator, bytes);
+    }
+    // load the head model .obj
+    {
+        const bytes = try Application.read_file_sync(allocator, "res/african_head.obj");
+        defer allocator.free(bytes);
         state.vertex_buffer = blk: {
-            const buffer = try OBJ.from_file(allocator, "res/african_head.obj");
+            const buffer = try OBJ.from_bytes(allocator, bytes);
             defer allocator.free(buffer);
             var i: usize = 0;
             var vertex_buffer = try std.ArrayList(GouraudShader.Vertex).initCapacity(allocator, @divExact(buffer.len, 8));
@@ -119,13 +94,6 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
             break :blk vertex_buffer;
         };
     }
-    else {
-        state.texture = undefined;
-        try Application.read_file("res/african_head_diffuse.tga", read_tga_texture, ReadTgaContext { .allocator = allocator, .texture = &state.texture });
-        state.vertex_buffer = undefined;
-        try Application.read_file("res/african_head.obj", read_obj_model, ReadObjContext { .allocator = allocator, .vertex_buffer = &state.vertex_buffer });
-    }
-
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
