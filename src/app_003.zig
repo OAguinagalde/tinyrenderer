@@ -154,7 +154,11 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         /// TODO add or remove level boxes themselves
         modify_level_boxes,
         /// add or remove level junctions
-        modify_junctions
+        modify_junctions,
+        /// add a level box on the mouse location
+        add_level_box,
+        /// remove a level box on the mouse location
+        remove_level_box
     };
 
     const map_editor_data = struct {
@@ -258,6 +262,46 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         if (try map_editor.button("modify level boxes", &is_modifying_level_boxes)) {
             map_editor_data.edit_action_type = .modify_level_boxes;
         }
+        
+        // This holds the logic and state for defining level boxes in the map editor
+        const add_level_box_state = struct {
+            var first_tile_clicked: ?Vec2(u8) = null;
+            var last_tile_clicked: ?Vec2(u8) = null;
+            fn step(tile: Vec2(u8)) void {
+                if (first_tile_clicked != null) {
+                    last_tile_clicked = tile;
+                }
+                else {
+                    first_tile_clicked = tile;
+                    last_tile_clicked = tile;
+                }
+            }
+            fn finish() ?BoundingBox(u8) {
+                
+                defer {
+                    first_tile_clicked = null;
+                    last_tile_clicked = null;
+                }
+
+                if (first_tile_clicked == null) return null;
+                return BoundingBox(u8).from(
+                    @max(first_tile_clicked.?.y, last_tile_clicked.?.y),
+                    @min(first_tile_clicked.?.y, last_tile_clicked.?.y),
+                    @min(first_tile_clicked.?.x, last_tile_clicked.?.x),
+                    @max(first_tile_clicked.?.x, last_tile_clicked.?.x),
+                );
+            }
+        };
+        var is_add_level_box = map_editor_data.edit_action_type == .add_level_box;
+        if (try map_editor.button("add level box", &is_add_level_box)) {
+            map_editor_data.edit_action_type = .add_level_box;
+        }
+
+        var is_remove_level_box = map_editor_data.edit_action_type == .remove_level_box;
+        if (try map_editor.button("remove level box", &is_remove_level_box)) {
+            map_editor_data.edit_action_type = .remove_level_box;
+        }
+
 
         const junctions_menu = map_editor;
         {
@@ -274,15 +318,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         
         const entity_spawner_menu = map_editor;
         {
-            
-            const cosa = struct {
-                var my_boolean: bool = false;
-            };
-
-            if (try entity_spawner_menu.button("Hola que tal", &cosa.my_boolean)) {
-                try entity_spawner_menu.text_line("clicked");
-            }
-            
             if (entity_spawner_menu_data.option_selected) |selected| try entity_spawner_menu.text_line_fmt("· entities: {}", .{selected})
             else try entity_spawner_menu.text_line("· entities: ");
             const selection_grid = try entity_spawner_menu.selection_grid_from_text_options(entity_spawner_menu_data.options, &entity_spawner_menu_data.option_selected, &entity_spawner_menu_data.option_hovered, false);
@@ -473,6 +508,16 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                         static_data.last_draged_drame = ud.frame;
                     }
                 },
+                .add_level_box => {
+                    add_level_box_state.step(map_tile_clicked);
+                },
+                .remove_level_box => {
+                    for (state.resources.levels.items, 0..) |l, i| {
+                        if (l.bb.contains(map_tile_clicked)) {
+                            _ = state.resources.levels.swapRemove(i);
+                        }
+                    }
+                },
                 .modify_level_boxes => {
 
                     const BoxAndSide = struct {
@@ -577,6 +622,24 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 .none => {},
             }
         }
+        else {
+            switch (map_editor_data.edit_action_type) {
+                .modify_map => {},
+                .modify_entity_spawners => {},
+                .modify_particle_emitters => {},
+                .modify_position_of_selected_item => {},
+                .add_level_box => {
+                    if (add_level_box_state.finish()) |bb| {
+                        try state.resources.levels.append(.{.name = .{.index = 0, .length = 0}, .bb = bb });
+                        map_editor_data.edit_action_type = .modify_level_boxes;
+                    }
+                },
+                .remove_level_box => {},
+                .modify_level_boxes => {},
+                .modify_junctions => {},
+                .none => {},
+            }
+        }
 
         // TODO new container for modifying the tiles, a simple paint windows basically
 
@@ -639,6 +702,11 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
         try map_editor.text_line("Current Action:");
         try map_editor.text_line_fmt("{s}", .{@tagName(map_editor_data.edit_action_type)});
+        if (map_editor_tile_grid.hovered.*) |hover_index| {
+            const col: usize = hover_index % map_editor_tile_grid.grid_dimensions.x;
+            const row: usize = @divFloor(hover_index, map_editor_tile_grid.grid_dimensions.x);
+            try map_editor.text_line_fmt("{}, {}", .{col, row});
+        }
 
     }
     try map_editor.end();

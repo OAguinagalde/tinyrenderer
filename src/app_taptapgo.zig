@@ -90,7 +90,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.doors = std.ArrayList(Door).init(allocator); // doors are set on load_level
     state.particle_emitters = std.ArrayList(ParticleEmitter).init(allocator); // doors are set on load_level
     state.texts = undefined; // texts are set on load_level
-    state.debug = true;
+    state.debug = false;
     state.renderer = try Renderer(platform.OutPixelType).init(allocator);
     state.resource_file_name = "res/taptapgo_resources.bin";
     state.resources = Resources.init(allocator);
@@ -209,6 +209,27 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         try state.entities_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, ud.frame);
     }
 
+    if (state.random.float(f32)>0.95) {
+        const height = 230;
+        const from: f32 = 192;
+        const to: f32 = 215;
+        try particle_create(&state.particles, particles_generators.poison(Vector2f.from(state.random.float(f32)*(to-from)+from, height)));
+    }
+
+    if (state.random.float(f32)>0.95) {
+        const height = 230;
+        const from: f32 = 250;
+        const to: f32 = 262;
+        try particle_create(&state.particles, particles_generators.poison(Vector2f.from(state.random.float(f32)*(to-from)+from, height)));
+    }
+
+    if (state.random.float(f32)>0.95) {
+        const height = 230;
+        const from: f32 = 273;
+        const to: f32 = 278;
+        try particle_create(&state.particles, particles_generators.poison(Vector2f.from(state.random.float(f32)*(to-from)+from, height)));
+    }
+
     if (state.random.float(f32)>0.8) {
         const height = 21;
         const from: f32 = 304;
@@ -219,6 +240,9 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const player_floored = Physics2.apply(@ptrCast(&state.player.physical_component));
     state.player.pos = Physics.calculate_real_pos(state.player.physical_component.physical_pos);
     state.player.hurtbox = Assets.entity_knight_1.hurtbox.offset(state.player.pos);
+
+    if (Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos).physical_tile.y == 28) try load_level(Vec2(u8).from(21, 29), ud.frame);
+    if (Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos).physical_tile.x == 36) try load_level(Vec2(u8).from(21, 29), ud.frame);
 
     if (player_floored) {
         state.player.jumps = 2;
