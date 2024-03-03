@@ -72,8 +72,8 @@ pub fn build(b: *Build) !void {
 
         // Number of pages reserved for heap memory.
         // This must match the number of pages used in script.js.
-        // 64 kb per page
-        const number_of_pages = 200;
+        // 64 kib per page * 1024 pages = 64 mib
+        const number_of_pages = 1024;
         const optimization_options = b.standardOptimizeOption(.{});
         
         const target = b.resolveTargetQuery(.{
@@ -100,8 +100,8 @@ pub fn build(b: *Build) !void {
         // so both `initial_memory` and `max_memory` are the same
         exe.initial_memory = std.wasm.page_size * number_of_pages;
         exe.max_memory = std.wasm.page_size * number_of_pages;
-        // Out of that memory, we reserve 1 page for the shadow stack
-        exe.stack_size = std.wasm.page_size * 2;
+        // Out of that memory, we reserve 16 pages for the stack (1 mib)
+        exe.stack_size = std.wasm.page_size * 16;
         // we could reserve an X ammount of memory out of the provided memory, for example for
         // io mapping or something similar. This is the case with tic80 for instance
         // 

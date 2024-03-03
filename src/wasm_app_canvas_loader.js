@@ -6,8 +6,8 @@ const canvas_id = "wasm_app_canvas";
 // > and JavaScript can create Memory objects. If you want to access the memory created in
 // > JS from Wasm or vice versa, you can pass a reference to the memory from one side to the other.
 let memory = new WebAssembly.Memory({
-    initial: 200 /* pages (64kb per page) */, 
-    maximum: 200 /* pages (64kb per page) */, 
+    initial: 1024 /* pages (64kb per page) */, 
+    maximum: 1024 /* pages (64kb per page) */, 
 });
 
 // This buffer contains all the memory being used by the wasm module.

@@ -68,7 +68,6 @@ const State = struct {
     entities_damage_dealers: HitboxSystem,
     player_damage_dealers: HitboxSystem,
     debug: bool,
-    renderer: Renderer(platform.OutPixelType),
     resources: Resources,
     resource_file_name: []const u8,
 };
@@ -76,22 +75,21 @@ const State = struct {
 var state: State = undefined;
 
 pub fn init(allocator: std.mem.Allocator) anyerror!void {
-    state.entities = try EntitySystem.init(allocator);
+    state.entities = try EntitySystem.init_capacity(allocator, 16);
     state.player = Player.init(0);
     state.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
-    state.animations_in_place = try AnimationSystem.init(allocator);
-    state.particles = try Particles.init(allocator);
+    state.animations_in_place = try AnimationSystem.init_capacity(allocator, 1024);
+    state.particles = try Particles.init_capacity(allocator, 1024);
     state.rng_engine = std.rand.DefaultPrng.init(@bitCast(platform.timestamp()));
     state.random = state.rng_engine.random();
-    state.entities_damage_dealers = try HitboxSystem.init(allocator);
-    state.player_damage_dealers = try HitboxSystem.init(allocator);
-    state.doors = std.ArrayList(Door).init(allocator); // doors are set on load_level
-    state.particle_emitters = std.ArrayList(ParticleEmitter).init(allocator); // doors are set on load_level
+    state.entities_damage_dealers = try HitboxSystem.init_capacity(allocator, 64);
+    state.player_damage_dealers = try HitboxSystem.init_capacity(allocator, 64);
+    state.doors = try std.ArrayList(Door).initCapacity(allocator, 32); // doors are set on load_level
+    state.particle_emitters = try std.ArrayList(ParticleEmitter).initCapacity(allocator, 64); // doors are set on load_level
     state.texts = undefined; // texts are set on load_level
     state.debug = true;
-    state.renderer = try Renderer(platform.OutPixelType).init(allocator);
     state.resource_file_name = "res/resources.bin";
-    state.resources = Resources.init(allocator);
+    state.resources = try Resources.init(allocator);
     // load the resources
     const bytes = try Application.read_file_sync(allocator, state.resource_file_name);
     defer allocator.free(bytes);
@@ -225,7 +223,9 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const viewport_matrix_m33 = M33.viewport(0, 0, w, h);
     const mvp_matrix_33 = projection_matrix_m33.multiply(view_matrix_m33.multiply(M33.identity()));
     
-    state.renderer.set_context(
+    var renderer = try Renderer(platform.OutPixelType).init(ud.allocator);
+    
+    renderer.set_context(
         ud.pixel_buffer,
         mvp_matrix_33,
         viewport_matrix_m33
@@ -233,7 +233,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     // render map
     const map_bb_f = state.level_background.scale(Vec2(usize).from(8,8)).to(f32);
-    try state.renderer.add_map(
+    try renderer.add_map(
         Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
         @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8), &state.resources.map,
         state.level_background,
@@ -267,7 +267,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             const dir_component = (try state.entities.entities.getComponent(Direction, e)).?;
             const sprite = anim_component.calculate_frame(ud.frame);
             const pos = pos_component.add(Vector2f.from(-4, 0)) ;
-            try state.renderer.add_sprite_from_atlas_by_index(
+            try renderer.add_sprite_from_atlas_by_index(
                 Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
                 @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
                 @intCast(sprite),
@@ -287,7 +287,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     {
         const sprite = state.player.animation.calculate_frame(ud.frame);
         const pos = state.player.pos.add(Vector2f.from(-4, 0));
-        try state.renderer.add_sprite_from_atlas_by_index(
+        try renderer.add_sprite_from_atlas_by_index(
             Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
             @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
             @intCast(sprite),
@@ -309,7 +309,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             const visual = (try state.animations_in_place.getComponent(Visual, entity)).?;
             const sprite = visual.sprite;
             const pos = visual.position.add(Vector2f.from(-4,0));
-            try state.renderer.add_sprite_from_atlas_by_index(
+            try renderer.add_sprite_from_atlas_by_index(
                 Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
                 @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
                 @intCast(sprite),
@@ -332,27 +332,27 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             const render_component = (try state.particles.getComponent(ParticleRenderData, e)).?;
             const position_component = (try state.particles.getComponent(Vector2f, e)).?;
             const radius = render_component.radius;
-            try state.renderer.add_quad_from_bb(BoundingBox(f32).from_bl_size(position_component.*, Vec2(f32).from(radius, radius)), render_component.color);
+            try renderer.add_quad_from_bb(BoundingBox(f32).from_bl_size(position_component.*, Vec2(f32).from(radius, radius)), render_component.color);
         }
     }
     
     // render debug hit boxes
     if (state.debug) {
         for (state.player_damage_dealers.hitboxes.slice()) |hb| {
-            try state.renderer.add_quad_from_bb(hb.bb, RGBA.make(255,0,0,100));
+            try renderer.add_quad_from_bb(hb.bb, RGBA.make(255,0,0,100));
         }
         for (state.entities_damage_dealers.hitboxes.slice()) |hb| {
-            try state.renderer.add_quad_from_bb(hb.bb, RGBA.make(0,255,0,100));
+            try renderer.add_quad_from_bb(hb.bb, RGBA.make(0,255,0,100));
         }
         const hb = state.player.hurtbox;
-        try state.renderer.add_quad_from_bb(hb, RGBA.make(0,0,255,100));
+        try renderer.add_quad_from_bb(hb, RGBA.make(0,0,255,100));
     }
 
-    try state.renderer.flush_all();
+    try renderer.flush_all();
     
     if (state.debug) {
 
-        state.renderer.set_context(
+        renderer.set_context(
             ud.pixel_buffer,
             M33.orthographic_projection(0, w, h, 0),
             M33.viewport(0, 0, w, h)
@@ -371,18 +371,18 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             break :blk pos;
         };
         const text_height = 6 + 1;
-        try state.renderer.add_text(Vector2f.from(5, h - (text_height*1 )), "ms {d: <9.2}", .{ud.ms}, color);
-        try state.renderer.add_text(Vector2f.from(5, h - (text_height*2 )), "fps {d:0.4}", .{ud.ms / 1000*60}, color);
-        try state.renderer.add_text(Vector2f.from(5, h - (text_height*3 )), "frame {}", .{ud.frame}, color);
-        try state.renderer.add_text(Vector2f.from(5, h - (text_height*4 )), "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, color);
-        try state.renderer.add_text(Vector2f.from(5, h - (text_height*5 )), "mouse {d:.4} {d:.4}", .{mouse.x, mouse.y}, color);
-        try state.renderer.add_text(Vector2f.from(5, h - (text_height*6 )), "dimensions {d:.4} {d:.4}", .{w, h}, color);
-        try state.renderer.add_text(Vector2f.from(5, h - (text_height*7 )), "physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y}, color);
-        try state.renderer.add_text(Vector2f.from(5, h - (text_height*8 )), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
-        try state.renderer.add_text(Vector2f.from(5, h - (text_height*9 )), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
-        try state.renderer.add_text(Vector2f.from(5, h - (text_height*10)), "vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y}, color);
-        
-        try state.renderer.flush_all();
+        try renderer.add_text(Vector2f.from(5, h - (text_height*1 )), "ms {d: <9.2}", .{ud.ms}, color);
+        try renderer.add_text(Vector2f.from(5, h - (text_height*2 )), "fps {d:0.4}", .{ud.ms / 1000*60}, color);
+        try renderer.add_text(Vector2f.from(5, h - (text_height*3 )), "frame {}", .{ud.frame}, color);
+        try renderer.add_text(Vector2f.from(5, h - (text_height*4 )), "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, color);
+        try renderer.add_text(Vector2f.from(5, h - (text_height*5 )), "mouse {d:.4} {d:.4}", .{mouse.x, mouse.y}, color);
+        try renderer.add_text(Vector2f.from(5, h - (text_height*6 )), "dimensions {d:.4} {d:.4}", .{w, h}, color);
+        try renderer.add_text(Vector2f.from(5, h - (text_height*7 )), "physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y}, color);
+        try renderer.add_text(Vector2f.from(5, h - (text_height*8 )), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
+        try renderer.add_text(Vector2f.from(5, h - (text_height*9 )), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
+        try renderer.add_text(Vector2f.from(5, h - (text_height*10)), "vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y}, color);
+
+        try renderer.flush_all();
     }
 
     return true;
@@ -422,7 +422,7 @@ pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
             state.camera.set_bounds(bb.scale(Vec2(usize).from(8, 8)).to(f32));
 
             for (state.resources.environment_particle_emitters.items) |particle_emitter| {
-                if (level.bb.contains(particle_emitter.pos)) try state.particle_emitters.append(.{.pos = particle_emitter.pos, .emitter_type = @enumFromInt(particle_emitter.particle_emitter_type)});
+                if (level.bb.contains(particle_emitter.pos)) state.particle_emitters.appendAssumeCapacity(.{.pos = particle_emitter.pos, .emitter_type = @enumFromInt(particle_emitter.particle_emitter_type)});
             }
 
             for (state.resources.entity_spawners.items) |entity_spawn| {
@@ -432,8 +432,8 @@ pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
             }
 
             for (state.resources.junctions.items, 0..) |junction, i| {
-                if (level.bb.contains(junction.a)) try state.doors.append(.{.pos=junction.a, .index=i});
-                if (level.bb.contains(junction.b)) try state.doors.append(.{.pos=junction.b, .index=i});
+                if (level.bb.contains(junction.a)) state.doors.appendAssumeCapacity(.{.pos=junction.a, .index=i});
+                if (level.bb.contains(junction.b)) state.doors.appendAssumeCapacity(.{.pos=junction.b, .index=i});
             }
 
             break;
@@ -586,13 +586,13 @@ const RuntimeAnimation = struct {
 const EntitySystem = struct {
 
     const EntityPosition = Vector2f;
-    const EntityStorage = Ecs( .{ i32, Assets.EntityType, Physics.PhysicalObject, EntityPosition, RuntimeAnimation, Direction, Assets.EntitySlimeRuntime, Assets.EntityKnight1Runtime, Assets.EntityKnight2Runtime, Assets.EntitySlimeKingRuntime, BoundingBox(f32) }, 15);
+    const EntityStorage = Ecs( .{ i32, Assets.EntityType, Physics.PhysicalObject, EntityPosition, RuntimeAnimation, Direction, Assets.EntitySlimeRuntime, Assets.EntityKnight1Runtime, Assets.EntityKnight2Runtime, Assets.EntitySlimeKingRuntime, BoundingBox(f32) });
     
     entities: EntityStorage,
     
-    pub fn init(allocator: std.mem.Allocator) !EntitySystem {
+    pub fn init_capacity(allocator: std.mem.Allocator, capacity: usize) !EntitySystem {
         return EntitySystem {
-            .entities = try EntityStorage.init(allocator)
+            .entities = try EntityStorage.init_capacity(allocator, capacity)
         };
     }
     
@@ -968,7 +968,7 @@ const tic80 = struct {
     pub const Flags = [256]u8;
 };
 
-const AnimationSystem = Ecs(.{ Visual, KillAtFrame, RuntimeAnimation }, 1000);
+const AnimationSystem = Ecs(.{ Visual, KillAtFrame, RuntimeAnimation });
 
 const KillAtFrame = usize;
 
@@ -1004,7 +1004,7 @@ fn update_animations_in_place(pool: *AnimationSystem, frame: usize) !void {
     }
 }
 
-pub const Particles = Ecs(.{ Physics.PhysicalObject, ParticleLife, Vector2f, ParticleRenderData }, 1000);
+pub const Particles = Ecs(.{ Physics.PhysicalObject, ParticleLife, Vector2f, ParticleRenderData });
 
 const ParticleLife = i32;
 
@@ -1383,9 +1383,9 @@ const HitboxSystem = struct {
     
     hitboxes: Pool(HitboxData),
     
-    pub fn init(allocator: std.mem.Allocator) !HitboxSystem {
+    pub fn init_capacity(allocator: std.mem.Allocator, capacity: usize) !HitboxSystem {
         return .{
-            .hitboxes = try Pool(HitboxData).init_capacity(allocator, 100),
+            .hitboxes = try Pool(HitboxData).init_capacity(allocator, capacity),
         };
     }
 

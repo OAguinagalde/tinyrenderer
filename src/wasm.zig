@@ -86,71 +86,65 @@ pub fn Application(comptime app: ApplicationDescription) type {
             mousedown = down == 1;
         }
 
-        const WasmLoggingAllocator = struct {
+        fn FixedBufferAllocatorWrapper(comptime name: []const u8, comptime log: bool) type {
+            return struct {
 
-            child_allocator: std.mem.Allocator,
+                const Self = @This();
 
-            pub fn init(child_allocator: std.mem.Allocator) WasmLoggingAllocator {
-                return .{
-                    .child_allocator = child_allocator,
-                };
-            }
+                fba: std.heap.FixedBufferAllocator,
+                one_percent_aprox: usize,
 
-            pub fn allocator(self: *WasmLoggingAllocator) std.mem.Allocator {
-                return .{
-                    .ptr = self,
-                    .vtable = &.{
-                        .alloc = alloc,
-                        .resize = resize,
-                        .free = free,
-                    },
-                };
-            }
-
-            fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
-                var self = ptrCast(WasmLoggingAllocator, ctx);
-                const res = self.child_allocator.rawAlloc(len, ptr_align, ret_addr);
-                flog("Allocator alloc {} at {any}", .{len, res});
-                return res;
-            }
-
-            fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
-                var self = ptrCast(WasmLoggingAllocator, ctx);
-                const res = self.child_allocator.rawResize(buf, buf_align, new_len, ret_addr);
-                flog("Allocator resize from {} at {any} to {} -> {}", .{buf.len, buf.ptr, new_len, res});
-                return res;
-            }
-
-            fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
-                var self = ptrCast(WasmLoggingAllocator, ctx);
-                flog("Allocator free {} bytes at {any}", .{buf.len, buf.ptr});
-                self.child_allocator.rawFree(buf, buf_align, ret_addr);
-            }
-
-            fn ptrCast(comptime T: type, ptr: *anyopaque) *T {
-                if (@alignOf(T) == 0) @compileError(@typeName(T));
-                return @ptrCast(@alignCast(ptr));
-            }
-
-        };
-
-        const Out = struct {
-            len: usize = 0,
-            buffer: [1024]u8 = undefined,
-            /// buffers until the last character of `fmt` is '\n', then flush to the console with `flog`
-            pub fn print(self: *Out, comptime fmt: []const u8, args: anytype) !void {
-                const result = std.fmt.bufPrint(self.buffer[self.len..], fmt, args) catch |e| {
-                    flog("Error {any} found in `Out` buffered writer used on Allocator logging", .{e});
-                    panic(e);
-                };
-                self.len = self.len + result.len;
-                if (fmt[fmt.len-1] == '\n') {
-                    flog("{s}", .{self.buffer[0..result.len]});
-                    self.len = 0;
+                pub fn init(buffer: []u8) Self {
+                    return .{
+                        .fba = std.heap.FixedBufferAllocator.init(buffer),
+                        .one_percent_aprox = @intFromFloat(@as(f32, @floatFromInt(buffer.len))/100.0),
+                    };
                 }
-                else return;
-            }
-        };
+
+                pub fn allocator(self: *Self) std.mem.Allocator {
+                    return .{
+                        .ptr = self,
+                        .vtable = &.{
+                            .alloc = alloc,
+                            .resize = resize,
+                            .free = free,
+                        },
+                    };
+                }
+
+                fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+                    var self = ptrCast(Self, ctx);
+                    const res = self.fba.allocator().rawAlloc(len, ptr_align, ret_addr);
+                    if (log) flog("Allocator " ++ name ++ " alloc {} ({}%) at {any}", .{len, @divFloor(len, self.one_percent_aprox), res});
+                    return res;
+                }
+
+                fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+                    var self = ptrCast(Self, ctx);
+                    const res = self.fba.allocator().rawResize(buf, buf_align, new_len, ret_addr);
+                    if (log) flog("Allocator " ++ name ++ " resize from {} ({}%) at {any} to {} ({}%) at {}", .{buf.len, @divFloor(buf.len, self.one_percent_aprox), buf.ptr, new_len, @divFloor(new_len, self.one_percent_aprox), res});
+                    return res;
+                }
+
+                fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
+                    var self = ptrCast(Self, ctx);
+                    const is_last_allocation = self.fba.isLastAllocation(buf);
+                    if (log) if (is_last_allocation) {
+                        flog("Allocator " ++ name ++ " free {} ({}%) bytes at {any}", .{buf.len, @divFloor(buf.len, self.one_percent_aprox), buf.ptr});
+                    }
+                    else {
+                        flog("Allocator " ++ name ++ " free {} ({}%) bytes at {any} (will not free!)", .{buf.len, @divFloor(buf.len, self.one_percent_aprox), buf.ptr});
+                    };
+                    self.fba.allocator().rawFree(buf, buf_align, ret_addr);
+                }
+
+                fn ptrCast(comptime T: type, ptr: *anyopaque) *T {
+                    if (@alignOf(T) == 0) @compileError(@typeName(T));
+                    return @ptrCast(@alignCast(ptr));
+                }
+            };
+
+        }
 
         const State = struct {
             w: i32,
@@ -164,11 +158,9 @@ pub fn Application(comptime app: ApplicationDescription) type {
             mouse_down: bool,
             mouse_clicked: bool,
             
-            fba: std.heap.FixedBufferAllocator,
-            wla: WasmLoggingAllocator,
-            // gpa: std.heap.GeneralPurposeAllocator(.{}),
-            // wtwla: std.heap.LogToWriterAllocator(Out),
-            allocator: std.mem.Allocator,
+            main_allocator: FixedBufferAllocatorWrapper("Main", true),
+            app_long_allocator: FixedBufferAllocatorWrapper("AppLong", true),
+            app_short_allocator: FixedBufferAllocatorWrapper("AppShort", false),
             random: std.rand.Random,
             random_internal_implementation: std.rand.Xoshiro256,
             
@@ -215,17 +207,18 @@ pub fn Application(comptime app: ApplicationDescription) type {
             const heap: []u8 = @ptrCast(zero[@intFromPtr(state.__heap_base)..@intFromPtr(state.__heap_end)]);
             flog("heap length {}", .{heap.len});
             
-            // state.wtwla = std.heap.LogToWriterAllocator(Out).init(state.fba.allocator(), .{});
-            // state.allocator = state.wtwla.allocator();
-            state.fba = std.heap.FixedBufferAllocator.init(heap);
-            state.wla = WasmLoggingAllocator { .child_allocator = state.fba.allocator() };
-            // state.gpa = std.heap.GeneralPurposeAllocator(.{}) {
-            //     .backing_allocator = state.wla.allocator()
-            // };
-            state.allocator = state.wla.allocator();
+            state.main_allocator = FixedBufferAllocatorWrapper("Main", true).init(heap);
+            state.pixel_buffer = Buffer2D(RGBA).from(state.main_allocator.allocator().alloc(RGBA, app.desired_height * app.desired_width) catch |e| panic(e), app.desired_width);
+            state.app_long_allocator = FixedBufferAllocatorWrapper("AppLong", true).init(state.main_allocator.allocator().alloc(u8, std.wasm.page_size * 256) catch |e| {
+                flog("Failed to allocate memory for the application's long term reserved memory", .{});
+                panic(e);
+            });
+            state.app_short_allocator = FixedBufferAllocatorWrapper("AppShort", false).init(state.main_allocator.allocator().alloc(u8, std.wasm.page_size * 256) catch |e| {
+                flog("Failed to allocate memory for the application's update memory", .{});
+                panic(e);
+            });
 
             state.keys = [1]bool{false} ** 256;
-            state.pixel_buffer = Buffer2D(RGBA).from(state.allocator.alloc(RGBA, app.desired_height * app.desired_width) catch |e| panic(e), app.desired_width);
             state.w = @intCast(state.pixel_buffer.width);
             state.h = @intCast(state.pixel_buffer.height);
             state.mouse = undefined;
@@ -233,7 +226,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
             state.mouse_down = false;
             state.mouse_clicked = false;
 
-            app.init(state.allocator) catch |e| panic(e);
+            app.init(state.app_long_allocator.allocator()) catch |e| panic(e);
         }
         
         fn tick() void {
@@ -250,7 +243,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
                 .pixel_buffer = state.pixel_buffer,
                 .keys_old = state.keys_old,
                 .keys = state.keys,
-                .allocator = state.allocator,
+                .allocator = state.app_short_allocator.allocator(),
                 .w = state.w,
                 .h = state.h,
                 .frame = state.frame_index,
@@ -264,12 +257,15 @@ pub fn Application(comptime app: ApplicationDescription) type {
             };
 
             const keep_running = app.update(&platform) catch |e| panic(e);
+            flog("Memory used on frame {}: {} ({}%) {} ({}%)", .{ state.frame_index, state.app_short_allocator.fba.end_index, @divFloor(state.app_short_allocator.fba.end_index, state.app_short_allocator.one_percent_aprox), state.app_long_allocator.fba.end_index, @divFloor(state.app_long_allocator.fba.end_index, state.app_long_allocator.one_percent_aprox) });
             if (!keep_running) {
                 // Too bad, there is no stopping!!!
             }
             state.mouse_clicked = false;
             state.keys_old = state.keys;
             state.frame_index += 1;
+            
+            state.app_short_allocator.fba.reset();
         }
 
         pub fn read_file_sync(allocator: std.mem.Allocator, file: []const u8) ![]const u8 {

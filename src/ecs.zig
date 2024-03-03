@@ -10,7 +10,7 @@ pub const EntityData = struct {
     version: u32
 };
 
-pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
+pub fn Ecs(comptime types: anytype) type {
     return struct {
     
         comptime {
@@ -30,8 +30,6 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
         }
         
         const Self = @This();
-        
-        const MAX_ENTITIES: usize = if (max_entities <= std.math.maxInt(u32)) max_entities else @compileError("max_entities cant be bigger than max u32");
         
         fn getComponentContainer(comptime T: type) *std.ArrayList(T) {
             inline for (@typeInfo(@TypeOf(types)).Struct.fields) |field| {
@@ -55,20 +53,24 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
         entities: std.ArrayList(EntityData),
         deletedEntities: std.ArrayList(u32),
         allocator: std.mem.Allocator,
+        capacity: usize,
 
         const set_without_components = std.bit_set.IntegerBitSet(32).initEmpty();
 
-        pub fn init(allocator: std.mem.Allocator) !Self {
+        /// pre-allocates enough memory for #capacity entities
+        pub fn init_capacity(allocator: std.mem.Allocator, capacity: usize) !Self {
+            std.debug.assert(capacity <= std.math.maxInt(u32));
             const self = Self {
-                .entities = try std.ArrayList(EntityData).initCapacity(allocator, MAX_ENTITIES),
-                .deletedEntities = try std.ArrayList(u32).initCapacity(allocator, MAX_ENTITIES),
+                .entities = try std.ArrayList(EntityData).initCapacity(allocator, capacity),
+                .deletedEntities = try std.ArrayList(u32).initCapacity(allocator, capacity),
                 .allocator = allocator,
+                .capacity = capacity,
             };
             inline for (@typeInfo(@TypeOf(types)).Struct.fields) |field| {
                 const t = @field(types, field.name);
                 const container = getComponentContainer(t);
-                container.* = try std.ArrayList(t).initCapacity(allocator, MAX_ENTITIES);
-                _ = try container.*.addManyAsArray(MAX_ENTITIES);
+                container.* = try std.ArrayList(t).initCapacity(allocator, capacity);
+                _ = container.addManyAsSliceAssumeCapacity(capacity);
             }
             return self;
         }
@@ -84,7 +86,7 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
                 };
             }
             const next_entity_id = self.entities.items.len;
-            if (next_entity_id >= MAX_ENTITIES) return error.MaxEntitiesReached;
+            if (next_entity_id >= self.capacity) return error.MaxEntitiesReached;
             const new_entity_data = EntityData {
                 .components = set_without_components,
                 .version = 0
@@ -217,12 +219,12 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
         }
         
         pub fn debugPrintStats(self: *Self) void {
-            std.debug.print("Entities {} out of {} (MAX_ENTITIES {})\n", .{self.entities.items.len, self.entities.capacity, MAX_ENTITIES});
+            std.debug.print("Entities {} out of {} (MAX_ENTITIES {})\n", .{self.entities.items.len, self.entities.capacity, self.capacity});
             std.debug.print("Size of Entity {}, total space allocated {} bytes ({} kb)\n", .{@sizeOf(EntityData), self.entities.capacity * @sizeOf(EntityData), self.entities.capacity * @sizeOf(EntityData) / 1024});
             inline for (@typeInfo(@TypeOf(types)).Struct.fields) |field| {
                 const t = @field(types, field.name);
                 const container = getComponentContainer(t);
-                std.debug.print("container for {s} has {} / {} | total space allocated {} bytes ({} kb)\n", .{ @typeName(t), container.*.items.len, container.*.capacity, @sizeOf(t) * MAX_ENTITIES, @sizeOf(t) * MAX_ENTITIES / 1024});
+                std.debug.print("container for {s} has {} / {} | total space allocated {} bytes ({} kb)\n", .{ @typeName(t), container.*.items.len, container.*.capacity, @sizeOf(t) * self.capacity, @sizeOf(t) * self.capacity / 1024});
             }
         }
 
@@ -250,14 +252,14 @@ pub fn Ecs(comptime types: anytype, comptime max_entities: usize) type {
                 const container = getComponentContainer(t);
                 container_stats[i] = ContainerStats {
                     .count = container.items.len,
-                    .allocated_bytes_kb = @sizeOf(t) * MAX_ENTITIES / 1024
+                    .allocated_bytes_kb = @sizeOf(t) * self.capacity / 1024
                 };
             }
 
             return Stats {
                 .entities = self.entities.items.len,
                 .capacity = self.entities.capacity,
-                .max = MAX_ENTITIES,
+                .max = self.capacity,
                 .entity_size = @sizeOf(EntityData),
                 .allocated_bytes_kb = self.entities.capacity * @sizeOf(EntityData) / 1024,
                 .container_stats = container_stats

@@ -53,36 +53,38 @@ const Camera = struct {
 };
 
 const State = struct {
-    text_renderer: TextRenderer,
     depth_buffer: Buffer2D(f32),
     texture: Buffer2D(RGB),
     vertex_buffer: std.ArrayList(GouraudShader.Vertex),
     camera: Camera,
     time: f64,
+    temp_fba: std.heap.FixedBufferAllocator,
 };
 
 var state: State = undefined;
 
 pub fn init(allocator: std.mem.Allocator) anyerror!void {
+    // 5 mib of "discard-able" memory to use if necessary
+    state.temp_fba = std.heap.FixedBufferAllocator.init(try allocator.alloc(u8, 1024*1024*5));
+    defer state.temp_fba.reset();
+
     state.depth_buffer = Buffer2D(f32).from(try allocator.alloc(f32, Application.height*Application.width), @intCast(Application.width));
     state.camera.position = Vector3f { .x = 0, .y = 0, .z = 0 };
     state.camera.up = Vector3f { .x = 0, .y = 1, .z = 0 };
     state.camera.direction = Vector3f { .x = 0, .y = 0, .z = 1 };
     state.time = 0;
-    state.text_renderer = try TextRenderer.init(allocator);
     // load the head model's texture
     {
-        const bytes = try Application.read_file_sync(allocator, "res/african_head_diffuse.tga");
-        defer allocator.free(bytes);
+        const bytes = try Application.read_file_sync(state.temp_fba.allocator(), "res/african_head_diffuse.tga");
+        defer state.temp_fba.reset();
         state.texture = try TGA.from_bytes(RGB, allocator, bytes);
     }
     // load the head model .obj
     {
-        const bytes = try Application.read_file_sync(allocator, "res/african_head.obj");
-        defer allocator.free(bytes);
+        const bytes = try Application.read_file_sync(state.temp_fba.allocator(), "res/african_head.obj");
+        defer state.temp_fba.reset();
         state.vertex_buffer = blk: {
-            const buffer = try OBJ.from_bytes(allocator, bytes);
-            defer allocator.free(buffer);
+            const buffer = try OBJ.from_bytes(state.temp_fba.allocator(), bytes);
             var i: usize = 0;
             var vertex_buffer = try std.ArrayList(GouraudShader.Vertex).initCapacity(allocator, @divExact(buffer.len, 8));
             while (i < buffer.len) : (i = i + 8) {
@@ -99,7 +101,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const h: f32 = @floatFromInt(ud.pixel_buffer.height);
     const w: f32 = @floatFromInt(ud.pixel_buffer.width);
-    ud.pixel_buffer.clear(platform.OutPixelType.make(100, 149, 237,255));
+    ud.pixel_buffer.clear(platform.OutPixelType.make(100, 149, 237, 255));
     state.depth_buffer.clear(999999);
 
     state.time += ud.ms;
@@ -212,13 +214,14 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     }
 
     const debug_color = RGBA.from(RGBA, @bitCast(@as(u32, 0xffffffff)));
-    const text_height = state.text_renderer.height() + 1;
-    try state.text_renderer.print(Vector2f.from(1, h - (text_height*1)), "ms {d: <9.2}", .{ud.ms}, debug_color);
-    try state.text_renderer.print(Vector2f.from(1, h - (text_height*2)), "frame {}", .{ud.frame}, debug_color);
-    try state.text_renderer.print(Vector2f.from(1, h - (text_height*3)), "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z}, debug_color);
-    try state.text_renderer.print(Vector2f.from(1, h - (text_height*4)), "mouse {} {}", .{ud.mouse.x, ud.mouse.y}, debug_color);
-    try state.text_renderer.print(Vector2f.from(1, h - (text_height*5)), "dimensions {} {}", .{ud.w, ud.h}, debug_color);
-    state.text_renderer.render_all(
+    var text_renderer = try TextRenderer.init(ud.allocator);
+    const text_height = text_renderer.height() + 1;
+    try text_renderer.print(Vector2f.from(1, h - (text_height*2)), "frame {}", .{ud.frame}, debug_color);
+    try text_renderer.print(Vector2f.from(1, h - (text_height*3)), "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.position.x, state.camera.position.y, state.camera.position.z}, debug_color);
+    try text_renderer.print(Vector2f.from(1, h - (text_height*1)), "ms {d: <9.2}", .{ud.ms}, debug_color);
+    try text_renderer.print(Vector2f.from(1, h - (text_height*4)), "mouse {} {}", .{ud.mouse.x, ud.mouse.y}, debug_color);
+    try text_renderer.print(Vector2f.from(1, h - (text_height*5)), "dimensions {} {}", .{ud.w, ud.h}, debug_color);
+    text_renderer.render_all(
         ud.pixel_buffer,
         M33.orthographic_projection(0, w, h, 0),
         M33.viewport(0, 0, w, h)

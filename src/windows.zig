@@ -33,10 +33,16 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
         pub fn run() !void {
             
-            const AllocatorType = std.heap.GeneralPurposeAllocator(.{});
-            var allocator_master = AllocatorType {};
-            defer _ = allocator_master.detectLeaks();
-            const allocator = allocator_master.allocator();
+            var allocator_master = std.heap.GeneralPurposeAllocator(.{}) {};
+            // total memory to be used: 64 mib
+            var main_allocator = FixedBufferAllocatorWrapper("Main", true).init(try allocator_master.allocator().alloc(u8, 1024*1024*64));
+            var app_long_allocator = FixedBufferAllocatorWrapper("AppLong", true).init(main_allocator.allocator().alloc(u8, 1024 * 1024 * 32) catch {
+                @panic("Failed to allocate memory for the application's long term reserved memory");
+            });
+            var app_short_allocator = FixedBufferAllocatorWrapper("AppShort", false).init(main_allocator.allocator().alloc(u8, 1024 * 1024 * 32) catch {
+                @panic("Failed to allocate memory for the application's update memory");
+            });
+            
             const instance_handle = win32.GetModuleHandleW(null);
             if (instance_handle == null) {
                 std.log.debug("win32.GetModuleHandleW == NULL. Last error: {any}", .{win32.GetLastError()});
@@ -66,8 +72,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
             state.render_target.bmiHeader.biBitCount = 32;
             state.render_target.bmiHeader.biCompression = win32.BI_RGB;
 
-            state.pixel_buffer = Buffer2D(BGRA).from(try allocator.alloc(BGRA, app.desired_width * app.desired_height), app.desired_width);
-            defer allocator.free(state.pixel_buffer.data);
+            state.pixel_buffer = Buffer2D(BGRA).from(try app_long_allocator.allocator().alloc(BGRA, app.desired_width * app.desired_height), app.desired_width);
 
             const register_class_error = win32.RegisterClassW(&window_class);
             if (register_class_error == 0) {
@@ -136,7 +141,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
                     break :blk performance_frequency.QuadPart;
                 };
 
-                try app.init(allocator);
+                try app.init(app_long_allocator.allocator());
 
                 var running: bool = true;
                 while (running) {
@@ -210,13 +215,14 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
                     var platform = UpdateData {
                         .frame = frame,
+                        .tick = cpu_counter_since_first,
                         .ms = ms,
                         .mouse_d = Vector2i { .x = mouse_dx, .y = mouse_dy },
                         .mouse = mouse,
                         .pixel_buffer = state.pixel_buffer,
                         .keys_old = state.keys_old,
                         .keys = state.keys,
-                        .allocator = allocator,
+                        .allocator = app_short_allocator.allocator(),
                         .w =  state.w,
                         .h =  state.h,
                         .mouse_left_down = state.mouse_left_down,
@@ -226,7 +232,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
                     
                     // _ = platform;
                     const keep_running = try app.update(&platform);
-                    // state.pixel_buffer.clear(BGRA.make(100,100,100,100));
+                    app_short_allocator.fba.reset();
                     
                     state.keys_old = state.keys;
                     frame += 1;
@@ -377,6 +383,7 @@ pub const UpdateData = struct {
     pixel_buffer: Buffer2D(BGRA),
     ms: f32,
     frame: usize,
+    tick: usize,
     mouse_left_down: bool,
     mouse_left_clicked: bool,
     mwheel: i32,
@@ -403,3 +410,63 @@ pub const ApplicationDescription = struct {
 
 pub const timestamp: fn () i64 = std.time.timestamp;
 pub const OutPixelType = BGRA;
+
+fn FixedBufferAllocatorWrapper(comptime name: []const u8, comptime log: bool) type {
+    return struct {
+
+        const Self = @This();
+
+        fba: std.heap.FixedBufferAllocator,
+        one_percent_aprox: usize,
+
+        pub fn init(buffer: []u8) Self {
+            return .{
+                .fba = std.heap.FixedBufferAllocator.init(buffer),
+                .one_percent_aprox = @intFromFloat(@as(f32, @floatFromInt(buffer.len))/100.0),
+            };
+        }
+
+        pub fn allocator(self: *Self) std.mem.Allocator {
+            return .{
+                .ptr = self,
+                .vtable = &.{
+                    .alloc = alloc,
+                    .resize = resize,
+                    .free = free,
+                },
+            };
+        }
+
+        fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+            var self = ptrCast(Self, ctx);
+            const res = self.fba.allocator().rawAlloc(len, ptr_align, ret_addr);
+            if (log) std.log.debug("Allocator " ++ name ++ " alloc {} ({}%) at {any}", .{len, @divFloor(len, self.one_percent_aprox), res});
+            return res;
+        }
+
+        fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+            var self = ptrCast(Self, ctx);
+            const res = self.fba.allocator().rawResize(buf, buf_align, new_len, ret_addr);
+            if (log) std.log.debug("Allocator " ++ name ++ " resize from {} ({}%) at {any} to {} ({}%): {s}", .{buf.len, @divFloor(buf.len, self.one_percent_aprox), buf.ptr, new_len, @divFloor(new_len, self.one_percent_aprox), if (res) "success" else "fail"});
+            return res;
+        }
+
+        fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
+            var self = ptrCast(Self, ctx);
+            const is_last_allocation = self.fba.isLastAllocation(buf);
+            if (log) if (is_last_allocation) {
+                std.log.debug("Allocator " ++ name ++ " free {} ({}%) bytes at {any}", .{buf.len, @divFloor(buf.len, self.one_percent_aprox), buf.ptr});
+            }
+            else {
+                std.log.debug("Allocator " ++ name ++ " free {} ({}%) bytes at {any} (will not free!)", .{buf.len, @divFloor(buf.len, self.one_percent_aprox), buf.ptr});
+            };
+            self.fba.allocator().rawFree(buf, buf_align, ret_addr);
+        }
+
+        fn ptrCast(comptime T: type, ptr: *anyopaque) *T {
+            if (@alignOf(T) == 0) @compileError(@typeName(T));
+            return @ptrCast(@alignCast(ptr));
+        }
+    };
+
+}
