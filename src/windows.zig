@@ -143,6 +143,13 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
                 try app.init(app_long_allocator.allocator());
 
+                const devices = try sound.enumerate_sound_devices(app_long_allocator.allocator());
+                for (devices.strings.items) |device_name| {
+                    std.log.debug("sound device {s}", .{device_name});
+                }
+
+                try sound.waveout_setup(app_long_allocator.allocator(), .{});
+
                 var running: bool = true;
                 while (running) {
 
@@ -470,3 +477,175 @@ fn FixedBufferAllocatorWrapper(comptime name: []const u8, comptime log: bool) ty
     };
 
 }
+
+const sound = struct {
+
+    const Strings = struct {
+        data: std.ArrayList(u8),
+        strings: std.ArrayList([]u8),
+        pub fn deinit(self: *Strings) void {
+            self.strings.deinit();
+            self.data.deinit();
+        }
+    };
+    
+    pub fn enumerate_sound_devices(allocator: std.mem.Allocator) !Strings {
+
+        // https://learn.microsoft.com/en-us/windows/win32/api/mmeapi/nf-mmeapi-waveoutgetnumdevs
+        const device_count = win32.waveOutGetNumDevs();
+        if (device_count == 0) @panic("device count is 0?!"); // TODO error handling or at least report
+
+        // https://learn.microsoft.com/en-us/windows/win32/api/mmeapi/nf-mmeapi-waveoutgetdevcaps
+        var string_data = try std.ArrayList(u8).initCapacity(allocator, 32*16);
+        var strings = try std.ArrayList([]u8).initCapacity(allocator, 16);
+        var i: u32 = 0;
+        while (i < device_count) : (i += 1) {
+            var capabilities: win32.WAVEOUTCAPSA = undefined;
+            const result = win32.waveOutGetDevCapsA(i, &capabilities, @sizeOf(win32.WAVEOUTCAPSA));
+            if (result == win32.S_OK) {
+                const lenght = blk: {
+                    for (&capabilities.szPname, 0..) |b, l| if (b == 0) break :blk l;
+                    break :blk 32;
+                };
+                const str = try string_data.addManyAsSlice(lenght);
+                @memcpy(str, capabilities.szPname[0..lenght]);
+                try strings.append(str);
+            }
+            else {
+                // TODO ith device couldn't be read, report it
+            }
+        }
+
+        return .{
+            .data = string_data,
+            .strings = strings
+        };
+        
+    }
+
+    const SampleType = u16;
+
+    const Context = struct {
+        waveout_handle: win32.HWAVEOUT,
+        waveout_config: Config,
+        sample_buffer: []SampleType,
+        sample_block_current_index: usize,
+        sample_block_descriptors: []win32.WAVEHDR,
+        // TODO if I ever allow ready to be false then I might need to make this atomic??
+        ready: bool,
+        
+        sample_block_free_count: usize,
+        sample_block_free_count_mutex: std.Thread.Mutex,
+        sample_block_free_count_condition: std.Thread.Condition,
+        
+        thread: std.Thread,
+    };
+    
+    var context: Context = undefined;
+
+    fn default(time: f64) SampleType {
+        std.log.debug("time {}", .{time});
+        return @intFromFloat(@as(f64, std.math.sin(time)*@as(f64, std.math.maxInt(SampleType))));
+    }
+    
+    const Config = struct {
+        device_index: u32 = 0,
+        samples_per_second: usize = 44100,
+        channels: usize = 1,
+        block_count: usize = 8,
+        block_sample_count: usize = 256,
+        user_callback: *const fn (time: f64) SampleType = &default,
+    };
+
+    fn waveOutProc(hwo: win32.HWAVEOUT, uMsg: u32, dwInstance: *u32, dwParam1: *u32, dwParam2: *u32) void {
+        _ = hwo;
+        _ = dwInstance;
+        _ = dwParam1;
+        _ = dwParam2;
+
+        // NOTE we get many kind of events but for now we just care about `WOM_DONE`, which is the
+        // event that lets us know that a block of samples has been processed.
+        if (uMsg != win32.MM_WOM_DONE) return;
+        
+        context.sample_block_free_count_mutex.lock();
+        context.sample_block_free_count += 1;
+        context.sample_block_free_count_condition.signal();
+        context.sample_block_free_count_mutex.unlock();
+    }
+    
+    pub fn waveout_setup(allocator: std.mem.Allocator, config: Config) !void {
+
+        var waveout_desired_format: win32.WAVEFORMATEX = undefined;
+        waveout_desired_format.wFormatTag = win32.WAVE_FORMAT_PCM;
+        waveout_desired_format.nSamplesPerSec = @intCast(config.samples_per_second);
+        waveout_desired_format.wBitsPerSample = @sizeOf(SampleType) * 8;
+        // TODO implement channels
+        // waveout_desired_format.nChannels = config.channels;
+        waveout_desired_format.nChannels = 1;
+        waveout_desired_format.nBlockAlign = @divExact(waveout_desired_format.wBitsPerSample, 8) * waveout_desired_format.nChannels;
+        waveout_desired_format.nAvgBytesPerSec = waveout_desired_format.nSamplesPerSec * waveout_desired_format.nBlockAlign;
+        waveout_desired_format.cbSize = 0;
+        
+        var waveout_handle: ?win32.HWAVEOUT = undefined;
+        const result = win32.waveOutOpen(&waveout_handle, config.device_index, &waveout_desired_format, @intFromPtr(&waveOutProc), 0, win32.CALLBACK_FUNCTION);
+        if (result != win32.S_OK) @panic("failed to create waveout context!");
+
+        const waveout_sample_buffer = try allocator.alloc(SampleType, config.block_count * config.block_sample_count);
+        @memset(waveout_sample_buffer, 0);
+        const waveout_block_descriptors = try allocator.alloc(win32.WAVEHDR, config.block_count);
+        @memset(waveout_block_descriptors, std.mem.zeroes(win32.WAVEHDR));
+        for (waveout_block_descriptors, 0..) |*descriptor, i| {
+            descriptor.dwBufferLength = @intCast(config.block_sample_count * @sizeOf(SampleType));
+            descriptor.lpData = @ptrCast(&waveout_sample_buffer[i*config.block_sample_count]);
+        }
+
+        context.sample_buffer = waveout_sample_buffer;
+        context.sample_block_descriptors = waveout_block_descriptors;
+        context.sample_block_free_count = config.block_count;
+        context.waveout_config = config;
+        context.ready = true;
+        context.waveout_handle = waveout_handle.?;
+        context.sample_block_current_index = 0;
+        context.sample_block_free_count_mutex = .{};
+        context.sample_block_free_count_condition = .{};
+        // TODO use win32 API for threading rather than relying on zig
+        context.thread = try std.Thread.spawn(
+            std.Thread.SpawnConfig {
+                .allocator = allocator,
+                .stack_size = 16*1024*1024
+            },
+            sound_thread,
+            .{}
+        );
+    }
+
+    fn sound_thread() void {
+        const seconds_per_sample: f64 = 1/@as(f64, @floatFromInt(context.waveout_config.samples_per_second));
+        var time: f64 = 0;
+        while (context.ready) {
+
+            context.sample_block_free_count_mutex.lock();
+            if (context.sample_block_free_count == 0) {
+                context.sample_block_free_count_condition.wait(&context.sample_block_free_count_mutex);
+            }
+            context.sample_block_free_count -= 1;
+            context.sample_block_free_count_mutex.unlock();
+
+            if (context.sample_block_descriptors[context.sample_block_current_index].dwFlags & win32.WHDR_PREPARED != 0) {
+                _ = win32.waveOutUnprepareHeader(context.waveout_handle, &context.sample_block_descriptors[context.sample_block_current_index], @sizeOf(win32.WAVEHDR));
+            }
+
+            // TODO factor in that there might be more than 1 channel
+            const index_of_first_sample = context.sample_block_current_index * context.waveout_config.block_sample_count;
+            const sample_block: []SampleType = context.sample_buffer[index_of_first_sample .. index_of_first_sample + context.waveout_config.block_sample_count];
+            for (sample_block) |*sample| {
+                sample.* = context.waveout_config.user_callback(time);
+                time += seconds_per_sample;
+            }
+
+            _ = win32.waveOutPrepareHeader(context.waveout_handle, &context.sample_block_descriptors[context.sample_block_current_index], @sizeOf(win32.WAVEHDR));
+            _ = win32.waveOutWrite(context.waveout_handle, &context.sample_block_descriptors[context.sample_block_current_index], @sizeOf(win32.WAVEHDR));
+            context.sample_block_current_index = @mod(context.sample_block_current_index+1, context.waveout_config.block_count);
+        }
+    }
+};

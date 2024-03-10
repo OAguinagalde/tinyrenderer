@@ -166,3 +166,51 @@ WebAssembly.instantiateStreaming(fetch(wasm_module_path), things_available_to_th
         tick_interval_seconds * 1000
     );
 });
+
+const context = new AudioContext();
+
+const audio_white_noise_sync = () => {
+    // stereo
+    const channels = 2;
+
+    // > floating point number representing the sample rate in samples per second
+    const samples_per_second = context.sampleRate;
+
+    const audio = context.createBuffer(
+        channels,
+        samples_per_second*2,
+        samples_per_second,
+    );
+
+    // generate white noise (random values between -1.0 and 1.0)
+    for (let channel = 0; channel < channels; channel++) {
+        const buffer = audio.getChannelData(channel);
+        for (let i = 0; i < samples_per_second * 2; i++) {
+            buffer[i] = Math.random() * 2 - 1;
+        }
+    }
+
+    return audio;
+};
+
+// TODO make synch version
+const audio_from_file_async = async (audio_url) => {
+    const response = await fetch(audio_url);
+    const audio_bytes = await response.arrayBuffer();
+    const audio = context.decodeAudioData(audio_bytes);
+    return audio;
+};
+
+const audio_play = async (audio) => {
+    const audio_node = context.createBufferSource();
+    audio_node.buffer = audio;
+    // TODO can I have multiple audio nodes "connected" to the "destination"?
+    audio_node.connect(context.destination);
+    audio_node.start();
+};
+
+// https://www.youtube.com/watch?v=tgamhuQnOkM
+// https://github.com/OneLoneCoder/synth/blob/master/olcNoiseMaker.h
+// audio_play(audio_white_noise_sync())
+// https://opengameart.org/content/library-of-game-sounds
+// audio_from_file_async("res/success.mp3").then(audio => audio_play(audio));
