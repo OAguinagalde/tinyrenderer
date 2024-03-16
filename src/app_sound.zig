@@ -12,7 +12,7 @@ const Vector2f = math.Vector2f;
 const M33 = math.M33;
 const RGBA = @import("pixels.zig").RGBA;
 const TextRenderer = @import("text.zig").TextRenderer(platform.OutPixelType, 1024, 1);
-
+const wav = @import("wav.zig");
 const windows = @import("windows.zig");
 const wasm = @import("wasm.zig");
 const platform = if (builtin.os.tag == .windows) windows else wasm;
@@ -34,6 +34,7 @@ var state: struct {
     temp_fba: std.heap.FixedBufferAllocator,
     time: f32 = 0,
     frequency_output: f64,
+    sound: wav.Sound,
 } = undefined;
 
 pub fn main() !void {
@@ -41,12 +42,39 @@ pub fn main() !void {
 }
 
 pub fn init(allocator: std.mem.Allocator) anyerror!void {
-    state.temp_fba = std.heap.FixedBufferAllocator.init(try allocator.alloc(u8, 1024*1024*5));
+    state.temp_fba = std.heap.FixedBufferAllocator.init(try allocator.alloc(u8, 1024*1024*10));
     defer state.temp_fba.reset();
     
+    const wav_files = &[_][]const u8 {
+        "res/melee_sound.wav",
+        "res/sfx62_attack.wav",
+        "res/sfx0_jump.wav",
+        "res/sfx5_knight_prepare.wav",
+        "res/sfx8_knight_attack.wav",
+        "res/sfx32_slime_attack.wav",
+        "res/sfx33_slime_attack.wav",
+        "res/sfx57_damage_received_unused.wav",
+        "res/sfx59_die_unused.wav",
+        "res/m0_unused.wav",
+        "res/m1_penguknight.wav",
+    };
+
+    for (wav_files, 0..) |wav_file, i| {
+        const bytes = try Application.read_file_sync(state.temp_fba.allocator(), wav_file);
+        defer state.temp_fba.reset();
+        const sound = try wav.from_bytes(allocator, bytes);
+        if (i == 9) state.sound = sound;
+    }
+
     try Application.sound.initialize(allocator, .{
-        .user_callback = produce_sound
+        .user_callback = produce_sound,
+        .block_count = 8,
+        .block_sample_count = 256,
+        .channels = 1,
+        .device_index = 0,
+        .samples_per_second = 44100,
     });
+
 }
 
 const color = struct {
@@ -109,5 +137,18 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 }
 
 pub fn produce_sound(time: f64) f64 {
-    return std.math.sin(time * 2 * 3.14159 * state.frequency_output) * 0.5;
+    // const bits_per_sample = state.sound.bits_per_sample;
+    // const samples_per_second = state.sound.sample_rate;
+    // return std.math.sin(time * 2 * 3.14159 * state.frequency_output) * 0.5;
+
+    // play the song
+    const samples: []const i16 = @as([*]const i16, @alignCast(@ptrCast(state.sound.raw.ptr)))[0..@divExact(state.sound.raw.len, 2)];
+    const samples_per_second_f: f64 = @floatFromInt(state.sound.sample_rate);
+    const max_i16_f: f64 = @floatFromInt(std.math.maxInt(i16));
+    const sound_duration_seconds: f64 = @floatFromInt(@divFloor(samples.len, state.sound.sample_rate));
+    const actual_time = @mod(time, sound_duration_seconds);
+    const next_sample_index: usize = @intFromFloat(samples_per_second_f * actual_time);
+    const sample = samples[@mod(next_sample_index*2, samples.len)];
+    const sample_f: f64 = @floatFromInt(sample);
+    return sample_f/max_i16_f;
 }
