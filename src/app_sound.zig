@@ -15,11 +15,12 @@ const TextRenderer = @import("text.zig").TextRenderer(platform.OutPixelType, 102
 const wav = @import("wav.zig");
 const windows = @import("windows.zig");
 const wasm = @import("wasm.zig");
+const Random = @import("core.zig").Random;
 const platform = if (builtin.os.tag == .windows) windows else wasm;
 const Application = platform.Application(.{
     .init = init,
     .update = update,
-    .dimension_scale = 2,
+    .dimension_scale = 3,
     .desired_width = 256,
     .desired_height = 100,
 });
@@ -35,6 +36,7 @@ var state: struct {
     time: f32 = 0,
     frequency_output: f64,
     sound: wav.Sound,
+    rng: Random,
 } = undefined;
 
 pub fn main() !void {
@@ -42,11 +44,11 @@ pub fn main() !void {
 }
 
 pub fn init(allocator: std.mem.Allocator) anyerror!void {
+    state.rng = Random.init(@intCast(platform.timestamp()));
     state.temp_fba = std.heap.FixedBufferAllocator.init(try allocator.alloc(u8, 1024*1024*10));
     defer state.temp_fba.reset();
-    
+
     const wav_files = &[_][]const u8 {
-        "res/melee_sound.wav",
         "res/sfx62_attack.wav",
         "res/sfx0_jump.wav",
         "res/sfx5_knight_prepare.wav",
@@ -59,11 +61,12 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
         "res/m1_penguknight.wav",
     };
 
+    const selected = state.rng.u() % wav_files.len;
     for (wav_files, 0..) |wav_file, i| {
         const bytes = try Application.read_file_sync(state.temp_fba.allocator(), wav_file);
         defer state.temp_fba.reset();
         const sound = try wav.from_bytes(allocator, bytes);
-        if (i == 9) state.sound = sound;
+        if (i == selected) state.sound = sound;
     }
 
     try Application.sound.initialize(allocator, .{
@@ -89,6 +92,14 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     ud.pixel_buffer.clear(platform.OutPixelType.from(RGBA, color.black));
     state.time += ud.ms;
 
+    for (ud.pixel_buffer.data) |*p| {
+        p.* = if (state.rng.f()>0.5) platform.OutPixelType.from(RGBA, @bitCast(@as(u32, 0x44444444))) else platform.OutPixelType.from(RGBA, @bitCast(@as(u32, 0xaaaaaaaa)));
+    }
+
+    var a: u64 = 0;
+    var b: u64 = 0;
+    for (0..10000) |_| { if (state.rng.f()>0.5) a += 1 else b += 1; }
+
     var pressed_key: ?usize = null;
     const keys: []const u8 = "ZSXCFVGBNJMK,L./";
     for (keys, 0..) |key, i| {
@@ -109,8 +120,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     // Render the keyboard on screen
     {
         const ui: []const u8 =
-            \\|   |   |   |   |   | |   |   |   |   | |   | |   |   |   | 
-            \\|   | S |   |   | F | | G |   |   | J | | K | | L |   |   | 
+            \\        |   |   |   | |   |   |   |   | |   | |   |   |   | 
+            \\      S |   |   | F | | G |   |   | J | | K | | L |   |   | 
             \\|   |___|   |   |___| |___|   |   |___| |___| |___|   |   |_
             \\|     |     |     |     |     |     |     |     |     |     
             \\|  Z  |  X  |  C  |  V  |  B  |  N  |  M  |  ,  |  .  |  /  
@@ -127,6 +138,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     
     try text_renderer.print(Vector2f.from(1, h - (text_height*1)), "ms {d: <9.2}", .{ud.ms}, color.white);
     try text_renderer.print(Vector2f.from(1, h - (text_height*2)), "frame {}", .{ud.frame}, color.white);
+    try text_renderer.print(Vector2f.from(1, h - (text_height*3)), "rng f64 {d: <9.5}", .{state.rng.f()}, color.white);
+    try text_renderer.print(Vector2f.from(1, h - (text_height*4)), "rng u64 {}", .{state.rng.u()}, color.white);
+    try text_renderer.print(Vector2f.from(1, h - (text_height*5)), "a {}", .{a}, color.white);
+    try text_renderer.print(Vector2f.from(1, h - (text_height*6)), "b {}", .{b}, color.white);
     text_renderer.render_all(
         ud.pixel_buffer,
         M33.orthographic_projection(0, w, h, 0),
