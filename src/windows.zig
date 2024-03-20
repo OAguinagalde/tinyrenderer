@@ -151,6 +151,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
                 while (running) {
 
                     var ms: f32 = undefined;
+                    var time_since_start: f64 = undefined;
                     const do_artificial_wait = false;
                     while (true) {
                         var current_cpu_counter: win32.LARGE_INTEGER = undefined;
@@ -167,6 +168,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
                             break;
                         }
                     }
+                    time_since_start = @as(f64, @floatFromInt(cpu_counter_since_first)) / @as(f64, @floatFromInt(cpu_frequency_seconds));
 
                     // windows message loop
                     {
@@ -220,6 +222,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
                     var platform = UpdateData {
                         .frame = frame,
                         .tick = cpu_counter_since_first,
+                        .time_since_start = time_since_start,
                         .ms = ms,
                         .mouse_d = Vector2i { .x = mouse_dx, .y = mouse_dy },
                         .mouse = mouse,
@@ -382,6 +385,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
 pub const UpdateData = struct {
     allocator: std.mem.Allocator,
+    time_since_start: f64,
     w: i32,
     h: i32,
     mouse: Vector2i,
@@ -402,6 +406,10 @@ pub const UpdateData = struct {
     
     pub fn key_pressed(ud: *const UpdateData, key: usize) bool {
         return ud.keys[key] and !ud.keys_old[key];
+    }
+
+    pub fn key_released(ud: *const UpdateData, key: usize) bool {
+        return !ud.keys[key] and ud.keys_old[key];
     }
 
 };
