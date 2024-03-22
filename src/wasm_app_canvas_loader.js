@@ -16,6 +16,12 @@ const wasm_memory_viewer = new DataView(memory.buffer);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8");
 
+window.inlined_functions = []
+
+fetch("generated.js").then(r => r.text()).then(text => {
+    eval(text);
+});
+
 let temp_file = "";
 let things_available_to_the_wasm_module = {
     
@@ -23,6 +29,10 @@ let things_available_to_the_wasm_module = {
         
         memory: memory,
         
+        js_calls: (aaaa) => {
+            window.inlined_functions[aaaa]();
+        },
+
         // pub extern fn js_console_log(str: [*]const u8, len: usize) void;
         js_console_log: (str_ptr, len) => {
             const str = decoder.decode(memory.buffer.slice(str_ptr, str_ptr+len));

@@ -11,6 +11,25 @@ const RGB = @import("pixels.zig").RGB;
 pub extern fn js_console_log(str: [*]const u8, len: usize) void;
 pub extern fn js_milli_since_epoch() usize;
 pub extern fn js_read_file_synch(file_name_ptr: [*]const u8, file_name_len: usize, out_ptr: *[*]u8, out_size: *usize) void;
+pub extern fn js_calls(id: u32) void;
+
+pub fn js(comptime unique_identifier: u32, comptime js_code: []const u8) type {
+    
+    // the `js_code` is only ever used by the build.zig file, when creating the `inlined.js` file
+    _ = js_code;
+
+    return struct {
+    
+        // TODO somehow make the identifier be automatically generated
+        const id: u32 = unique_identifier;
+
+        fn call() void {
+            js_calls(id);
+        }
+    };
+}
+
+
 
 pub fn Application(comptime app: ApplicationDescription) type {
     return struct {
@@ -31,20 +50,20 @@ pub fn Application(comptime app: ApplicationDescription) type {
         pub const height = app.desired_height;
         pub const dimension_scale = app.dimension_scale;
 
-        pub export fn wasm_get_static_buffer() [*]u8 {
+        export fn wasm_get_static_buffer() [*]u8 {
             return @ptrCast(&static_buffer_for_runtime_use);
         }
-        pub export fn wasm_get_canvas_pixels() [*]u8 {
+        export fn wasm_get_canvas_pixels() [*]u8 {
             return @ptrCast(state.pixel_buffer.data.ptr);
         }
-        pub export fn wasm_get_canvas_scaling() u32 {
+        export fn wasm_get_canvas_scaling() u32 {
             return app.dimension_scale;
         }
-        pub export fn wasm_get_canvas_size(out_w: *u32, out_h: *u32) void {
+        export fn wasm_get_canvas_size(out_w: *u32, out_h: *u32) void {
             out_w.* = app.desired_width;
             out_h.* = app.desired_height;
         }
-        pub export fn wasm_send_event(len: usize, a: usize, b: usize) void {
+        export fn wasm_send_event(len: usize, a: usize, b: usize) void {
             _ = a;
             _ = b;
             const event: []const u8 = wasm_get_static_buffer()[0..len];
@@ -61,7 +80,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
                 @panic("");
             }
         }
-        pub export fn wasm_request_buffer(len: usize) [*]u8 {
+        export fn wasm_request_buffer(len: usize) [*]u8 {
             const allocator = allocator_set_somewhere_else orelse {
                 flog("`wasm_request_buffer` failed because no allocator was set beforehand!", .{});
                 panic(error.allocatorNeverSet);
@@ -71,16 +90,21 @@ pub fn Application(comptime app: ApplicationDescription) type {
                 panic(e);
             });
         }
-        pub export fn wasm_init() void {
+        export fn wasm_init() void {
             init();
         }
-        pub export fn wasm_tick() void {
+        export fn wasm_tick() void {
+            
+            js(0,
+                \\console.log("tick");
+            ).call();
+
             tick();
         }
-        pub export fn wasm_set_dt(dt: f32) void {
+        export fn wasm_set_dt(dt: f32) void {
             delta_time = dt;
         }
-        pub export fn wasm_set_mouse(x: i32, y: i32, down: i32) void {
+        export fn wasm_set_mouse(x: i32, y: i32, down: i32) void {
             mousex = x;
             mousey = y;
             mousedown = down == 1;

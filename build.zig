@@ -121,12 +121,17 @@ pub fn build(b: *Build) !void {
         });
         var step_copy_html = b.addInstallFile(.{.path="src/index.html"}, "./index.html");
         var step_copy_js = b.addInstallFile(.{.path="src/wasm_app_canvas_loader.js"}, "./wasm_app_canvas_loader.js");
+        
+        const generated = generate_inline_js_file(b, "src/wasm.zig", "generated.js", &step_copy_js.step);
+        var step_inline_js = b.addInstallFile(generated, "./generated.js");
+        
         // NOTE InstallStep is just how zig calls the "main build task", by itself it does nothing
         // but by making it depend on other tasks, it will run those first
         b.getInstallStep().dependOn(&step_compile_wasm_executable.step);
         b.getInstallStep().dependOn(&step_copy_res.step);
         b.getInstallStep().dependOn(&step_copy_html.step);
         b.getInstallStep().dependOn(&step_copy_js.step);
+        b.getInstallStep().dependOn(&step_inline_js.step);
 
         // TODO make a ultra simple web server just for serving the wasm project lol
         var step_run = run_coded_as_step(b, struct {
@@ -163,6 +168,23 @@ fn embed_str_as_module(b: *std.Build, comptime str: []const u8, comptime name: [
     // allow @import to "see" the generated file `memory_info.zon`
     compilation.addAnonymousModule(name, .{ .source_file = output });
     compilation.step.dependOn(&step_tool_runner.step);
+}
+
+fn generate_inline_js_file(b: *std.Build, comptime in_zig_file: []const u8, comptime out_generated_js_file: []const u8, step: *std.Build.Step) std.Build.LazyPath {
+    // b.standardTargetOptions(.{});
+    // const target = b.resolveTargetQuery(.{
+    //     .cpu_arch = .wasm32,
+    //     .os_tag = .freestanding,
+    // });
+    const step_tool_runner = b.addRunArtifact(b.addExecutable(.{
+        .name = "generate inline js source file",
+        .target = b.standardTargetOptions(.{}),
+        .root_source_file = .{ .path = "src/generate_inline_js.zig" },
+    }));
+    step_tool_runner.addFileArg(.{ .path = in_zig_file });
+    const output = step_tool_runner.addOutputFileArg(out_generated_js_file);
+    step.dependOn(&step_tool_runner.step);
+    return output;
 }
 
 fn run_coded_as_step(builder: *std.Build, comptime code: fn () void) *std.Build.Step {
