@@ -224,3 +224,47 @@ const audio_play = async (audio) => {
 // audio_play(audio_white_noise_sync())
 // https://opengameart.org/content/library-of-game-sounds
 // audio_from_file_async("res/success.mp3").then(audio => audio_play(audio));
+
+const audio_setup = (sample_rate, channel_count, buffer_frame_count, callback) => {
+
+    let sample_index_offset = 0;
+
+    const context = sample_rate == 0 ? new AudioContext() : new AudioContext({ sampleRate: sample_rate })
+    sample_rate = context.sampleRate;
+    const processor = context.createScriptProcessor(buffer_frame_count, 0, channel_count);
+    processor.onaudioprocess = function(event) {
+        
+        for (let channel_index = 0; channel_index < channel_count; channel_index++) {
+            
+            const buffer_out = event.outputBuffer.getChannelData(channel_index);
+            const buffer_sample_count = buffer_out.length;
+            
+            callback(buffer_out, buffer_sample_count, channel_index, sample_index_offset, sample_rate);
+            
+            // sample_index_offset = (sample_index_offset + buffer_sample_count) % sample_rate;
+            sample_index_offset += buffer_sample_count;
+        }
+
+        window.sample_index_global = sample_index_offset;
+
+    };
+    processor.connect(context.destination);
+    
+    return context;
+};
+
+const volume = 0.2;
+const frequency_hertz = Math.pow(Math.pow(2, 1/12), 15) * 110;
+const frequency_angular_velocity = 2 * Math.PI * frequency_hertz;
+
+const audio_context = audio_setup(0, 1, 256 * 2, (buffer_out, buffer_sample_count, channel_index, sample_index_offset, sample_rate) => {
+    
+    const init = sample_index_offset/sample_rate;
+    const dt = 1/sample_rate;
+    let time = init;
+    for (let sample_index = 0; sample_index < buffer_sample_count; sample_index++) {
+        time += dt;
+        buffer_out[sample_index] = Math.sin(time * frequency_angular_velocity) * volume;
+    }
+
+});
