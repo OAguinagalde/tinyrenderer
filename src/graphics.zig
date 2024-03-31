@@ -836,7 +836,7 @@ pub const GraphicsPipelineQuads2DConfiguration = struct {
             .Struct = .{
                 .is_tuple = false,
                 .fields = fields,
-                .layout = .Auto,
+                .layout = .auto,
                 .decls = declarations,
             }
         };
