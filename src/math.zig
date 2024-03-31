@@ -942,10 +942,34 @@ pub fn BoundingBox(comptime T: type) type {
         pub inline fn side(self: Self, s: BoundingBoxSide) T {
             return switch (s) {
                 .top => self.top,
-                .botom => self.botom,
+                .bottom => self.botom,
                 .left => self.left,
                 .right => self.right,
             };
+        }
+
+        pub inline fn shrink(self: Self, comptime s: BoundingBoxSide, units: T) struct { shrinked: BoundingBox(T), leftover: BoundingBox(T) } {
+            var shrinked = self;
+            var leftover = self;
+            switch (s) {
+                .top => {
+                    shrinked.top -= units;
+                    leftover.bottom += shrinked.height();
+                },
+                .bottom => {
+                    shrinked.bottom += units;
+                    leftover.top -= shrinked.height();
+                },
+                .left => {
+                    shrinked.left += units;
+                    leftover.right -= shrinked.width();
+                },
+                .right => {
+                    shrinked.right -= units;
+                    leftover.left += shrinked.width();
+                }
+            }
+            return .{ .shrinked = shrinked, .leftover = leftover };
         }
 
         pub inline fn width(self: Self) T {
