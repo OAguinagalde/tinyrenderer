@@ -206,6 +206,8 @@ pub fn Application(comptime app: ApplicationDescription) type {
                             std.log.debug("win32.ScreenToClient == 0. Last error: {any}", .{win32.GetLastError()});
                             unreachable;
                         }
+                        point.x = @divFloor(point.x, app.dimension_scale);
+                        point.y = @divFloor(-point.y + state.h, app.dimension_scale);
                         break :blk point;
                     };
                     const mouse_dx = mouse_current.x - mouse_previous.x;
