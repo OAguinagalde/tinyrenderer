@@ -73,6 +73,10 @@ pub const RGBA = extern struct {
             .a = @as(u8, @intCast((@as(u16, @intCast(c1.a)) + @as(u16, @intCast(c2.a)) + @as(u16, @intCast(c3.a)) + @as(u16, @intCast(c4.a))) / 4)),
         };
     }
+    /// expects a `0xRRGGBBAA` and returns the color itself
+    pub fn from_hex(color: u32) RGBA {
+        return @bitCast(@byteSwap(@as(u32, color)));
+    }
     pub fn from(comptime T: type, color: T) RGBA {
         return switch (T) {
             BGR, RGB => RGBA { .r = color.r, .g = color.g, .b = color.b, .a = 255 },

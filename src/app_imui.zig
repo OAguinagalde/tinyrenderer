@@ -40,15 +40,15 @@ inline fn bb(top: i32, bottom: i32, left: i32, right: i32) BoundingBox(i32) {
 }
 
 const color = struct {
-    const white = RGBA.from(RGBA, @bitCast(@as(u32, 0xffffffff)));
-    const black = RGBA.from(RGBA, @bitCast(@as(u32, 0x00000000)));
-    const cornflowerblue = RGBA.from(RGBA, @bitCast(@as(u32, 0x6495edff)));
+    const white = RGBA.from_hex(0xffffffff);
+    const black = RGBA.from_hex(0x000000ff);
+    const cornflowerblue = RGBA.from_hex(0x6495edff);
 
-    const palette_0 = RGBA.from(RGBA, @bitCast(@as(u32, 0x780000ff)));
-    const palette_1 = RGBA.from(RGBA, @bitCast(@as(u32, 0xc1121fff)));
-    const palette_2 = RGBA.from(RGBA, @bitCast(@as(u32, 0xfdf0d5ff)));
-    const palette_3 = RGBA.from(RGBA, @bitCast(@as(u32, 0x003049ff)));
-    const palette_4 = RGBA.from(RGBA, @bitCast(@as(u32, 0x669bbcff)));
+    const palette_0 = RGBA.from_hex(0x780000ff);
+    const palette_1 = RGBA.from_hex(0xc1121fff);
+    const palette_2 = RGBA.from_hex(0xfdf0d5ff);
+    const palette_3 = RGBA.from_hex(0x003049ff);
+    const palette_4 = RGBA.from_hex(0x669bbcff);
 };
 
 const UI = ImmediateUi(.{
@@ -59,8 +59,8 @@ const UI = ImmediateUi(.{
         .char_height = 5,
         .char_width = 4,
         .widget_margin  = 1,
-        .widget_padding = 0,
-        .container_padding = 2,
+        .widget_padding = 1,
+        .container_padding = 1,
     },
     .containers = enum {
         window,
@@ -88,8 +88,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
-    
-    ud.pixel_buffer.clear(platform.OutPixelType.from(RGBA, color.black));
+    ud.pixel_buffer.clear(platform.OutPixelType.from(RGBA, color.palette_4));
 
     const hi: i32 = @intCast(ud.pixel_buffer.height);
     const wi: i32 = @intCast(ud.pixel_buffer.width);
@@ -105,17 +104,20 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         });
         defer ui.end_frame();
 
-        const window = ui.begin_container(.window, bb(hi-10, hi-80, 10, 100));
-        window.header("This is a window", .{});
-        window.label("button:", .{});
-        if (window.button("count: {d}", .{state.count})) state.count += 1;
-        window.label("the end!", .{});
-        window.end();
+        const window = ui.begin_container(.window, bb(hi-50, hi-90, 10, 100)); {
+            defer window.end();
+            window.header("This is a window", .{});
+            window.label("button:", .{});
+            if (window.button("count: {d}", .{state.count})) state.count += 1;
+            window.label("the end!", .{});
+        }
 
-        const debug = ui.begin_container(.debug, bb(hi, 0, 0, wi));
-        debug.label("aaaaaaaaaaaa:", .{});
-        debug.label("bbbbbbbbbbbbbbbb!", .{});
-        debug.end();
+        const debug = ui.begin_container(.debug, bb(hi, 0, 0, wi)); {
+            defer debug.end();
+            debug.label("some debug message", .{});
+            debug.header("This is a window", .{});
+            if (debug.button("count: {d}", .{state.count})) state.count += 1;
+        }
     }
     
     var shape_vertex_buffer = std.ArrayList(ShapeRenderer(platform.OutPixelType).shader.Vertex).init(ud.allocator);
@@ -123,18 +125,18 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     for (&ui.containers.buffer) |*c| {
         for (c.draw_calls.shape.slice()) |draw_call_shape| {
             try ShapeRenderer(platform.OutPixelType).add_quad_from_bb(&shape_vertex_buffer, draw_call_shape.bounding_box, switch (draw_call_shape.style) {
-                .base => color.palette_1,
-                .accent => color.palette_2,
-                .highlight => color.palette_3,
-                .special => color.palette_4,
+                .base => color.palette_4,
+                .accent => color.palette_3,
+                .highlight => color.palette_2,
+                .special => color.palette_1,
             });
         }
         for (c.draw_calls.text.slice()) |draw_call_text| {
             try text_renderer.print(draw_call_text.pos, "{s}", .{draw_call_text.text}, switch (draw_call_text.style) {
-                .base => color.palette_1,
-                .accent => color.palette_2,
-                .highlight => color.palette_3,
-                .special => color.palette_4,
+                .base => color.palette_0,
+                .accent => color.palette_1,
+                .highlight => color.palette_2,
+                .special => color.palette_3,
             });
         }
     }
@@ -181,6 +183,18 @@ const Style = enum {
     special,
 };
 
+const MouseStateType = enum { free, press, drag, release };
+const MouseState = struct {
+    st: MouseStateType = .free,
+    relevant_id: u64 = 0,
+};
+
+const MouseEvent = struct {
+    st: MouseStateType = .free,
+    relevant_id: u64 = 0,
+    pos: Vec2(i32) = v2(0,0)
+};
+
 fn ImmediateUi(comptime config: ImmediateUiConfig) type {
     return struct {
     
@@ -197,12 +211,10 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
         initialized: bool,
         string_data: std.BoundedArray(u8, config.text_buffer_size),
         containers: std.BoundedArray(Container, ContainerTypeCount),
-        io: ImmediateUiIo,
         io_previous: ImmediateUiIo,
-        // TODO change to "mouse interaction path" or anything better
-        mouse_state: std.BoundedArray(u64, 16),
-        mouse_state_previous: std.BoundedArray(u64, 16),
-        mouse_is_relevant: bool,
+
+        ms_relevant_id: ?u64,
+        ms_event: ?MouseEvent,
 
         pub fn init_pre_allocate() Self {
             var self: Self = undefined;
@@ -216,32 +228,41 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                 c.bounding_box = undefined;
                 c.bounding_box_no_allocated = undefined;
                 c.draw_calls = .{};
-                c.mouse_is_relevant = false;
                 c.parent_ui = undefined;
             }
-            self.io = undefined;
             self.io_previous = undefined;
-            self.mouse_state = .{};
-            self.mouse_state_previous = .{};
-            self.mouse_is_relevant = false;
+            self.ms_relevant_id = null;
+            self.ms_event = null;
             return self;
         }
 
         pub fn prepare_frame(self: *Self, io: ImmediateUiIo) void {
+            
             if (!self.initialized) {
                 self.initialized = true;
                 self.io_previous = io;
             }
-            self.io = io;
+            
             self.string_data.resize(0) catch unreachable;
-            self.mouse_state.resize(0) catch unreachable;
-            self.mouse_is_relevant = false;
+
+            const mouse_went_down = !self.io_previous.mouse_down and io.mouse_down;
+            const mouse_went_up = self.io_previous.mouse_down and !io.mouse_down;
+            const mouse_position = io.mouse_pos;
+            const mouse_movement = io.mouse_pos.substract(self.io_previous.mouse_pos);
+
+            // self.relevant_mouse_id is the the id pressed, released or dragged when a frame logic ends
+            if (mouse_went_down) self.ms_event = .{.st = .press, .relevant_id = 0, .pos = mouse_position}
+            else if (mouse_went_up) self.ms_event = .{.st = .release, .relevant_id = if (self.ms_relevant_id) |v| v else 0, .pos = mouse_position}
+            else if (io.mouse_down) self.ms_event = .{.st = .drag, .relevant_id = if (self.ms_relevant_id) |v| v else 0, .pos = mouse_movement}
+            else self.ms_event = .{.st = .free, .relevant_id = 0, .pos = mouse_position};
+            
+            self.io_previous = io;
+            
             // TODO since we know the positions and sizes of all the containers and their layers in the previous frame, we can calculate which container the mouse is over of right now
         }
 
         pub fn end_frame(self: *Self) void {
-            self.io_previous = self.io;
-            self.mouse_state_previous = self.mouse_state;
+            _ = self;
             // TODO set the order of the containerss to be drwan?
         }
         
@@ -259,41 +280,40 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                 c.bounding_box = bounding_box;
             }
 
-            c.mouse_is_relevant = false;
             c.stack.resize(0) catch unreachable;
             c.stack.append(container_tag_name_hash) catch unreachable;
             c.draw_calls.shape.resize(0) catch unreachable;
             c.draw_calls.text.resize(0) catch unreachable;
             c.bounding_box_no_allocated = c.bounding_box;
             c.parent_ui = self;
+            c.mouse_event = null;
             
-            // TODO at the end of each frame, compute the layer order of every container so that on the next frame
-            // we can figure out which container is relevant when the mouse is hovering 2 different containers at the same
-            // time but only one of them is "visible" at the mouse position
-            const container_directly_under_the_mouse_is_this_one = true;
-
-            // figure out if the mouse is relevant or not for this container for this frame...
-            // relevant:
-            // - already relevant from previous frame, busy interacting with this aprticular container
-            // - free and hovering this container (and this container is the topmost container right under the mouse)
-            // not relevant:
-            // - busy interacting with other container
-            // - free but hovering a different container or simply there is another container on the topmost layer under the mouse
-            const mouse_inside_bb = c.bounding_box.contains(self.io.mouse_pos);
-            const mouse_is_free = self.mouse_state_previous.len == 0;
-            const mouse_already_relevant_from_previous_frame = !mouse_is_free and self.mouse_state_previous.get(0) == c.stack.get(0);
-            const mouse_just_pressed = self.io.mouse_down and !self.io_previous.mouse_down;
-            const mouse_is_relevant = mouse_already_relevant_from_previous_frame or (
-                mouse_is_free and
-                mouse_inside_bb and
-                container_directly_under_the_mouse_is_this_one and
-                mouse_just_pressed
-            );
-            
-            if (mouse_is_relevant) {
-                c.mouse_is_relevant = true;
-                self.mouse_state.resize(0) catch unreachable;
-                self.mouse_state.append(c.stack.get(0)) catch unreachable;
+            // TODO on container end we need to know if the mouse event was handled or not
+            if (self.ms_event) |me| {
+                // there is a mouse event not handled by any container yet
+                switch (me.st) {
+                    .free, .press => {
+                        
+                        // TODO at the end of each frame, compute the layer order of every container so that on the next frame
+                        // we can figure out which container is relevant when the mouse is hovering 2 different containers at the same
+                        // time but only one of them is "visible" at the mouse position
+                        const mouse_in_0: bool = self.containers.slice()[0].bounding_box.contains(me.pos);
+                        const container_directly_under_the_mouse_is_this_one = if (container == .window) mouse_in_0 else !mouse_in_0;
+                        
+                        const mouse_inside_bb = c.bounding_box.contains(me.pos);
+                        
+                        if (mouse_inside_bb and container_directly_under_the_mouse_is_this_one) {
+                            c.mouse_event = me;
+                            // Since we already know that no other container can handle the mouse event, consume it already
+                            self.ms_event = null;
+                        }
+                    },
+                    .drag, .release => {
+                        // we dont know which container is relevant for this event until the widget hash is compared so just pass it
+                        // to the container until one of them handles it
+                        c.mouse_event = me;
+                    },
+                }
             }
 
             return c;
@@ -324,14 +344,8 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
             bounding_box_no_allocated: BoundingBox(i32),
             /// Each container has its own draw call buffer
             draw_calls: ContainerDrawCalls,
-            // TODO maybe move this to the main ui as this is a basically a flag that gets modifieed as the ui gets constructed
-            // and once set to fale will never change anyway
-            // TODO maybe change to `mause_still_needs_to_be_handled` or something
-            // basically its true when the mouse is potentially interactinv with a container and its widgets. As soon as the interaction
-            // has been handled this will turn to false so that upcoming widgets can just skip the logic since we already know the mouse interaction
-            // has already been taken care of
-            mouse_is_relevant: bool,
             parent_ui: *Self,
+            mouse_event: ?MouseEvent,
 
             pub fn header(self: *Container, comptime fmt: []const u8, args: anytype) void {
                 
@@ -363,39 +377,41 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                 
                 // handle moving the container by clicking and dragging the header
                 var container_offset: ?Vec2(i32) = null;
-                if (self.mouse_is_relevant) {
-                    const parent_hash = self.stack.buffer[self.stack.len-1];
-                    const header_hash = parent_hash + @as(u64, @intFromEnum(WidgetType.header)) + core.djb2(fmt);
-                    const mouse_went_down = !self.parent_ui.io_previous.mouse_down and self.parent_ui.io.mouse_down;
-                    const mouse_went_up = self.parent_ui.io_previous.mouse_down and !self.parent_ui.io.mouse_down;
-                    const mouse_position = self.parent_ui.io.mouse_pos;
-                    const mouse_movement = self.parent_ui.io.mouse_pos.substract(self.parent_ui.io_previous.mouse_pos);
-                    const mouse_active_hash: ?u64 = if (self.parent_ui.mouse_state_previous.len > 0) self.parent_ui.mouse_state_previous.buffer[self.parent_ui.mouse_state_previous.len-1] else null;
-                    
-                    if (mouse_active_hash) |active_hash| {
-                        if (active_hash == header_hash) {
-                            // the mouse was already interacting with the header, so either move the window or stop moving the window
-                            if (mouse_went_up) {
-                                self.parent_ui.mouse_state.len = 0;
-                                self.mouse_is_relevant = false;
-                            }
-                            else {
-                                container_offset = mouse_movement;
-                            }
+                if (self.mouse_event) |me| switch (me.st) {
+                    .free => if (header_bb.contains(me.pos)) {
+                        // TODO hover header
+                        self.mouse_event = null;
+                    },
+                    .press => if (header_bb.contains(me.pos)) {
+                        const parent_hash = self.stack.buffer[self.stack.len-1];
+                        const header_hash = parent_hash + @as(u64, @intFromEnum(WidgetType.header)) + core.djb2(fmt);
+                        self.parent_ui.ms_relevant_id = header_hash;
+                        self.mouse_event = null;
+                    },
+                    .drag => {
+                        const parent_hash = self.stack.buffer[self.stack.len-1];
+                        const header_hash = parent_hash + @as(u64, @intFromEnum(WidgetType.header)) + core.djb2(fmt);
+                        if (me.relevant_id == header_hash) {
+                            self.parent_ui.ms_relevant_id = header_hash;
+                            container_offset = me.pos;
+                            self.mouse_event = null;
                         }
-                        else {} // mouse is interacting with different widget so do nothing here and wait for the correct widget
-                    }
-                    else {
-                        if (mouse_went_down and header_bb.contains(mouse_position)) {
-                            self.parent_ui.mouse_state.appendAssumeCapacity(header_hash);
-                            self.mouse_is_relevant = false;
+                    },
+                    .release => {
+                        const parent_hash = self.stack.buffer[self.stack.len-1];
+                        const header_hash = parent_hash + @as(u64, @intFromEnum(WidgetType.header)) + core.djb2(fmt);
+                        if (me.relevant_id == header_hash) {
+                            self.parent_ui.ms_relevant_id = null;
+                            self.mouse_event = null;
+                            // TODO the mouse might have moved and released so... track movement in release event as well, maybe
                         }
-                    }
-                }
+                    },
+                };
 
                 // render the header taking into account whether the container was dragged or not
                 if (container_offset) |offset| {
                     self.bounding_box_no_allocated = bounding_box_no_allocated_updated.offset(offset);
+                    self.bounding_box = self.bounding_box.offset(offset);
                     self.render_square(header_bb.offset(offset), .special);
                     self.render_text(str, text_position.add(offset), .special);
                 }
@@ -486,43 +502,37 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                 var button_state: ButtonState = .normal;
                 // handle the clicking the button logic
                 
-                if (self.mouse_is_relevant) {
-                    const parent_hash = self.stack.buffer[self.stack.len-1];
-                    const button_hash = parent_hash + @as(u64, @intFromEnum(WidgetType.button)) + core.djb2(fmt);
-                    const mouse_went_down = !self.parent_ui.io_previous.mouse_down and self.parent_ui.io.mouse_down;
-                    const mouse_went_up = self.parent_ui.io_previous.mouse_down and !self.parent_ui.io.mouse_down;
-                    const mouse_down = self.parent_ui.io.mouse_down;
-                    const mouse_position = self.parent_ui.io.mouse_pos;
-                    const mouse_active_hash: ?u64 = if (self.parent_ui.mouse_state_previous.len > 0) self.parent_ui.mouse_state_previous.buffer[self.parent_ui.mouse_state_previous.len-1] else null;
-                    _ = mouse_down;
-                    
-                    if (mouse_active_hash) |active_hash| {
-                        if (active_hash == button_hash) {
-                            // the mouse was already interacting with the button, so either click it or not do anything until the mouse button is released
-                            if (mouse_went_up) {
-                                if (button_bb.contains(mouse_position)) {
-                                    button_state = .clicked;
-                                }
-                                self.parent_ui.mouse_state.len = 0;
-                            }
-                            else {
-                                button_state = .pressed;
-                            }
-                            self.mouse_is_relevant = false;
+                if (self.mouse_event) |me| switch (me.st) {
+                    .free => if (button_bb.contains(me.pos)) {
+                        button_state = .hover;
+                        self.mouse_event = null;
+                    },
+                    .press => if (button_bb.contains(me.pos)) {
+                        button_state = .pressed;
+                        const parent_hash = self.stack.buffer[self.stack.len-1];
+                        const button_hash = parent_hash + @as(u64, @intFromEnum(WidgetType.button)) + core.djb2(fmt);
+                        self.parent_ui.ms_relevant_id = button_hash;
+                        self.mouse_event = null;
+                    },
+                    .drag => {
+                        const parent_hash = self.stack.buffer[self.stack.len-1];
+                        const button_hash = parent_hash + @as(u64, @intFromEnum(WidgetType.button)) + core.djb2(fmt);
+                        if (me.relevant_id == button_hash) {
+                            self.parent_ui.ms_relevant_id = button_hash;
+                            button_state = .pressed;
+                            self.mouse_event = null;
                         }
-                        else {} // mouse is interacting with different widget so do nothing here and wait for the correct widget
-                    }
-                    else {
-                        if (button_bb.contains(mouse_position)) {
-                            button_state = .hover;
-                            if (mouse_went_down) {
-                                button_state = .pressed;
-                                self.parent_ui.mouse_state.appendAssumeCapacity(button_hash);
-                                self.mouse_is_relevant = false;
-                            }
+                    },
+                    .release => {
+                        const parent_hash = self.stack.buffer[self.stack.len-1];
+                        const button_hash = parent_hash + @as(u64, @intFromEnum(WidgetType.button)) + core.djb2(fmt);
+                        if (me.relevant_id == button_hash) {
+                            self.parent_ui.ms_relevant_id = null;
+                            if (button_bb.contains(me.pos)) button_state = .clicked;
+                            self.mouse_event = null;
                         }
-                    }
-                }
+                    },
+                };
 
                 const button_style: Style = switch (button_state) {
                     .normal => .base,
@@ -533,7 +543,7 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                 self.render_square(button_bb, button_style);
                 self.render_text(str, text_position, .base);
 
-                return button_state == .pressed;
+                return button_state == .clicked;
             }
 
             pub fn end (c: *Container) void {
