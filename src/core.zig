@@ -27,6 +27,15 @@ pub const Wyhash64 = struct {
     }
 };
 
+/// http://www.cse.yorku.ca/~oz/hash.html
+pub fn djb2(str: []const u8) u64 {
+    var hash: u64 = 5381;
+    for (str) |c| {
+        hash = @addWithOverflow(@addWithOverflow(hash << 5, hash)[0], c)[0];
+    }
+    return hash;
+}
+
 pub const Random = struct {
     implementation: Wyhash64,
     
