@@ -97,11 +97,23 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const static = struct {
         var toggle = false;
     };
-    var window = builder.begin("window", bb(hi-50, hi-90, 10, 100));{
-        try window.header("This is a window", .{});
-        try window.label("button:", .{});
-        if (try window.button("debug", .{})) static.toggle = !static.toggle;
-        try window.label("the end!", .{});
+    
+    {
+        var window = builder.begin("window", bb(hi-50, hi-90, 10, 100));{
+            try window.header("This is a window", .{});
+            try window.label("button:", .{});
+            if (try window.button("debug", .{})) static.toggle = !static.toggle;
+            try window.label("the end!", .{});
+        }
+    }
+
+    {
+        var window = builder.begin("window 2", bb(hi-50, hi-90, 10, 100));{
+            try window.header("This is a window", .{});
+            try window.label("button:", .{});
+            if (try window.button("debug", .{})) static.toggle = !static.toggle;
+            try window.label("the end!", .{});
+        }
     }
 
     if (static.toggle) {
@@ -123,7 +135,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         });
     }
     for (builder.draw_calls.text.items) |draw_call_text| {
-        try text_renderer.print(draw_call_text.pos, "{s}", .{draw_call_text.text}, switch (draw_call_text.style) {
+        const text = builder.string_data.items[draw_call_text.text[0]..draw_call_text.text[0] + draw_call_text.text[1]];
+        try text_renderer.print(draw_call_text.pos, "{s}", .{text}, switch (draw_call_text.style) {
             .base => color.palette_0,
             .accent => color.palette_1,
             .highlight => color.palette_2,
@@ -227,8 +240,9 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                 // make a copy of the string to be printed
                 
                 const len = std.fmt.count(fmt, args);
+                const index_into_string_data = self.builder.string_data.items.len;
                 const slice = try self.builder.string_data.addManyAsSlice(len);
-                const str = std.fmt.bufPrint(slice, fmt, args) catch unreachable;
+                _ = std.fmt.bufPrint(slice, fmt, args) catch unreachable;
                 
                 // handle moving the container by clicking and dragging the header
                 var is_hovering = false;
@@ -272,12 +286,12 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                     self.bounding_box_free = bounding_box_free_updated.offset(offset);
                     self.persistent.bounding_box = self.persistent.bounding_box.offset(offset);
                     try self.builder.render_square(header_bb.offset(offset), if (is_hovering) .highlight else .special);
-                    try self.builder.render_text(str, text_position.add(offset), .special);
+                    try self.builder.render_text(.{index_into_string_data, len}, text_position.add(offset), .special);
                 }
                 else {
                     self.bounding_box_free = bounding_box_free_updated;
                     try self.builder.render_square(header_bb, if (is_hovering) .highlight else .special);
-                    try self.builder.render_text(str, text_position, .special);
+                    try self.builder.render_text(.{index_into_string_data, len}, text_position, .special);
                 }
 
             }
@@ -300,10 +314,11 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
 
                 // make a copy of the string to be printed
                 const len = std.fmt.count(fmt, args);
+                const index_into_string_data = self.builder.string_data.items.len;
                 const slice = try self.builder.string_data.addManyAsSlice(len);
-                const str = std.fmt.bufPrint(slice, fmt, args) catch unreachable;
+                _ = std.fmt.bufPrint(slice, fmt, args) catch unreachable;
 
-                try self.builder.render_text(str, text_position, .special);
+                try self.builder.render_text(.{index_into_string_data, len}, text_position, .special);
             }
 
             const ButtonState = enum {
@@ -352,8 +367,9 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                 const button_bb: BoundingBox(i32) = iner_bb.shrink(.right, space_available_horizontal - space_required_horizontal).shrinked;
 
                 // make a copy of the string to be printed
+                const index_into_string_data = self.builder.string_data.items.len;
                 const slice = try self.builder.string_data.addManyAsSlice(len);
-                const str = std.fmt.bufPrint(slice, fmt, args) catch unreachable;
+                _ = std.fmt.bufPrint(slice, fmt, args) catch unreachable;
 
                 var button_state: ButtonState = .normal;
                 
@@ -401,7 +417,7 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                     .clicked => .special,
                 };
                 try self.builder.render_square(button_bb, button_style);
-                try self.builder.render_text(str, text_position, .base);
+                try self.builder.render_text(.{index_into_string_data, len}, text_position, .base);
 
                 return button_state == .clicked;
             }
@@ -420,7 +436,7 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
             /// Each container has its own draw call buffer
             draw_calls: ContainerDrawCalls,
 
-            inline fn render_text(self: *UiBuilder, str: []const u8, position: Vec2(i32), style: Style) !void {
+            inline fn render_text(self: *UiBuilder, str: struct {usize, usize}, position: Vec2(i32), style: Style) !void {
                 try self.draw_calls.text.append(.{
                     .text = str, .style = style, .pos = position.to(f32)
                 });
@@ -570,7 +586,8 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
             text: std.ArrayList(DrawCallText),
             shape: std.ArrayList(DrawCallShape),
             pub const DrawCallText = struct {
-                text: []const u8,
+                /// index_into_string_data, len
+                text: struct {usize, usize},
                 style: Style,
                 pos: Vec2(f32)
             };
