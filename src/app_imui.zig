@@ -20,9 +20,9 @@ const platform = if (builtin.os.tag == .windows) windows else wasm;
 const Application = platform.Application(.{
     .init = init,
     .update = update,
-    .dimension_scale = 3,
-    .desired_width = 256,
-    .desired_height = 100,
+    .dimension_scale = 1,
+    .desired_width = 256*2*2,
+    .desired_height = 100*2*2,
 });
 
 comptime {
@@ -81,7 +81,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
-    ud.pixel_buffer.clear(platform.OutPixelType.from(RGBA, color.palette_4));
+    ud.pixel_buffer.clear(platform.OutPixelType.from(RGBA, color.cornflowerblue));
 
     const hi: i32 = @intCast(ud.pixel_buffer.height);
     const wi: i32 = @intCast(ud.pixel_buffer.width);
@@ -95,65 +95,69 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     });
 
     const static = struct {
-        var toggle = false;
+        var debug = true;
     };
     
-    {
-        var window = builder.begin("window", bb(hi-50, hi-90, 10, 100));{
-            try window.header("This is a window", .{});
-            try window.label("button:", .{});
-            if (try window.button("debug", .{})) static.toggle = !static.toggle;
-            try window.label("the end!", .{});
-        }
+    var window = try builder.begin("window", bb(hi-50, hi-90, 10, 100), true); {
+        try window.header("A window", .{});
+        try window.label("button:", .{});
+        if (try window.button("toggle debug", .{})) static.debug = !static.debug;
     }
 
-    {
-        var window = builder.begin("window 2", bb(hi-50, hi-90, 10, 100));{
-            try window.header("This is a window", .{});
-            try window.label("button:", .{});
-            if (try window.button("debug", .{})) static.toggle = !static.toggle;
-            try window.label("the end!", .{});
-        }
-    }
-
-    if (static.toggle) {
-        var debug = builder.begin("debug", bb(hi, 0, 0, wi)); {
-            try debug.label("some debug message", .{});
-            try debug.header("This is a window", .{});
-            if (try debug.button("count: {d}", .{state.count})) state.count += 1;
+    if (static.debug) {
+        var debug = try builder.begin("debug", bb(hi, 0, 0, wi), false); {
+            try debug.label("ms {d: <9.2}", .{ud.ms});
+            try debug.label("frame {}", .{ud.frame});
+            try debug.label("io {?}", .{builder.io});
+            // force debug container to be the lowest layer
+            for (state.ui.containers_order.slice(), 0..) |container_id, i| if (container_id == debug.persistent.unique_identifier) {
+                const aux = state.ui.containers_order.slice()[0];
+                state.ui.containers_order.slice()[0] = container_id;
+                state.ui.containers_order.slice()[i] = aux;
+            };
         }
     }
     
-    var shape_vertex_buffer = std.ArrayList(ShapeRenderer(platform.OutPixelType).shader.Vertex).init(ud.allocator);
-    var text_renderer = try TextRenderer.init(ud.allocator);
-    for (builder.draw_calls.shape.items) |draw_call_shape| {
-        try ShapeRenderer(platform.OutPixelType).add_quad_from_bb(&shape_vertex_buffer, draw_call_shape.bounding_box, switch (draw_call_shape.style) {
-            .base => color.palette_4,
-            .accent => color.palette_3,
-            .highlight => color.palette_2,
-            .special => color.palette_1,
-        });
+    const draw_call_data = builder.draw_call_data;
+    for (state.ui.containers_order.slice()) |container_id| {
+        if (draw_call_data.draw_call_list_indices[container_id]) |list_index| {
+            var shape_vertex_buffer = std.ArrayList(ShapeRenderer(platform.OutPixelType).shader.Vertex).init(ud.allocator);
+            var text_renderer = try TextRenderer.init(ud.allocator);
+            const draw_calls = draw_call_data.draw_call_lists.items[list_index];
+            for (draw_calls.items) |dc| switch (dc.draw_call_type) {
+                .shape => {
+                    const draw_call_shape = draw_call_data.shape.items[dc.index];
+                    try ShapeRenderer(platform.OutPixelType).add_quad_from_bb(&shape_vertex_buffer, draw_call_shape.bounding_box, switch (draw_call_shape.style) {
+                        .base => color.palette_4,
+                        .accent => color.palette_3,
+                        .highlight => color.palette_2,
+                        .special => color.palette_1,
+                    });
+                },
+                .text => {
+                    const draw_call_text = draw_call_data.text.items[dc.index];
+                    const text = builder.string_data.items[draw_call_text.text[0]..draw_call_text.text[0] + draw_call_text.text[1]];
+                    try text_renderer.print(draw_call_text.pos, "{s}", .{text}, switch (draw_call_text.style) {
+                        .base => color.palette_0,
+                        .accent => color.palette_1,
+                        .highlight => color.palette_2,
+                        .special => color.palette_3,
+                    });
+                }
+            };
+            ShapeRenderer(platform.OutPixelType).render_vertex_buffer(
+                &shape_vertex_buffer,
+                ud.pixel_buffer,
+                M33.orthographic_projection(0, wf, hf, 0),
+                M33.viewport(0, 0, wf, hf)
+            );
+            text_renderer.render_all(
+                ud.pixel_buffer,
+                M33.orthographic_projection(0, wf, hf, 0),
+                M33.viewport(0, 0, wf, hf)
+            );
+        }
     }
-    for (builder.draw_calls.text.items) |draw_call_text| {
-        const text = builder.string_data.items[draw_call_text.text[0]..draw_call_text.text[0] + draw_call_text.text[1]];
-        try text_renderer.print(draw_call_text.pos, "{s}", .{text}, switch (draw_call_text.style) {
-            .base => color.palette_0,
-            .accent => color.palette_1,
-            .highlight => color.palette_2,
-            .special => color.palette_3,
-        });
-    }
-    ShapeRenderer(platform.OutPixelType).render_vertex_buffer(
-        &shape_vertex_buffer,
-        ud.pixel_buffer,
-        M33.orthographic_projection(0, wf, hf, 0),
-        M33.viewport(0, 0, wf, hf)
-    );
-    text_renderer.render_all(
-        ud.pixel_buffer,
-        M33.orthographic_projection(0, wf, hf, 0),
-        M33.viewport(0, 0, wf, hf)
-    );
 
     return true;
 }
@@ -194,6 +198,86 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
     return struct {
     
         const Self = @This();
+
+        const DrawCallType = enum {
+            shape,
+            text
+        };
+
+        const DrawCall = struct {
+            draw_call_type: DrawCallType,
+            index: usize,
+        };
+
+        pub const DrawCallText = struct {
+            text: struct {usize, usize},
+            pos: Vec2(f32),
+            style: Style,
+        };
+
+        pub const DrawCallShape = struct {
+            bounding_box: BoundingBox(f32),
+            style: Style,
+        };
+        
+        const DrawCallBigBuffer = struct {
+            allocator: std.mem.Allocator,
+            text: std.ArrayList(DrawCallText),
+            shape: std.ArrayList(DrawCallShape),
+            draw_call_lists: std.ArrayList(std.ArrayList(DrawCall)),
+            draw_call_list_indices: [ContainerCountMax]?usize,
+
+            fn init(allocator: std.mem.Allocator) DrawCallBigBuffer {
+                var res = DrawCallBigBuffer {
+                    .allocator = allocator,
+                    .text = std.ArrayList(DrawCallText).init(allocator),
+                    .shape = std.ArrayList(DrawCallShape).init(allocator),
+                    .draw_call_lists = std.ArrayList(std.ArrayList(DrawCall)).init(allocator),
+                    .draw_call_list_indices = undefined,
+                };
+                for (&res.draw_call_list_indices) |*value| value.* = null;
+                return res;
+            }
+
+            pub fn render_text(self: *DrawCallBigBuffer, container_id: u64, str: struct {usize, usize}, position: Vec2(i32), style: Style) !void {
+                if (self.draw_call_list_indices[container_id] == null) {
+                    const list_index = self.draw_call_lists.items.len;
+                    self.draw_call_list_indices[container_id] = list_index;
+                    const draw_call_list = std.ArrayList(DrawCall).init(self.allocator);
+                    try self.draw_call_lists.append(draw_call_list);
+                }
+                const list_index = self.draw_call_list_indices[container_id].?;
+                var draw_call_list = &self.draw_call_lists.items[list_index];
+                const call_index = self.text.items.len;
+                try draw_call_list.append(.{
+                    .draw_call_type = .text,
+                    .index = call_index,
+                });
+                try self.text.append(.{
+                    .text = str, .style = style, .pos = position.to(f32)
+                });
+            }
+
+            pub fn render_shape(self: *DrawCallBigBuffer, container_id: u64, bounding_box: BoundingBox(i32), style: Style) !void {
+                if (self.draw_call_list_indices[container_id] == null) {
+                    const list_index = self.draw_call_lists.items.len;
+                    self.draw_call_list_indices[container_id] = list_index;
+                    const draw_call_list = std.ArrayList(DrawCall).init(self.allocator);
+                    try self.draw_call_lists.append(draw_call_list);
+                }
+                const list_index = self.draw_call_list_indices[container_id].?;
+                var draw_call_list = &self.draw_call_lists.items[list_index];
+                const call_index = self.shape.items.len;
+                try draw_call_list.append(.{
+                    .draw_call_type = .shape,
+                    .index = call_index,
+                });
+                try self.shape.append(.{
+                    .bounding_box = bounding_box.to(f32), .style = style,
+                });
+            }
+
+        };
 
         const WidgetType = enum {
             header,
@@ -282,16 +366,17 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                 };
 
                 // render the header taking into account whether the container was dragged or not
+                const id = self.persistent.unique_identifier;
                 if (container_offset) |offset| {
                     self.bounding_box_free = bounding_box_free_updated.offset(offset);
                     self.persistent.bounding_box = self.persistent.bounding_box.offset(offset);
-                    try self.builder.render_square(header_bb.offset(offset), if (is_hovering) .highlight else .special);
-                    try self.builder.render_text(.{index_into_string_data, len}, text_position.add(offset), .special);
+                    try self.builder.draw_call_data.render_shape(id, header_bb.offset(offset), .accent);
+                    try self.builder.draw_call_data.render_text(id, .{index_into_string_data, len}, text_position.add(offset), .special);
                 }
                 else {
                     self.bounding_box_free = bounding_box_free_updated;
-                    try self.builder.render_square(header_bb, if (is_hovering) .highlight else .special);
-                    try self.builder.render_text(.{index_into_string_data, len}, text_position, .special);
+                    try self.builder.draw_call_data.render_shape(id, header_bb, if (is_hovering) .highlight else .special);
+                    try self.builder.draw_call_data.render_text(id, .{index_into_string_data, len}, text_position, .special);
                 }
 
             }
@@ -318,7 +403,8 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                 const slice = try self.builder.string_data.addManyAsSlice(len);
                 _ = std.fmt.bufPrint(slice, fmt, args) catch unreachable;
 
-                try self.builder.render_text(.{index_into_string_data, len}, text_position, .special);
+                const id = self.persistent.unique_identifier;
+                try self.builder.draw_call_data.render_text(id, .{index_into_string_data, len}, text_position, .special);
             }
 
             const ButtonState = enum {
@@ -416,8 +502,9 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                     .pressed => .accent,
                     .clicked => .special,
                 };
-                try self.builder.render_square(button_bb, button_style);
-                try self.builder.render_text(.{index_into_string_data, len}, text_position, .base);
+                const id = self.persistent.unique_identifier;
+                try self.builder.draw_call_data.render_shape(id, button_bb, button_style);
+                try self.builder.draw_call_data.render_text(id, .{index_into_string_data, len}, text_position, .base);
 
                 return button_state == .clicked;
             }
@@ -434,22 +521,9 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
             io: ImmediateUiIo,
             container_stack: std.BoundedArray(u64, ContainerCountMax),
             /// Each container has its own draw call buffer
-            draw_calls: ContainerDrawCalls,
+            draw_call_data: DrawCallBigBuffer,
 
-            inline fn render_text(self: *UiBuilder, str: struct {usize, usize}, position: Vec2(i32), style: Style) !void {
-                try self.draw_calls.text.append(.{
-                    .text = str, .style = style, .pos = position.to(f32)
-                });
-            }
-
-            inline fn render_square(self: *UiBuilder, bounding_box: BoundingBox(i32), style: Style) !void {
-                try self.draw_calls.shape.append(.{
-                    .bounding_box = bounding_box.to(f32), .style = style,
-                });
-            }
-
-
-            pub fn begin(self: *UiBuilder, id: []const u8, bounding_box: BoundingBox(i32)) Container {
+            pub fn begin(self: *UiBuilder, id: []const u8, bounding_box: BoundingBox(i32), comptime is_window: bool) !Container {
                 const ui = self.parent_ui;
                 const parent_hash = if (self.container_stack.len > 0) self.container_stack.get(self.container_stack.len-1) else 0;
                 const container_persistent = ui.get_container(id, parent_hash);
@@ -481,6 +555,19 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                                 break :blk false;
                             };
                             if (container_directly_under_the_mouse_is_this_one) {
+
+                                // put the container at the top most layer if it is clicked
+                                if (is_window and me.st == .press) for (ui.containers_order.slice(), 0..) |unique_id, position| {
+                                    if (unique_id == container_persistent.unique_identifier) {
+                                        const top_most_index = ui.containers_order.len - 1;
+                                        const current_index = position;
+                                        const previous_top_most_container = ui.containers_order.buffer[top_most_index];
+                                        ui.containers_order.buffer[top_most_index] = container_persistent.unique_identifier;
+                                        ui.containers_order.buffer[current_index] = previous_top_most_container;
+                                        break;
+                                    }
+                                };
+
                                 mouse_event_to_pass = me;
                                 // Since we already know that no other container can handle the mouse event, consume it already
                                 self.mouse_event = null;
@@ -493,12 +580,15 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                         mouse_event_to_pass = me;
                     },
                 };
-                return Container {
+                const container = Container {
                     .builder = self,
                     .persistent = container_persistent,
                     .bounding_box_free = container_persistent.bounding_box,
                     .mouse_event = mouse_event_to_pass,
                 };
+                const style: Style = if (ui.containers_order.slice()[ui.containers_order.len-1] == container.persistent.unique_identifier) .highlight else .base;
+                if (is_window) try container.builder.draw_call_data.render_shape(container.persistent.unique_identifier, container.persistent.bounding_box, style);
+                return container;
             }
         };
         
@@ -540,10 +630,7 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
                 .io = io,
                 .io_previous = io_previous,
                 .container_stack = .{},
-                .draw_calls = .{
-                    .text = std.ArrayList(ContainerDrawCalls.DrawCallText).init(allocator),
-                    .shape = std.ArrayList(ContainerDrawCalls.DrawCallShape).init(allocator),
-                }
+                .draw_call_data = DrawCallBigBuffer.init(allocator)
             };
             
             // TODO since we know the positions and sizes of all the containers and their layers in the previous frame, we can calculate which container the mouse is over of right now
@@ -581,21 +668,6 @@ fn ImmediateUi(comptime config: ImmediateUiConfig) type {
             }
             @panic("Not enough containers!");
         }
-
-        pub const ContainerDrawCalls = struct {
-            text: std.ArrayList(DrawCallText),
-            shape: std.ArrayList(DrawCallShape),
-            pub const DrawCallText = struct {
-                /// index_into_string_data, len
-                text: struct {usize, usize},
-                style: Style,
-                pos: Vec2(f32)
-            };
-            pub const DrawCallShape = struct {
-                bounding_box: BoundingBox(f32),
-                style: Style,
-            };
-        };
 
         // fn selection_grid_from_text_options(options: []const []const u8, selected: *?usize, hovered: *?usize, allow_deselect: bool) !GridThingy {
         //     var max_width: usize = 0;
