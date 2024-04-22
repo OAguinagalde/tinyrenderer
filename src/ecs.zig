@@ -36,6 +36,7 @@ pub fn Ecs(comptime types: anytype) type {
                 const t = @field(types, field.name);
                 if (T == t) {
                     const magic = struct {
+                        const types_reference = types;
                         var storage: std.ArrayList(T) = undefined;
                     };
                     return &magic.storage;
