@@ -117,19 +117,18 @@ pub fn Application(comptime app: ApplicationDescription) type {
                     _ = win32.MoveWindow(window_handle, 1920/2/2, 1080/2/2, state.w+dw, state.h+dh, @intFromEnum(win32.False));
                 }
 
-                var mouse: Vector2i = undefined;
-                // get mouse data from win32
-                {
-                    var mouse_current: win32.POINT = undefined;
-                    _ = win32.GetCursorPos(&mouse_current);
-                    mouse.x = mouse_current.x;
-                    mouse.y = mouse_current.y;
-                }
-                // by default, the mouse positions will be relative to the top left corner of the left-most screen
-                // convert it so that its a relative position to the top left of the window client area, and take into account
-                // the dimension_scaling there might be
-                mouse.x = @divFloor(mouse.x - state.x, app.dimension_scale);
-                mouse.y = @divFloor(mouse.y - state.y, app.dimension_scale);
+                var mouse: Vector2i = blk: {
+                    var mouse_win32: win32.POINT = undefined;
+                    // windows gives the position of the mouse relative to the top left corner.
+                    _ = win32.GetCursorPos(&mouse_win32);
+                    std.debug.assert(win32.ScreenToClient(window_handle, &mouse_win32) == @intFromEnum(win32.True));
+                    break :blk Vector2i {
+                        // NOTE we want the mouse position to take into account the dimension scale of the application, hence the division here
+                        .x = @divFloor(mouse_win32.x, app.dimension_scale),
+                        // NOTE we want it relative to the bottom left corner, so inverse it
+                        .y = @divFloor(state.h - mouse_win32.y, app.dimension_scale)
+                    };
+                };
 
                 var frame: usize = 0;    
                 var cpu_counter_now: i64 = blk: {
@@ -195,25 +194,16 @@ pub fn Application(comptime app: ApplicationDescription) type {
                     }
 
                     const mouse_previous = mouse;
-                    // relative to the top left corner of the window client area
-                    const mouse_current: win32.POINT = blk: {
-                        var point: win32.POINT = undefined;
-                        if (win32.GetCursorPos(&point) == 0) {
-                            std.log.debug("win32.GetCursorPos == 0. Last error: {any}", .{win32.GetLastError()});
-                            unreachable;
-                        }
-                        if (win32.ScreenToClient(window_handle, &point) == 0) {
-                            std.log.debug("win32.ScreenToClient == 0. Last error: {any}", .{win32.GetLastError()});
-                            unreachable;
-                        }
-                        point.x = @divFloor(point.x, app.dimension_scale);
-                        point.y = @divFloor(-point.y + state.h, app.dimension_scale);
-                        break :blk point;
-                    };
-                    const mouse_dx = mouse_current.x - mouse_previous.x;
-                    const mouse_dy = mouse_current.y - mouse_previous.y;
-                    mouse.x = mouse_current.x;
-                    mouse.y = mouse_current.y;
+                    var mouse_win32: win32.POINT = undefined;
+                    // windows gives the position of the mouse relative to the top left corner.
+                    _ = win32.GetCursorPos(&mouse_win32);
+                    std.debug.assert(win32.ScreenToClient(window_handle, &mouse_win32) == @intFromEnum(win32.True));
+                    // NOTE we want the mouse position to take into account the dimension scale of the application, hence the division here
+                    mouse.x = @divFloor(mouse_win32.x, app.dimension_scale);
+                    // NOTE we want it relative to the bottom left corner, so inverse it
+                    mouse.y = @divFloor(state.h - mouse_win32.y, app.dimension_scale);
+                    const mouse_dx = mouse.x - mouse_previous.x;
+                    const mouse_dy = mouse.y - mouse_previous.y;
 
                     const mouse_left_clicked = state.mouse_left_clicked;
                     state.mouse_left_clicked = false;

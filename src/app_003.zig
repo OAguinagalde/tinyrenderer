@@ -73,13 +73,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const viewport_matrix = M33.viewport(0, 0, w, h);
     const projection_matrix_screen = M33.orthographic_projection(0, w, h, 0);
 
-    // already takes into account native scaling if in use
-    const mouse_window: Vector2f = blk: {
-        const mx = @divFloor(ud.mouse.x, Application.dimension_scale);
-        // inverse y since mouse is given relative to top left corner
-        const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
-        break :blk Vector2i.from(mx, my).to(f32);
-    };
+    const mouse_window: Vector2f = ud.mouse.to(f32);
     
     if (ud.key_pressed('L')) {
         const bytes = try Application.read_file_sync(ud.allocator, state.resource_file_name);
