@@ -35,10 +35,10 @@ var state: struct {
     temp_fba: std.heap.FixedBufferAllocator,
     time: f32 = 0,
     frequency_output: f64,
-    sound: ?wav.Sound,
     rng: Random,
     keyboard_sound: Sound,
     audio_tracks: [16] ?AudioTrack,
+    sound_library: [@typeInfo(sounds).Enum.fields.len]wav.Sound,
 } = undefined;
 
 const AudioTrack = struct {
@@ -47,6 +47,57 @@ const AudioTrack = struct {
     samples: []const i16,
     samples_per_second_f: f64,
     duration_seconds: f64,
+    time_offset: f64,
+};
+
+pub fn play(sound: sounds) void {
+    audio_play(&state.audio_tracks, state.sound_library[@intFromEnum(sound)]);
+}
+
+pub fn audio_play(audio_tracks: []?AudioTrack, sound: wav.Sound) void {
+    for (audio_tracks) |*maybe_audio_track| {
+        if (maybe_audio_track.* == null) {
+            // found an unused audio track, set it with the new audio track
+            const samples = @as([*]const i16, @alignCast(@ptrCast(sound.raw.ptr)))[0..@divExact(sound.raw.len, 2)];
+            var duration: f64 = @floatFromInt(@divFloor(samples.len, sound.sample_rate));
+            if (sound.channel_count == 2) duration /= 2;
+            maybe_audio_track.* = .{
+                .time_offset = 0,
+                .wav = sound,
+                .samples = samples,
+                .samples_per_second_f = @floatFromInt(sound.sample_rate),
+                .duration_seconds = duration,
+            };
+            return;
+        }
+    }
+    // if we get here it means couldn't find an unused track
+}
+
+const sounds = enum {
+    attack,
+    jump,
+    knight_prepare,
+    knight_attack,
+    slime_attack_a,
+    slime_attack_b,
+    damage_received_unused,
+    die_received_unused,
+    music_unused,
+    music_penguknight,
+};
+
+const wav_files = &[_][]const u8 {
+    "res/sfx62_attack.wav",
+    "res/sfx0_jump.wav",
+    "res/sfx5_knight_prepare.wav",
+    "res/sfx8_knight_attack.wav",
+    "res/sfx32_slime_attack.wav",
+    "res/sfx33_slime_attack.wav",
+    "res/sfx57_damage_received_unused.wav",
+    "res/sfx59_die_unused.wav",
+    "res/m0_unused.wav",
+    "res/m1_penguknight.wav",
 };
 
 pub fn main() !void {
@@ -56,32 +107,14 @@ pub fn main() !void {
 pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.rng = Random.init(@intCast(platform.timestamp()));
     state.temp_fba = std.heap.FixedBufferAllocator.init(try allocator.alloc(u8, 1024*1024*10));
-    state.sound = null;
     defer state.temp_fba.reset();
-
-    const wav_files = &[_][]const u8 {
-        "res/sfx62_attack.wav",
-        "res/sfx0_jump.wav",
-        "res/sfx5_knight_prepare.wav",
-        "res/sfx8_knight_attack.wav",
-        "res/sfx32_slime_attack.wav",
-        "res/sfx33_slime_attack.wav",
-        "res/sfx57_damage_received_unused.wav",
-        "res/sfx59_die_unused.wav",
-        "res/m0_unused.wav",
-        "res/m1_penguknight.wav",
-    };
 
     for (&state.audio_tracks) |*at| at.* = null;
     for (wav_files, 0..) |wav_file, i| {
         const bytes = Application.read_file_sync(state.temp_fba.allocator(), wav_file) catch continue;
         defer state.temp_fba.reset();
         const sound = try wav.from_bytes(allocator, bytes);
-        state.audio_tracks[i] = undefined;
-        state.audio_tracks[i].?.wav = sound;
-        state.audio_tracks[i].?.samples = @as([*]const i16, @alignCast(@ptrCast(state.audio_tracks[i].?.wav.raw.ptr)))[0..@divExact(sound.raw.len, 2)];
-        state.audio_tracks[i].?.samples_per_second_f = @floatFromInt(sound.sample_rate);
-        state.audio_tracks[i].?.duration_seconds = @floatFromInt(@divFloor(state.audio_tracks[i].?.samples.len, sound.sample_rate));
+        state.sound_library[i] = sound;
     }
 
     try Application.sound.initialize(allocator, .{
@@ -173,6 +206,9 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         .release_time = 0.15,
     };
 
+    if (ud.key_pressed('Q')) play(.music_penguknight);
+    if (ud.key_pressed('W')) play(.attack);
+
     const keys: []const u8 = "ZSXCFVGBNJMK,L./";
     for (keys, 0..) |key, i| {
         if (ud.key_pressed(key)) {
@@ -202,6 +238,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     // Render the keyboard on screen
     {
         const ui: []const u8 =
+            \\ press Q or W to play some sounds...   or play the piano... 
             \\        |   |   |   | |   |   |   |   | |   | |   |         
             \\      S |   |   | F | | G |   |   | J | | K | | L |   |     
             \\|   |___|   |   |___| |___|   |   |___| |___| |___|   |   |_
@@ -277,12 +314,23 @@ pub fn produce_sound(time: f64) f64 {
     // and passing them directly as an array of pre-calculated samples, rather than make them one by one like now.
     // But doing that means changing the way the whole thing works, so later...
     var resulting_sample: f64 = 0;
-    for (state.audio_tracks) |audio_track_maybe| {
-        if (audio_track_maybe) |audio_track| {
+    for (&state.audio_tracks) |*audio_track_maybe| {
+        if (audio_track_maybe.*) |*audio_track| {
+            if (audio_track.time_offset == 0) {
+                // TODO for now I'm not sure how to properly synchronize the timer in the audio thread and the one in the
+                // main thread so whenever time_offset is 0 it means it just started so just set the time offset
+                // to the time here since this is the relevant audio thread timer
+                audio_track.time_offset = time;
+            }
+            // we are done playing the audio track so free it so that other audio tracks can be played
+            if (time >= audio_track.time_offset+audio_track.duration_seconds) {
+                audio_track_maybe.* = null;
+                continue;
+            }
             const track = audio_track.wav;
             const samples: []const i16 = audio_track.samples;
             // @mod so that it loops back
-            const actual_time = @mod(time, audio_track.duration_seconds);
+            const actual_time = @mod(time-audio_track.time_offset, audio_track.duration_seconds);
             const next_sample_index: usize = @intFromFloat(audio_track.samples_per_second_f * actual_time);
             const sample: i16 = switch (track.channel_count) {
                 // This is how I expect the samples to be stored in memory when there is a single channel:
