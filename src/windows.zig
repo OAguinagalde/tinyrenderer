@@ -671,6 +671,10 @@ const waveout = struct {
         var time: f64 = 0;
         while (context.ready) {
 
+            // NOTE since there is only one audio thread this works fine, but note to myself:
+            // If I ever use these patter with condition variables in a problem where there is more than 1
+            // consumer thread, then this pattern wouldn't be threadsafe as demonstrated here:
+            // https://deadlockempire.github.io/#L3-complexer
             context.sample_block_free_count_mutex.lock();
             if (context.sample_block_free_count == 0) {
                 context.sample_block_free_count_condition.wait(&context.sample_block_free_count_mutex);
