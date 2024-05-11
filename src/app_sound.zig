@@ -38,7 +38,16 @@ var state: struct {
     sound: ?wav.Sound,
     rng: Random,
     keyboard_sound: Sound,
+    audio_tracks: [16] ?AudioTrack,
 } = undefined;
+
+const AudioTrack = struct {
+    wav: wav.Sound,
+    // reinterpret the raw bytes of the audio track as an []i16
+    samples: []const i16,
+    samples_per_second_f: f64,
+    duration_seconds: f64,
+};
 
 pub fn main() !void {
     try Application.run();
@@ -63,12 +72,16 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
         "res/m1_penguknight.wav",
     };
 
-    const selected = if (false) state.rng.u() % wav_files.len else wav_files.len - 1;
+    for (&state.audio_tracks) |*at| at.* = null;
     for (wav_files, 0..) |wav_file, i| {
         const bytes = Application.read_file_sync(state.temp_fba.allocator(), wav_file) catch continue;
         defer state.temp_fba.reset();
         const sound = try wav.from_bytes(allocator, bytes);
-        if (i == selected) state.sound = sound;
+        state.audio_tracks[i] = undefined;
+        state.audio_tracks[i].?.wav = sound;
+        state.audio_tracks[i].?.samples = @as([*]const i16, @alignCast(@ptrCast(state.audio_tracks[i].?.wav.raw.ptr)))[0..@divExact(sound.raw.len, 2)];
+        state.audio_tracks[i].?.samples_per_second_f = @floatFromInt(sound.sample_rate);
+        state.audio_tracks[i].?.duration_seconds = @floatFromInt(@divFloor(state.audio_tracks[i].?.samples.len, sound.sample_rate));
     }
 
     try Application.sound.initialize(allocator, .{
@@ -247,7 +260,9 @@ pub inline fn wave(comptime wave_type: WaveType, time: f64, freq_hertz: f64) f64
 }
 
 pub fn produce_sound(time: f64) f64 {
-    
+
+    const max_i16_f: f64 = @floatFromInt(std.math.maxInt(i16));
+
     const sample_keyboard = blk: {
         const volume: f64 = 0.5;
         if (state.keyboard_sound.envelope.calculate_amplitude(time, state.keyboard_sound.start, state.keyboard_sound.end)) |envelope| {
@@ -258,45 +273,32 @@ pub fn produce_sound(time: f64) f64 {
         else break :blk 0;
     };
 
-    if (state.sound) |sound| {
-        const sample_audio: f64 = switch (sound.channel_count) {
-            1 => blk: {
+    // TODO It's probably better to somehow pre-calculate the samples being generated for a sound and just caching them
+    // and passing them directly as an array of pre-calculated samples, rather than make them one by one like now.
+    // But doing that means changing the way the whole thing works, so later...
+    var resulting_sample: f64 = 0;
+    for (state.audio_tracks) |audio_track_maybe| {
+        if (audio_track_maybe) |audio_track| {
+            const track = audio_track.wav;
+            const samples: []const i16 = audio_track.samples;
+            // @mod so that it loops back
+            const actual_time = @mod(time, audio_track.duration_seconds);
+            const next_sample_index: usize = @intFromFloat(audio_track.samples_per_second_f * actual_time);
+            const sample: i16 = switch (track.channel_count) {
+                // This is how I expect the samples to be stored in memory when there is a single channel:
                 // sample0: i16, sample1: i16, ...
-                const samples: []const i16 = @as([*]const i16, @alignCast(@ptrCast(sound.raw.ptr)))[0..@divExact(sound.raw.len, 2)];
-                const sound_duration_seconds: f64 = @floatFromInt(@divFloor(samples.len, sound.sample_rate));
-                // NOTE @mod so that it loops back
-                const actual_time = @mod(time, sound_duration_seconds);
-                const samples_per_second_f: f64 = @floatFromInt(sound.sample_rate);
-                const next_sample_index: usize = @intFromFloat(samples_per_second_f * actual_time);
-                
-                const sample = samples[next_sample_index];
-                const sample_f: f64 = @floatFromInt(sample);
-                const max_i16_f: f64 = @floatFromInt(std.math.maxInt(i16));
-                const sample_final: f64 = sample_f/max_i16_f;
-                break :blk sample_final;
-            },
-            2 => blk: {
+                1 => samples[next_sample_index],
+                // This is how I expect the samples to be stored in memory when there is 2 channels:
                 // sample0 {channel0: i16, channel1: i16}, sample1 {channel0: i16, channel1: i16}, ...
-                const samples: []const i16 = @as([*]const i16, @alignCast(@ptrCast(sound.raw.ptr)))[0..@divExact(sound.raw.len, 2)];
-                const sound_duration_seconds: f64 = @floatFromInt(@divFloor(samples.len, sound.sample_rate));
-                // NOTE @mod so that it loops back
-                const actual_time = @mod(time, sound_duration_seconds);
-                const samples_per_second_f: f64 = @floatFromInt(sound.sample_rate);
-                const next_sample_index: usize = @intFromFloat(samples_per_second_f * actual_time);
-                
-                // for now only care about channel 0
-                const sample = samples[@mod(next_sample_index*2, samples.len)];
-                const sample_f: f64 = @floatFromInt(sample);
-                const max_i16_f: f64 = @floatFromInt(std.math.maxInt(i16));
-                const sample_final: f64 = sample_f/max_i16_f;
-                break :blk sample_final;
-            },
-            else => @panic("AAAAAAAAAAAH no more channeeeellss!!! AAAAAAHHH"),
-        };
-
-        const sample_all_mixed = sample_audio + sample_keyboard;
-
-        return sample_all_mixed;
+                // TODO for now only care about channel 0, implement proper stereo sound
+                2 => samples[@mod(next_sample_index*2, samples.len)],
+                else => @panic("AAAAAAAAAAAH no more channeeeellss!!! AAAAAAHHH"),
+            };
+            const sample_f: f64 = @floatFromInt(sample);
+            const sample_final: f64 = sample_f/max_i16_f;
+            resulting_sample += sample_final;
+        }
     }
-    else return sample_keyboard;
+    const sample_all_mixed = resulting_sample + sample_keyboard;
+    return sample_all_mixed;
 }

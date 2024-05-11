@@ -125,5 +125,6 @@ pub const Sound = struct {
     byte_rate: usize,
     block_align: usize,
     bits_per_sample: usize,
+    /// a slice of bytes that contains the raw data of the audio track
     raw: []const u8,
 };
