@@ -31,6 +31,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
             mouse_left_clicked: bool = false,
             mouse_left_down: bool = false,
             mwheel: i32 = 0,
+            cpu_frequency_ms_f32: f32 = undefined,
         };
 
         var state: State = .{};
@@ -143,6 +144,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
                     _ = win32.QueryPerformanceFrequency(&performance_frequency);
                     break :blk performance_frequency.QuadPart;
                 };
+                state.cpu_frequency_ms_f32 = @as(f32, @floatFromInt(cpu_frequency_seconds)) / 1000.0;
 
                 try app.init(app_long_allocator.allocator());
 
@@ -151,7 +153,7 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
                     var ms: f32 = undefined;
                     var time_since_start: f64 = undefined;
-                    const do_artificial_wait = false;
+                    const do_artificial_wait = true;
                     while (true) {
                         var current_cpu_counter: win32.LARGE_INTEGER = undefined;
                         _ = win32.QueryPerformanceCounter(&current_cpu_counter);
@@ -371,6 +373,25 @@ pub fn Application(comptime app: ApplicationDescription) type {
 
         pub const sound = struct {
             pub const initialize = waveout.waveout_setup;
+        };
+
+        pub const perf = struct {
+            const Milliseconds = f32;
+            pub const From = struct {
+                cpu_counter: i64,
+            };
+            pub fn profile_start() From {
+                var cpu_counter: win32.LARGE_INTEGER = undefined;
+                _ = win32.QueryPerformanceCounter(&cpu_counter);
+                return .{.cpu_counter = cpu_counter.QuadPart};
+            }
+            pub fn profile_end(from: From) Milliseconds {
+                var cpu_counter: win32.LARGE_INTEGER = undefined;
+                _ = win32.QueryPerformanceCounter(&cpu_counter);
+                const cpu_counter_delta = cpu_counter.QuadPart - from.cpu_counter;
+                const ms = @as(f32, @floatFromInt(cpu_counter_delta)) / state.cpu_frequency_ms_f32;
+                return ms;
+            }
         };
     };
 }

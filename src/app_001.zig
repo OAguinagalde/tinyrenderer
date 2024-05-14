@@ -75,6 +75,7 @@ const State = struct {
     resource_file_name: []const u8,
     audio_tracks: [16] ?AudioTrack,
     sound_library: [@typeInfo(sounds).Enum.fields.len]wav.Sound,
+    play_background_music: bool,
 };
 
 var state: State = undefined;
@@ -96,6 +97,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.resource_file_name = "res/resources.bin";
     state.resources = try Resources.init(allocator);
     state.game_render_target = Buffer2D(platform.OutPixelType).from(try allocator.alloc(platform.OutPixelType, 240*136), 240);
+    state.play_background_music = true;
     
     // audio stuff
     {
@@ -138,214 +140,209 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     state.game_render_target.clear(platform.OutPixelType.from(BGR, clear_color));
 
-    if (state.audio_tracks[0] == null) {
-        play(.music_penguknight);
-    }
+    const ms_taken_update: f32 = blk: {
+        const profile = Application.perf.profile_start();
 
-    if (ud.key_pressed('R')) try load_level(Vec2(u8).from(5, 1), ud.frame);
-
-    if (ud.key_pressed('L')) {
-        const bytes = try Application.read_file_sync(ud.allocator, state.resource_file_name);
-        defer ud.allocator.free(bytes);
-        try state.resources.load_from_bytes(bytes);
-    }
-    if (ud.key_pressed('G')) state.debug = !state.debug;
-    
-    if (state.player.attack_start_frame > 0 and ud.frame - state.player.attack_start_frame >= Assets.config.player.attack.cooldown) {
-        state.player.attack_start_frame = 0;
-    }
-
-    var player_is_walking: bool = false;
-    if (ud.keys['A'] and state.player.attack_start_frame == 0) {
-        state.player.physical_component.velocity.x -= 0.010;
-        state.player.look_direction = .Left;
-        player_is_walking = true;
-    }
-    if (ud.keys['D'] and state.player.attack_start_frame == 0) {
-        state.player.physical_component.velocity.x += 0.010;
-        state.player.look_direction = .Right;
-        player_is_walking = true;
-    }
-    const player_direction_offset: f32 = switch (state.player.look_direction) { .Right => 1, .Left => -1 };
-    if (!ud.keys_old['W'] and ud.keys['W'] and state.player.jumps > 0) {
-        state.player.physical_component.velocity.y = 0.17;
-        state.player.jumps -= 1;
-        play(.jump);
-        for (0..5) |_| try particle_create(&state.particles, particles_generators.other(
-            state.player.pos.add(Vector2f.from(0, 1.5)),
-            2 + state.random.float(f32) * 2,
-            Vector2f.from(((state.random.float(f32) * 2) - 1)*0.2, -0.05),
-            100,
-        ));
-    }
-    if (!ud.keys_old['F'] and ud.keys['F'] and state.player.attack_start_frame == 0) {
-        _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, ud.frame), state.player.pos.add(Vector2f.from(player_direction_offset*8,0)), switch (state.player.look_direction) { .Right => false, .Left => true }, ud.frame);
-        state.player.attack_start_frame = ud.frame;
-        state.player.physical_component.velocity.x += 0.06 * player_direction_offset;
-        play(.attack);
-        for (0..3) |_| try particle_create(&state.particles, particles_generators.other(
-            state.player.pos.add(Vector2f.from(player_direction_offset*5, 1)),
-            2,
-            Vector2f.from((0.5 + (state.random.float(f32) * 0.3)) * player_direction_offset, (state.random.float(f32) * 0.6) - 0.2).scale(0.74),
-            60,
-        ));
-        const damage = Assets.config.player.attack.damage;
-        const hitbox = Assets.config.player.attack.hitbox_relative_to_position.scale(Vector2f.from(player_direction_offset, 1)).offset(state.player.pos);
-        const behaviour: Assets.HitboxType = .once_per_target;
-        const duration = Assets.config.player.attack.animation.duration;
-        const knockback = Vector2f.from(Assets.config.player.attack.knockback_strength * player_direction_offset, 0);
-        try state.entities_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, ud.frame);
-    }
-
-    if (state.random.float(f32)>0.8) {
-        const height = 21;
-        const from: f32 = 304;
-        const to: f32 = 367;
-        try particle_create(&state.particles, particles_generators.poison(Vector2f.from(state.random.float(f32)*(to-from)+from, height)));
-    }
-
-    const player_floored = Physics.apply(&state.player.physical_component);
-    state.player.pos = Physics.calculate_real_pos(state.player.physical_component.physical_pos);
-    state.player.hurtbox = Assets.entity_knight_1.hurtbox.offset(state.player.pos);
-
-    if (player_floored) {
-        state.player.jumps = 2;
-        if (player_is_walking and (state.random.float(f32) > 0.8)) {
-            try particle_create(&state.particles, particles_generators.walk(state.player.pos.add(Vector2f.from(0, 1))));
+        if (state.play_background_music and state.audio_tracks[0] == null) {
+            play(.music_penguknight);
         }
-    }
 
-    // check for doors to change level
-    const player_tile = state.player.get_current_tile();
-    for (state.doors.items) |door| {
-        if (player_tile.x == door.pos.x and player_tile.y == door.pos.y and ud.key_pressed('E')) {
-            const junction = state.resources.junctions.items[door.index];
-            if (junction.a.x == door.pos.x and junction.a.y == door.pos.y) try load_level(junction.b, ud.frame) else try load_level(junction.a, ud.frame);
-            return true;
+        if (ud.key_pressed('R')) try load_level(Vec2(u8).from(5, 1), ud.frame);
+
+        if (ud.key_pressed('L')) {
+            const bytes = try Application.read_file_sync(ud.allocator, state.resource_file_name);
+            defer ud.allocator.free(bytes);
+            try state.resources.load_from_bytes(bytes);
         }
-    }
-    
-    for (state.particle_emitters.items) |particle_emitter| {
-        if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(particle_emitter.pos.to(f32).scale(8).add(Vec2(f32).from(4,4))));
-    }
+        if (ud.key_pressed('G')) state.debug = !state.debug;
+        if (ud.key_pressed('M')) {
+            if (state.play_background_music and state.audio_tracks[0] != null) {
+                state.play_background_music = false;
+                // NOTE make it look like the song started longer before than it really did so that it naturally stops
+                state.audio_tracks[0].?.time_offset -= state.audio_tracks[0].?.duration_seconds;
+            }
+            else if (!state.play_background_music) state.play_background_music = true;
+        }
+        
+        if (state.player.attack_start_frame > 0 and ud.frame - state.player.attack_start_frame >= Assets.config.player.attack.cooldown) {
+            state.player.attack_start_frame = 0;
+        }
 
-    try state.entities.entities_update(state.player.pos, ud.frame);
-    
-    for (state.player_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
-        const frames_up = ud.frame - hitbox.frame;
-        var do_remove = false;
-        // the entity is being hit by `hitbox`
-        if (hitbox.bb.overlaps(state.player.hurtbox)) {
-            switch (hitbox.behaviour) {
-                // TODO implement different hitbox behaviours
-                .once_per_frame, .once_per_target => {
-                    state.player.hp -= hitbox.dmg;
-                    state.player.physical_component.velocity = state.player.physical_component.velocity.add(hitbox.knockback);
-                    for (0..5) |_| try particle_create(&state.particles, particles_generators.bleed(state.player.pos));
-                    do_remove = true;
-                    play(.damage_received_unused);
-                },
+        var player_is_walking: bool = false;
+        if (ud.keys['A'] and state.player.attack_start_frame == 0) {
+            state.player.physical_component.velocity.x -= 0.010;
+            state.player.look_direction = .Left;
+            player_is_walking = true;
+        }
+        if (ud.keys['D'] and state.player.attack_start_frame == 0) {
+            state.player.physical_component.velocity.x += 0.010;
+            state.player.look_direction = .Right;
+            player_is_walking = true;
+        }
+        const player_direction_offset: f32 = switch (state.player.look_direction) { .Right => 1, .Left => -1 };
+        if (!ud.keys_old['W'] and ud.keys['W'] and state.player.jumps > 0) {
+            state.player.physical_component.velocity.y = 0.17;
+            state.player.jumps -= 1;
+            play(.jump);
+            for (0..5) |_| try particle_create(&state.particles, particles_generators.other(
+                state.player.pos.add(Vector2f.from(0, 1.5)),
+                2 + state.random.float(f32) * 2,
+                Vector2f.from(((state.random.float(f32) * 2) - 1)*0.2, -0.05),
+                100,
+            ));
+        }
+        if (!ud.keys_old['F'] and ud.keys['F'] and state.player.attack_start_frame == 0) {
+            _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, ud.frame), state.player.pos.add(Vector2f.from(player_direction_offset*8,0)), switch (state.player.look_direction) { .Right => false, .Left => true }, ud.frame);
+            state.player.attack_start_frame = ud.frame;
+            state.player.physical_component.velocity.x += 0.06 * player_direction_offset;
+            play(.attack);
+            for (0..3) |_| try particle_create(&state.particles, particles_generators.other(
+                state.player.pos.add(Vector2f.from(player_direction_offset*5, 1)),
+                2,
+                Vector2f.from((0.5 + (state.random.float(f32) * 0.3)) * player_direction_offset, (state.random.float(f32) * 0.6) - 0.2).scale(0.74),
+                60,
+            ));
+            const damage = Assets.config.player.attack.damage;
+            const hitbox = Assets.config.player.attack.hitbox_relative_to_position.scale(Vector2f.from(player_direction_offset, 1)).offset(state.player.pos);
+            const behaviour: Assets.HitboxType = .once_per_target;
+            const duration = Assets.config.player.attack.animation.duration;
+            const knockback = Vector2f.from(Assets.config.player.attack.knockback_strength * player_direction_offset, 0);
+            try state.entities_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, ud.frame);
+        }
+
+        if (state.random.float(f32)>0.8) {
+            const height = 21;
+            const from: f32 = 304;
+            const to: f32 = 367;
+            try particle_create(&state.particles, particles_generators.poison(Vector2f.from(state.random.float(f32)*(to-from)+from, height)));
+        }
+
+        const player_floored = Physics.apply(&state.player.physical_component);
+        state.player.pos = Physics.calculate_real_pos(state.player.physical_component.physical_pos);
+        state.player.hurtbox = Assets.entity_knight_1.hurtbox.offset(state.player.pos);
+
+        if (player_floored) {
+            state.player.jumps = 2;
+            if (player_is_walking and (state.random.float(f32) > 0.8)) {
+                try particle_create(&state.particles, particles_generators.walk(state.player.pos.add(Vector2f.from(0, 1))));
             }
         }
-        if (do_remove or (frames_up >= hitbox.duration)) state.player_damage_dealers.hitboxes.release_by_index(i);
-    }
 
-    state.camera.move_to(state.player.pos, w, h);
+        // check for doors to change level
+        const player_tile = state.player.get_current_tile();
+        for (state.doors.items) |door| {
+            if (player_tile.x == door.pos.x and player_tile.y == door.pos.y and ud.key_pressed('E')) {
+                const junction = state.resources.junctions.items[door.index];
+                if (junction.a.x == door.pos.x and junction.a.y == door.pos.y) try load_level(junction.b, ud.frame) else try load_level(junction.a, ud.frame);
+                return true;
+            }
+        }
+        
+        for (state.particle_emitters.items) |particle_emitter| {
+            if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(particle_emitter.pos.to(f32).scale(8).add(Vec2(f32).from(4,4))));
+        }
 
-    try update_animations_in_place(&state.animations_in_place, ud.frame);
-    try particles_update(&state.particles);
-
-    const view_matrix_m33 = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
-    const projection_matrix_m33 = M33.orthographic_projection(0, w, h, 0);
-    const viewport_matrix_m33 = M33.viewport(0, 0, w, h);
-    const mvp_matrix_33 = projection_matrix_m33.multiply(view_matrix_m33.multiply(M33.identity()));
-    
-    var renderer = try Renderer(platform.OutPixelType).init(ud.allocator);
-    
-    renderer.set_context(
-        state.game_render_target,
-        mvp_matrix_33,
-        viewport_matrix_m33
-    );
-
-    // render map
-    const map_bb_f = state.level_background.scale(Vec2(usize).from(8,8)).to(f32);
-    try renderer.add_map(
-        Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
-        @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8), &state.resources.map,
-        state.level_background,
-        map_bb_f
-        // BoundingBox(f32).from_bl_size(
-        //     Vector2f.from(map_bb_f.left, map_bb_f.bottom),
-        //     Vector2f.from(state.level_background.width()*8, state.level_background.height()*8)
-        // )
-    );
-
-    // TODO render static texts
-    // 
-    //     const static_texts_color = RGBA.from(BGR, @bitCast(Assets.palette[5]));
-    //     for (state.texts) |text| {
-    //         const text_tile = Vector2i.from(text.pos.x, correct_y(text.pos.y));
-    //         try state.text_renderer.print(text_tile.scale(8).to(f32), "{s}", .{text.text}, static_texts_color);
-    //     }
-    //     state.text_renderer.render_all(
-    //         state.game_render_target,
-    //         mvp_matrix_33,
-    //         viewport_matrix_m33
-    //     );
-    // 
-    
-    // render entities
-    {
-        var it = EntitySystem.EntityStorage.view(.{EntitySystem.EntityPosition, RuntimeAnimation}).iterator();
-        while (it.next(&state.entities.entities)) |e| {
-            const anim_component = (try state.entities.entities.getComponent(RuntimeAnimation, e)).?;
-            const pos_component = (try state.entities.entities.getComponent(EntitySystem.EntityPosition, e)).?;
-            const dir_component = (try state.entities.entities.getComponent(Direction, e)).?;
-            const sprite = anim_component.calculate_frame(ud.frame);
-            const pos = pos_component.add(Vector2f.from(-4, 0)) ;
-            try renderer.add_sprite_from_atlas_by_index(
-                Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
-                @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
-                @intCast(sprite),
-                BoundingBox(f32).from_bl_size(
-                    pos,
-                    Vec2(f32).from(8,8)
-                ),
-                .{
-                    .mirror_horizontally = switch (dir_component.*) { .Left => true, .Right => false },
-                    .blend = true,
+        try state.entities.entities_update(state.player.pos, ud.frame);
+        
+        for (state.player_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
+            const frames_up = ud.frame - hitbox.frame;
+            var do_remove = false;
+            // the entity is being hit by `hitbox`
+            if (hitbox.bb.overlaps(state.player.hurtbox)) {
+                switch (hitbox.behaviour) {
+                    // TODO implement different hitbox behaviours
+                    .once_per_frame, .once_per_target => {
+                        state.player.hp -= hitbox.dmg;
+                        state.player.physical_component.velocity = state.player.physical_component.velocity.add(hitbox.knockback);
+                        for (0..5) |_| try particle_create(&state.particles, particles_generators.bleed(state.player.pos));
+                        do_remove = true;
+                        play(.damage_received_unused);
+                    },
                 }
-            );
-        }
-    }
-    
-    // render player
-    {
-        const sprite = state.player.animation.calculate_frame(ud.frame);
-        const pos = state.player.pos.add(Vector2f.from(-4, 0));
-        try renderer.add_sprite_from_atlas_by_index(
-            Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
-            @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
-            @intCast(sprite),
-            BoundingBox(f32).from_bl_size(
-                pos,
-                Vec2(f32).from(8,8)
-            ),
-            .{
-                .mirror_horizontally = state.player.look_direction == .Left,
-                .blend = true,
             }
+            if (do_remove or (frames_up >= hitbox.duration)) state.player_damage_dealers.hitboxes.release_by_index(i);
+        }
+
+        state.camera.move_to(state.player.pos, w, h);
+
+        try update_animations_in_place(&state.animations_in_place, ud.frame);
+        try particles_update(&state.particles);
+        break :blk Application.perf.profile_end(profile);
+    };
+    
+    var renderer: Renderer(platform.OutPixelType) = undefined;
+    
+    const ms_taken_render: f32 = blk: {
+        const profile = Application.perf.profile_start();
+        const view_matrix_m33 = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
+        const projection_matrix_m33 = M33.orthographic_projection(0, w, h, 0);
+        const viewport_matrix_m33 = M33.viewport(0, 0, w, h);
+        const mvp_matrix_33 = projection_matrix_m33.multiply(view_matrix_m33.multiply(M33.identity()));
+        
+        renderer = try Renderer(platform.OutPixelType).init(ud.allocator);
+        
+        renderer.set_context(
+            state.game_render_target,
+            mvp_matrix_33,
+            viewport_matrix_m33
         );
-    }
-    
-    // render in-place animation
-    {
-        var it = AnimationSystem.view(.{ Visual }).iterator();
-        while (it.next(&state.animations_in_place)) |entity| {
-            const visual = (try state.animations_in_place.getComponent(Visual, entity)).?;
-            const sprite = visual.sprite;
-            const pos = visual.position.add(Vector2f.from(-4,0));
+
+        // render map
+        const map_bb_f = state.level_background.scale(Vec2(usize).from(8,8)).to(f32);
+        try renderer.add_map(
+            Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+            @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8), &state.resources.map,
+            state.level_background,
+            map_bb_f
+            // BoundingBox(f32).from_bl_size(
+            //     Vector2f.from(map_bb_f.left, map_bb_f.bottom),
+            //     Vector2f.from(state.level_background.width()*8, state.level_background.height()*8)
+            // )
+        );
+
+        // TODO render static texts
+        // 
+        //     const static_texts_color = RGBA.from(BGR, @bitCast(Assets.palette[5]));
+        //     for (state.texts) |text| {
+        //         const text_tile = Vector2i.from(text.pos.x, correct_y(text.pos.y));
+        //         try state.text_renderer.print(text_tile.scale(8).to(f32), "{s}", .{text.text}, static_texts_color);
+        //     }
+        //     state.text_renderer.render_all(
+        //         state.game_render_target,
+        //         mvp_matrix_33,
+        //         viewport_matrix_m33
+        //     );
+        // 
+        
+        // render entities
+        {
+            var it = EntitySystem.EntityStorage.view(.{EntitySystem.EntityPosition, RuntimeAnimation}).iterator();
+            while (it.next(&state.entities.entities)) |e| {
+                const anim_component = (try state.entities.entities.getComponent(RuntimeAnimation, e)).?;
+                const pos_component = (try state.entities.entities.getComponent(EntitySystem.EntityPosition, e)).?;
+                const dir_component = (try state.entities.entities.getComponent(Direction, e)).?;
+                const sprite = anim_component.calculate_frame(ud.frame);
+                const pos = pos_component.add(Vector2f.from(-4, 0)) ;
+                try renderer.add_sprite_from_atlas_by_index(
+                    Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                    @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
+                    @intCast(sprite),
+                    BoundingBox(f32).from_bl_size(
+                        pos,
+                        Vec2(f32).from(8,8)
+                    ),
+                    .{
+                        .mirror_horizontally = switch (dir_component.*) { .Left => true, .Right => false },
+                        .blend = true,
+                    }
+                );
+            }
+        }
+        
+        // render player
+        {
+            const sprite = state.player.animation.calculate_frame(ud.frame);
+            const pos = state.player.pos.add(Vector2f.from(-4, 0));
             try renderer.add_sprite_from_atlas_by_index(
                 Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
                 @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
@@ -355,48 +352,76 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                     Vec2(f32).from(8,8)
                 ),
                 .{
-                    .mirror_horizontally = visual.flipped,
+                    .mirror_horizontally = state.player.look_direction == .Left,
                     .blend = true,
                 }
             );
         }
-    }
-    
-    // render particles
-    {
-        var it = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
-        while (it.next(&state.particles)) |e| {
-            const render_component = (try state.particles.getComponent(ParticleRenderData, e)).?;
-            const position_component = (try state.particles.getComponent(Vector2f, e)).?;
-            const radius = render_component.radius;
-            try renderer.add_quad_from_bb(BoundingBox(f32).from_bl_size(position_component.*, Vec2(f32).from(radius, radius)), render_component.color);
+        
+        // render in-place animation
+        {
+            var it = AnimationSystem.view(.{ Visual }).iterator();
+            while (it.next(&state.animations_in_place)) |entity| {
+                const visual = (try state.animations_in_place.getComponent(Visual, entity)).?;
+                const sprite = visual.sprite;
+                const pos = visual.position.add(Vector2f.from(-4,0));
+                try renderer.add_sprite_from_atlas_by_index(
+                    Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                    @constCast(&Assets.palette), Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
+                    @intCast(sprite),
+                    BoundingBox(f32).from_bl_size(
+                        pos,
+                        Vec2(f32).from(8,8)
+                    ),
+                    .{
+                        .mirror_horizontally = visual.flipped,
+                        .blend = true,
+                    }
+                );
+            }
         }
-    }
-    
-    // render debug hit boxes
-    if (state.debug) {
-        for (state.player_damage_dealers.hitboxes.slice()) |hb| {
-            try renderer.add_quad_from_bb(hb.bb, RGBA.make(255,0,0,100));
+        
+        // render particles
+        {
+            var it = Particles.view(.{ Vector2f, ParticleRenderData }).iterator();
+            while (it.next(&state.particles)) |e| {
+                const render_component = (try state.particles.getComponent(ParticleRenderData, e)).?;
+                const position_component = (try state.particles.getComponent(Vector2f, e)).?;
+                const radius = render_component.radius;
+                try renderer.add_quad_from_bb(BoundingBox(f32).from_bl_size(position_component.*, Vec2(f32).from(radius, radius)), render_component.color);
+            }
         }
-        for (state.entities_damage_dealers.hitboxes.slice()) |hb| {
-            try renderer.add_quad_from_bb(hb.bb, RGBA.make(0,255,0,100));
+        
+        // render debug hit boxes
+        if (state.debug) {
+            for (state.player_damage_dealers.hitboxes.slice()) |hb| {
+                try renderer.add_quad_from_bb(hb.bb, RGBA.make(255,0,0,100));
+            }
+            for (state.entities_damage_dealers.hitboxes.slice()) |hb| {
+                try renderer.add_quad_from_bb(hb.bb, RGBA.make(0,255,0,100));
+            }
+            const hb = state.player.hurtbox;
+            try renderer.add_quad_from_bb(hb, RGBA.make(0,0,255,100));
         }
-        const hb = state.player.hurtbox;
-        try renderer.add_quad_from_bb(hb, RGBA.make(0,0,255,100));
-    }
 
-    try renderer.flush_all();
+        try renderer.flush_all();
+        break :blk Application.perf.profile_end(profile);
+    };
 
     // scale to 4 times bigger render target
     // The game is being rendered to a 1/4 size of the window, so scale the image back up to the real size
-    for (state.game_render_target.data, 0..) |pixel_in, pixel_in_index| {
-        const pixel_in_x = pixel_in_index % state.game_render_target.width;
-        const pixel_in_y = @divFloor(pixel_in_index, state.game_render_target.width);
-        const pixel_out_x = pixel_in_x * 4;
-        const pixel_out_y = pixel_in_y * 4;
-        // TODO not cache frienly at all, it works for now tho
-        for (0..4) |i| { for (0..4) |j| ud.pixel_buffer.data[((pixel_out_y+i)*ud.pixel_buffer.width) + (pixel_out_x+j)] = pixel_in; }
-    }
+    const ms_taken_upscale: f32 = blk: {
+        const profile = Application.perf.profile_start();
+        for (state.game_render_target.data, 0..) |pixel_in, pixel_in_index| {
+            const pixel_in_x = pixel_in_index % state.game_render_target.width;
+            const pixel_in_y = @divFloor(pixel_in_index, state.game_render_target.width);
+            const pixel_out_x = pixel_in_x * 4;
+            const pixel_out_y = pixel_in_y * 4;
+            // TODO not cache frienly at all, it works for now tho
+            for (0..4) |i| { for (0..4) |j| ud.pixel_buffer.data[((pixel_out_y+i)*ud.pixel_buffer.width) + (pixel_out_x+j)] = pixel_in; }
+        }
+        break :blk Application.perf.profile_end(profile);
+    };
 
     // blit to bottom left
     // 
@@ -409,37 +434,52 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     
     if (state.debug) {
 
-        renderer.set_context(
-            ud.pixel_buffer,
-            M33.orthographic_projection(0, real_w, real_h, 0),
-            M33.viewport(0, 0, real_w, real_h)
-        );
-
-        const debug_text_color: BGR = @bitCast(Assets.palette[3]);
-        const color = RGBA.from(BGR, debug_text_color);
-        const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos);
-        const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
-        const mouse: Vector2f = blk: {
-            const mx = @divFloor(ud.mouse.x, Application.dimension_scale);
-            // inverse y since mouse is given relative to top left corner
-            const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
-            const offset = Vector2f.from(state.camera.pos.x, state.camera.pos.y);
-            const pos = Vector2i.from(mx, my).to(f32).add(offset);
-            break :blk pos;
+        const static = struct {
+            var ms_taken_debug_previous: f32 = 0;
         };
-        const text_height = 6 + 1;
-        try renderer.add_text(Vector2f.from(5, real_h - (text_height*1 )), "ms {d: <9.2}", .{ud.ms}, color);
-        try renderer.add_text(Vector2f.from(5, real_h - (text_height*2 )), "fps {d:0.4}", .{ud.ms / 1000*60}, color);
-        try renderer.add_text(Vector2f.from(5, real_h - (text_height*3 )), "frame {}", .{ud.frame}, color);
-        try renderer.add_text(Vector2f.from(5, real_h - (text_height*4 )), "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, color);
-        try renderer.add_text(Vector2f.from(5, real_h - (text_height*5 )), "mouse {d:.4} {d:.4}", .{mouse.x, mouse.y}, color);
-        try renderer.add_text(Vector2f.from(5, real_h - (text_height*6 )), "dimensions {d:.4} {d:.4} | real {d:.4} {d:.4}", .{w, h, real_w, real_h}, color);
-        try renderer.add_text(Vector2f.from(5, real_h - (text_height*7 )), "physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y}, color);
-        try renderer.add_text(Vector2f.from(5, real_h - (text_height*8 )), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
-        try renderer.add_text(Vector2f.from(5, real_h - (text_height*9 )), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
-        try renderer.add_text(Vector2f.from(5, real_h - (text_height*10)), "vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y}, color);
 
-        try renderer.flush_all();
+        static.ms_taken_debug_previous = blk: {
+            const profile = Application.perf.profile_start();
+
+            renderer.set_context(
+                ud.pixel_buffer,
+                M33.orthographic_projection(0, real_w, real_h, 0),
+                M33.viewport(0, 0, real_w, real_h)
+            );
+
+            const debug_text_color: BGR = @bitCast(Assets.palette[3]);
+            const color = RGBA.from(BGR, debug_text_color);
+            const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos);
+            const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
+            const mouse: Vector2f = mouse_blk: {
+                const mx = @divFloor(ud.mouse.x, Application.dimension_scale);
+                // inverse y since mouse is given relative to top left corner
+                const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
+                const offset = Vector2f.from(state.camera.pos.x, state.camera.pos.y);
+                const pos = Vector2i.from(mx, my).to(f32).add(offset);
+                break :mouse_blk pos;
+            };
+            const text_height = 6 + 1;
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*1 )), "ms {d: <9.2}", .{ud.ms}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*2 )), "fps {d:0.4}", .{ud.ms / 1000*60}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*3 )), "frame {}", .{ud.frame}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*4 )), "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*5 )), "mouse {d:.4} {d:.4}", .{mouse.x, mouse.y}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*6 )), "dimensions {d:.4} {d:.4} | real {d:.4} {d:.4}", .{w, h, real_w, real_h}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*7 )), "physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*8 )), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*9 )), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*10)), "vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*11)), "update  took {d:.8}ms", .{ms_taken_update}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*12)), "render  took {d:.8}ms", .{ms_taken_render}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*13)), "upscale took {d:.8}ms", .{ms_taken_upscale}, color);
+            try renderer.add_text(Vector2f.from(5, real_h - (text_height*14)), "debug   took {d:.8}ms", .{static.ms_taken_debug_previous}, color);
+
+            try renderer.flush_all();
+        
+            break :blk Application.perf.profile_end(profile);
+        };
+
     }
 
     return true;
