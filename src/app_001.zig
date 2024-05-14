@@ -5,6 +5,7 @@ const graphics = @import("graphics.zig");
 const physics = @import("physics.zig");
 const font = @import("text.zig").font;
 const core = @import("core.zig");
+const wav = @import("wav.zig");
 
 const BoundingBox = math.BoundingBox;
 const Vec2 = math.Vec2;
@@ -20,6 +21,7 @@ const Ecs = @import("ecs.zig").Ecs;
 const Entity = @import("ecs.zig").Entity;
 const Resources = @import("app_003.zig").Resources;
 const Renderer = @import("app_003.zig").Renderer;
+const Sound = wav.Sound;
 
 const windows = @import("windows.zig");
 const wasm = @import("wasm.zig");
@@ -70,6 +72,8 @@ const State = struct {
     debug: bool,
     resources: Resources,
     resource_file_name: []const u8,
+    audio_tracks: [16] ?AudioTrack,
+    sound_library: [@typeInfo(sounds).Enum.fields.len]wav.Sound,
 };
 
 var state: State = undefined;
@@ -90,6 +94,29 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.debug = true;
     state.resource_file_name = "res/resources.bin";
     state.resources = try Resources.init(allocator);
+    
+    // audio stuff
+    {
+        for (&state.audio_tracks) |*at| at.* = null;
+        for (wav_files, 0..) |wav_file, i| {
+            // TODO make an scratch allocator for things like this since these are not necessary to be kept
+            const bytes = Application.read_file_sync(allocator, wav_file) catch continue;
+            const sound = try wav.from_bytes(allocator, bytes);
+            // TODO some of my audio resources have a range without any sound at all at the start.
+            // Preprocess them to discard any samples of value 0 (or values under a threshold or something)
+            state.sound_library[i] = sound;
+        }
+
+        try Application.sound.initialize(allocator, .{
+            .user_callback = produce_sound,
+            .block_count = 8,
+            .block_sample_count = 256,
+            .channels = 1,
+            .device_index = 0,
+            .samples_per_second = 44100,
+        });
+    }
+
     // load the resources
     const bytes = try Application.read_file_sync(allocator, state.resource_file_name);
     defer allocator.free(bytes);
@@ -104,6 +131,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
+
+    if (state.audio_tracks[0] == null) {
+        play(.music_penguknight);
+    }
 
     if (ud.key_pressed('R')) try load_level(Vec2(u8).from(5, 1), ud.frame);
 
@@ -133,7 +164,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     if (!ud.keys_old['W'] and ud.keys['W'] and state.player.jumps > 0) {
         state.player.physical_component.velocity.y = 0.17;
         state.player.jumps -= 1;
-        // TODO sfx
+        play(.jump);
         for (0..5) |_| try particle_create(&state.particles, particles_generators.other(
             state.player.pos.add(Vector2f.from(0, 1.5)),
             2 + state.random.float(f32) * 2,
@@ -145,7 +176,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, ud.frame), state.player.pos.add(Vector2f.from(player_direction_offset*8,0)), switch (state.player.look_direction) { .Right => false, .Left => true }, ud.frame);
         state.player.attack_start_frame = ud.frame;
         state.player.physical_component.velocity.x += 0.06 * player_direction_offset;
-        // TODO sfx
+        play(.attack);
         for (0..3) |_| try particle_create(&state.particles, particles_generators.other(
             state.player.pos.add(Vector2f.from(player_direction_offset*5, 1)),
             2,
@@ -206,7 +237,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                     state.player.physical_component.velocity = state.player.physical_component.velocity.add(hitbox.knockback);
                     for (0..5) |_| try particle_create(&state.particles, particles_generators.bleed(state.player.pos));
                     do_remove = true;
-                    // TODO sfx
+                    play(.damage_received_unused);
                 },
             }
         }
@@ -450,6 +481,109 @@ pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
 
 fn tile_to_grounded_position(tile: Vector2i) Vector2f {
     return Vector2f.from(@floatFromInt(tile.x*8+4), (@floatFromInt(tile.y*8)));
+}
+
+const AudioTrack = struct {
+    wav: wav.Sound,
+    // reinterpret the raw bytes of the audio track as an []i16
+    samples: []const i16,
+    samples_per_second_f: f64,
+    duration_seconds: f64,
+    time_offset: f64,
+};
+
+pub fn play(sound: sounds) void {
+    audio_play(&state.audio_tracks, state.sound_library[@intFromEnum(sound)]);
+}
+
+pub fn audio_play(audio_tracks: []?AudioTrack, sound: wav.Sound) void {
+    for (audio_tracks) |*maybe_audio_track| {
+        if (maybe_audio_track.* == null) {
+            // found an unused audio track, set it with the new audio track
+            const samples = @as([*]const i16, @alignCast(@ptrCast(sound.raw.ptr)))[0..@divExact(sound.raw.len, 2)];
+            var duration: f64 = @floatFromInt(@divFloor(samples.len, sound.sample_rate));
+            if (sound.channel_count == 2) duration /= 2;
+            maybe_audio_track.* = .{
+                .time_offset = 0,
+                .wav = sound,
+                .samples = samples,
+                .samples_per_second_f = @floatFromInt(sound.sample_rate),
+                .duration_seconds = duration,
+            };
+            return;
+        }
+    }
+    // if we get here it means couldn't find an unused track
+}
+
+const sounds = enum {
+    attack,
+    jump,
+    knight_prepare,
+    knight_attack,
+    slime_attack_a,
+    slime_attack_b,
+    damage_received_unused,
+    die_received_unused,
+    music_unused,
+    music_penguknight,
+};
+
+const wav_files = &[_][]const u8 {
+    "res/sfx62_attack.wav",
+    "res/sfx0_jump.wav",
+    "res/sfx5_knight_prepare.wav",
+    "res/sfx8_knight_attack.wav",
+    "res/sfx32_slime_attack.wav",
+    "res/sfx33_slime_attack.wav",
+    "res/sfx57_damage_received_unused.wav",
+    "res/sfx59_die_unused.wav",
+    "res/m0_unused.wav",
+    "res/m1_penguknight.wav",
+};
+
+pub fn produce_sound(time: f64) f64 {
+
+    const max_i16_f: f64 = @floatFromInt(std.math.maxInt(i16));
+
+    // TODO It's probably better to somehow pre-calculate the samples being generated for a sound and just caching them
+    // and passing them directly as an array of pre-calculated samples, rather than make them one by one like now.
+    // But doing that means changing the way the whole thing works, so later...
+    var resulting_sample: f64 = 0;
+    for (&state.audio_tracks) |*audio_track_maybe| {
+        if (audio_track_maybe.*) |*audio_track| {
+            if (audio_track.time_offset == 0) {
+                // TODO for now I'm not sure how to properly synchronize the timer in the audio thread and the one in the
+                // main thread so whenever time_offset is 0 it means it just started so just set the time offset
+                // to the time here since this is the relevant audio thread timer
+                audio_track.time_offset = time;
+            }
+            // we are done playing the audio track so free it so that other audio tracks can be played
+            if (time >= audio_track.time_offset+audio_track.duration_seconds) {
+                audio_track_maybe.* = null;
+                continue;
+            }
+            const track = audio_track.wav;
+            const samples: []const i16 = audio_track.samples;
+            // @mod so that it loops back
+            const actual_time = @mod(time-audio_track.time_offset, audio_track.duration_seconds);
+            const next_sample_index: usize = @intFromFloat(audio_track.samples_per_second_f * actual_time);
+            const sample: i16 = switch (track.channel_count) {
+                // This is how I expect the samples to be stored in memory when there is a single channel:
+                // sample0: i16, sample1: i16, ...
+                1 => samples[next_sample_index],
+                // This is how I expect the samples to be stored in memory when there is 2 channels:
+                // sample0 {channel0: i16, channel1: i16}, sample1 {channel0: i16, channel1: i16}, ...
+                // TODO for now only care about channel 0, implement proper stereo sound
+                2 => samples[@mod(next_sample_index*2, samples.len)],
+                else => @panic("AAAAAAAAAAAH no more channeeeellss!!! AAAAAAHHH"),
+            };
+            const sample_f: f64 = @floatFromInt(sample);
+            const sample_final: f64 = sample_f/max_i16_f;
+            resulting_sample += sample_final;
+        }
+    }
+    return resulting_sample;
 }
 
 const Physics = blk: {
@@ -703,7 +837,7 @@ const EntitySystem = struct {
                             slime_component.attack_direction = if (is_right) .Right else .Left;
                             dir_component.* = if (is_right) .Right else .Left;
                             // TODO animation "charging"
-                            // TODO sfx "charging"
+                            play(.slime_attack_a);
                         }
                         else if (in_chase_range) {
                             phys_component.velocity.x = (entity_desc.speed * dir_f32);
@@ -729,7 +863,7 @@ const EntitySystem = struct {
                             set_slime_body_as_hitbox = true;
                             
                             // TODO animation "damaging hitbox"
-                            // TODO sfx "launch"
+                            play(.slime_attack_b);
                         }
                         else if (@abs(phys_component.velocity.x) <= 0.1 and @abs(phys_component.velocity.y) <= 0.1) {
                             // back to normal
@@ -774,7 +908,7 @@ const EntitySystem = struct {
                             const attack_dir_f32 = switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0};
                             _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.animation_preparing_attack, frame), pos_component.add(Vector2f.from(attack_dir_f32*3,0)), false, frame);
                             // TODO knight animation "charging"?
-                            // TODO sfx "charging"
+                            play(.knight_prepare);
                         }
                         else if (in_chase_range) {
                             phys_component.velocity.x = (entity_desc.speed * dir_f32);
@@ -802,7 +936,7 @@ const EntitySystem = struct {
 
                             const mirror_animation = switch(knight_component.attack_direction){.Right=> false, .Left=> true};
                             _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.animation_attack_1, frame), pos_component.add(Vector2f.from(attack_dir_f32*7,0)), mirror_animation, frame);
-                            // TODO sfx "swing"
+                            play(.knight_attack);
                             phys_component.velocity.x = (entity_desc.speed * switch(knight_component.attack_direction){.Right=>@as(f32, 1.0),.Left=>-1.0});
                             knight_component.current_state = .attack_1_cooldown;
                             knight_component.state_change_frame = frame;
@@ -814,7 +948,7 @@ const EntitySystem = struct {
                         if (frames_since_attack < cooldown_duration_1) {
                             if (in_attack_range and (is_right == (knight_component.attack_direction == .Right))) {
                                 // if player still in front, chain attack
-                                // TODO sfx "about to chain attack"
+                                play(.knight_prepare);
                                 _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.animation_preparing_attack, frame), pos_component.add(Vector2f.from(attack_dir_f32*3,0)), false, frame);
                                 knight_component.current_state = .chaining;
                                 knight_component.state_change_frame = frame;
@@ -830,7 +964,7 @@ const EntitySystem = struct {
                     if (knight_component.current_state == .chaining) {
                         const frames_since_chaining_started = frame - knight_component.state_change_frame;
                         if (frames_since_chaining_started == chain_charge_duration) {
-                            // TODO sfx "swing"
+                            play(.knight_attack);
                             
                             const damage: i32 = entity_desc.attack_dmg*2;
                             const hitbox = BoundingBox(f32).from(7, 1, 3, 10).scale(Vector2f.from(attack_dir_f32, 1)).offset(pos_component.*);
