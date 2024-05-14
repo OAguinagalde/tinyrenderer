@@ -30,9 +30,9 @@ const platform = if (builtin.os.tag == .windows) windows else wasm;
 const Application = platform.Application(.{
     .init = init,
     .update = update,
-    .dimension_scale = 4,
-    .desired_width = 240,
-    .desired_height = 136,
+    .dimension_scale = 1,
+    .desired_width = 240*4,
+    .desired_height = 136*4,
 });
 
 // TODO: currently the wasm target only works if the exported functions are explicitly referenced.
@@ -56,6 +56,7 @@ pub fn main() !void {
 // TODO tools
 
 const State = struct {
+    game_render_target: Buffer2D(platform.OutPixelType),
     entities: EntitySystem,
     level_background: BoundingBox(usize),
     player: Player,
@@ -94,6 +95,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.debug = true;
     state.resource_file_name = "res/resources.bin";
     state.resources = try Resources.init(allocator);
+    state.game_render_target = Buffer2D(platform.OutPixelType).from(try allocator.alloc(platform.OutPixelType, 240*136), 240);
     
     // audio stuff
     {
@@ -126,11 +128,15 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
-    const h: f32 = @floatFromInt(ud.pixel_buffer.height);
-    const w: f32 = @floatFromInt(ud.pixel_buffer.width);
+
+    const h: f32 = @floatFromInt(state.game_render_target.height);
+    const w: f32 = @floatFromInt(state.game_render_target.width);
+    
+    const real_h: f32 = @floatFromInt(ud.pixel_buffer.height);
+    const real_w: f32 = @floatFromInt(ud.pixel_buffer.width);
 
     const clear_color: BGR = @bitCast(Assets.palette[0]);
-    ud.pixel_buffer.clear(platform.OutPixelType.from(BGR, clear_color));
+    state.game_render_target.clear(platform.OutPixelType.from(BGR, clear_color));
 
     if (state.audio_tracks[0] == null) {
         play(.music_penguknight);
@@ -257,7 +263,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     var renderer = try Renderer(platform.OutPixelType).init(ud.allocator);
     
     renderer.set_context(
-        ud.pixel_buffer,
+        state.game_render_target,
         mvp_matrix_33,
         viewport_matrix_m33
     );
@@ -283,7 +289,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     //         try state.text_renderer.print(text_tile.scale(8).to(f32), "{s}", .{text.text}, static_texts_color);
     //     }
     //     state.text_renderer.render_all(
-    //         ud.pixel_buffer,
+    //         state.game_render_target,
     //         mvp_matrix_33,
     //         viewport_matrix_m33
     //     );
@@ -380,13 +386,33 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     }
 
     try renderer.flush_all();
+
+    // scale to 4 times bigger render target
+    // The game is being rendered to a 1/4 size of the window, so scale the image back up to the real size
+    for (state.game_render_target.data, 0..) |pixel_in, pixel_in_index| {
+        const pixel_in_x = pixel_in_index % state.game_render_target.width;
+        const pixel_in_y = @divFloor(pixel_in_index, state.game_render_target.width);
+        const pixel_out_x = pixel_in_x * 4;
+        const pixel_out_y = pixel_in_y * 4;
+        // TODO not cache frienly at all, it works for now tho
+        for (0..4) |i| { for (0..4) |j| ud.pixel_buffer.data[((pixel_out_y+i)*ud.pixel_buffer.width) + (pixel_out_x+j)] = pixel_in; }
+    }
+
+    // blit to bottom left
+    // 
+    //     for (state.game_render_target.data, 0..) |pixel_in, pixel_in_index| {
+    //         const pixel_in_x = pixel_in_index % state.game_render_target.width;
+    //         const pixel_in_y = @divFloor(pixel_in_index, state.game_render_target.width);
+    //         ud.pixel_buffer.data[pixel_in_y*ud.pixel_buffer.width + pixel_in_x] = pixel_in;
+    //     }
+    // 
     
     if (state.debug) {
 
         renderer.set_context(
             ud.pixel_buffer,
-            M33.orthographic_projection(0, w, h, 0),
-            M33.viewport(0, 0, w, h)
+            M33.orthographic_projection(0, real_w, real_h, 0),
+            M33.viewport(0, 0, real_w, real_h)
         );
 
         const debug_text_color: BGR = @bitCast(Assets.palette[3]);
@@ -402,16 +428,16 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             break :blk pos;
         };
         const text_height = 6 + 1;
-        try renderer.add_text(Vector2f.from(5, h - (text_height*1 )), "ms {d: <9.2}", .{ud.ms}, color);
-        try renderer.add_text(Vector2f.from(5, h - (text_height*2 )), "fps {d:0.4}", .{ud.ms / 1000*60}, color);
-        try renderer.add_text(Vector2f.from(5, h - (text_height*3 )), "frame {}", .{ud.frame}, color);
-        try renderer.add_text(Vector2f.from(5, h - (text_height*4 )), "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, color);
-        try renderer.add_text(Vector2f.from(5, h - (text_height*5 )), "mouse {d:.4} {d:.4}", .{mouse.x, mouse.y}, color);
-        try renderer.add_text(Vector2f.from(5, h - (text_height*6 )), "dimensions {d:.4} {d:.4}", .{w, h}, color);
-        try renderer.add_text(Vector2f.from(5, h - (text_height*7 )), "physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y}, color);
-        try renderer.add_text(Vector2f.from(5, h - (text_height*8 )), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
-        try renderer.add_text(Vector2f.from(5, h - (text_height*9 )), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
-        try renderer.add_text(Vector2f.from(5, h - (text_height*10)), "vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y}, color);
+        try renderer.add_text(Vector2f.from(5, real_h - (text_height*1 )), "ms {d: <9.2}", .{ud.ms}, color);
+        try renderer.add_text(Vector2f.from(5, real_h - (text_height*2 )), "fps {d:0.4}", .{ud.ms / 1000*60}, color);
+        try renderer.add_text(Vector2f.from(5, real_h - (text_height*3 )), "frame {}", .{ud.frame}, color);
+        try renderer.add_text(Vector2f.from(5, real_h - (text_height*4 )), "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, color);
+        try renderer.add_text(Vector2f.from(5, real_h - (text_height*5 )), "mouse {d:.4} {d:.4}", .{mouse.x, mouse.y}, color);
+        try renderer.add_text(Vector2f.from(5, real_h - (text_height*6 )), "dimensions {d:.4} {d:.4} | real {d:.4} {d:.4}", .{w, h, real_w, real_h}, color);
+        try renderer.add_text(Vector2f.from(5, real_h - (text_height*7 )), "physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y}, color);
+        try renderer.add_text(Vector2f.from(5, real_h - (text_height*8 )), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
+        try renderer.add_text(Vector2f.from(5, real_h - (text_height*9 )), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
+        try renderer.add_text(Vector2f.from(5, real_h - (text_height*10)), "vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y}, color);
 
         try renderer.flush_all();
     }
