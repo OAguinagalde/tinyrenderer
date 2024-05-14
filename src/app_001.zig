@@ -412,13 +412,28 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     // The game is being rendered to a 1/4 size of the window, so scale the image back up to the real size
     const ms_taken_upscale: f32 = blk: {
         const profile = Application.perf.profile_start();
-        for (state.game_render_target.data, 0..) |pixel_in, pixel_in_index| {
-            const pixel_in_x = pixel_in_index % state.game_render_target.width;
-            const pixel_in_y = @divFloor(pixel_in_index, state.game_render_target.width);
-            const pixel_out_x = pixel_in_x * 4;
-            const pixel_out_y = pixel_in_y * 4;
-            // TODO not cache frienly at all, it works for now tho
-            for (0..4) |i| { for (0..4) |j| ud.pixel_buffer.data[((pixel_out_y+i)*ud.pixel_buffer.width) + (pixel_out_x+j)] = pixel_in; }
+        var y: usize = 0;
+        var x: usize = 0;
+        var pixel_out_index: usize = 0;
+        var rows: usize = 0;
+        const game_w = state.game_render_target.width;
+        const limit = ud.pixel_buffer.data.len - 4;
+        while (pixel_out_index<=limit) {
+            const pixel = state.game_render_target.data[y*game_w + x];
+            ud.pixel_buffer.data[pixel_out_index+0] = pixel;
+            ud.pixel_buffer.data[pixel_out_index+1] = pixel;
+            ud.pixel_buffer.data[pixel_out_index+2] = pixel;
+            ud.pixel_buffer.data[pixel_out_index+3] = pixel;
+            x += 1;
+            if (x == game_w) {
+                rows += 1;
+                x = 0;
+                if (rows == 4) {
+                    y += 1;
+                    rows = 0;
+                }
+            }
+            pixel_out_index += 4;
         }
         break :blk Application.perf.profile_end(profile);
     };
