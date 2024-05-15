@@ -9,6 +9,7 @@ const wav = @import("wav.zig");
 
 const BoundingBox = math.BoundingBox;
 const Vec2 = math.Vec2;
+const Vec3 = math.Vec3;
 const Vector2i = math.Vector2i;
 const Vector2f = math.Vector2f;
 const Vector3f = math.Vector3f;
@@ -22,6 +23,8 @@ const Entity = @import("ecs.zig").Entity;
 const Resources = @import("app_003.zig").Resources;
 const Renderer = @import("app_003.zig").Renderer;
 const Sound = wav.Sound;
+const text_size_multiplier = 1;
+const TextRenderer = @import("text.zig").TextRenderer(platform.OutPixelType, 1024, text_size_multiplier);
 
 const windows = @import("windows.zig");
 const wasm = @import("wasm.zig");
@@ -76,6 +79,7 @@ const State = struct {
     audio_tracks: [16] ?AudioTrack,
     sound_library: [@typeInfo(sounds).Enum.fields.len]wav.Sound,
     play_background_music: bool,
+    ui: ImmediateModeGui,
 };
 
 var state: State = undefined;
@@ -98,6 +102,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.resources = try Resources.init(allocator);
     state.game_render_target = Buffer2D(platform.OutPixelType).from(try allocator.alloc(platform.OutPixelType, 240*136), 240);
     state.play_background_music = true;
+    ImmediateModeGui.init(&state.ui);
     
     // audio stuff
     {
@@ -133,9 +138,18 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     const h: f32 = @floatFromInt(state.game_render_target.height);
     const w: f32 = @floatFromInt(state.game_render_target.width);
+
+    const hi: i32 = @intCast(state.game_render_target.height);
+    const wi: i32 = @intCast(state.game_render_target.width);
+
+    _ = hi;
+    _ = wi;
     
     const real_h: f32 = @floatFromInt(ud.pixel_buffer.height);
     const real_w: f32 = @floatFromInt(ud.pixel_buffer.width);
+
+    const real_hi: i32 = @intCast(ud.pixel_buffer.height);
+    const real_wi: i32 = @intCast(ud.pixel_buffer.width);
 
     const clear_color: BGR = @bitCast(Assets.palette[0]);
     state.game_render_target.clear(platform.OutPixelType.from(BGR, clear_color));
@@ -447,51 +461,107 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     //     }
     // 
     
-    if (state.debug) {
+    const static = struct {
+        var ms_taken_render_ui_previous: f32 = 0;
+        var ms_taken_ui_previous: f32 = 0;
+    };
+    
+    var builder: ImmediateModeGui.UiBuilder = undefined;
 
-        const static = struct {
-            var ms_taken_debug_previous: f32 = 0;
+    static.ms_taken_ui_previous = blk: {
+        const profile = Application.perf.profile_start();
+        
+        builder = state.ui.prepare_frame(ud.allocator, .{
+            .mouse_pos = ud.mouse,
+            .mouse_down = ud.mouse_left_down,
+        });
+
+        const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos);
+        const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
+        const mouse: Vector2f = mouse_blk: {
+            const mx = @divFloor(ud.mouse.x, Application.dimension_scale);
+            // inverse y since mouse is given relative to top left corner
+            const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
+            const offset = Vector2f.from(state.camera.pos.x, state.camera.pos.y);
+            const pos = Vector2i.from(mx, my).to(f32).add(offset);
+            break :mouse_blk pos;
         };
 
-        static.ms_taken_debug_previous = blk: {
+        var debug = try builder.begin("debug", BoundingBox(i32).from(real_hi, 0, 0, real_wi), false); {
+            try debug.label("ms {d: <9.2}", .{ud.ms});
+            try debug.label("io {?}", .{builder.io});
+            try debug.label("ms {d: <9.2}", .{ud.ms});
+            try debug.label("fps {d:0.4}", .{ud.ms / 1000*60});
+            try debug.label("frame {}", .{ud.frame});
+            try debug.label("camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z});
+            try debug.label("mouse {d:.4} {d:.4}", .{mouse.x, mouse.y});
+            try debug.label("dimensions {d:.4} {d:.4} | real {d:.4} {d:.4}", .{w, h, real_w, real_h});
+            try debug.label("physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y});
+            try debug.label("physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y});
+            try debug.label("to real tile {} {}", .{real_tile.x, real_tile.y});
+            try debug.label("vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y});
+            try debug.label("update  took {d:.8}ms", .{ms_taken_update});
+            try debug.label("render  took {d:.8}ms", .{ms_taken_render});
+            try debug.label("upscale took {d:.8}ms", .{ms_taken_upscale});
+            try debug.label("ui prev took {d:.8}ms", .{static.ms_taken_ui_previous});
+            try debug.label("ui rend took {d:.8}ms", .{static.ms_taken_render_ui_previous});
+            // force debug container to be the lowest layer
+            for (state.ui.containers_order.slice(), 0..) |container_id, i| if (container_id == debug.persistent.unique_identifier) {
+                const aux = state.ui.containers_order.slice()[0];
+                state.ui.containers_order.slice()[0] = container_id;
+                state.ui.containers_order.slice()[i] = aux;
+            };
+        }
+
+        break :blk Application.perf.profile_end(profile);
+    };
+
+    if (state.debug) {
+
+        static.ms_taken_render_ui_previous = blk: {
             const profile = Application.perf.profile_start();
 
-            renderer.set_context(
-                ud.pixel_buffer,
-                M33.orthographic_projection(0, real_w, real_h, 0),
-                M33.viewport(0, 0, real_w, real_h)
-            );
+            const draw_call_data = builder.draw_call_data;
+            for (state.ui.containers_order.slice()) |container_id| {
+                if (draw_call_data.draw_call_list_indices[container_id]) |list_index| {
+                    var shape_vertex_buffer = std.ArrayList(ShapeRenderer(platform.OutPixelType).shader.Vertex).init(ud.allocator);
+                    var text_renderer = try TextRenderer.init(ud.allocator);
+                    const draw_calls = draw_call_data.draw_call_lists.items[list_index];
+                    for (draw_calls.items) |dc| switch (dc.draw_call_type) {
+                        .shape => {
+                            const draw_call_shape = draw_call_data.shape.items[dc.index];
+                            try ShapeRenderer(platform.OutPixelType).add_quad_from_bb(&shape_vertex_buffer, draw_call_shape.bounding_box, switch (draw_call_shape.style) {
+                                .base => color.palette_4,
+                                .accent => color.palette_3,
+                                .highlight => color.palette_2,
+                                .special => color.palette_1,
+                            });
+                        },
+                        .text => {
+                            const draw_call_text = draw_call_data.text.items[dc.index];
+                            const text = builder.string_data.items[draw_call_text.text[0]..draw_call_text.text[0] + draw_call_text.text[1]];
+                            try text_renderer.print(draw_call_text.pos, "{s}", .{text}, switch (draw_call_text.style) {
+                                .base => color.palette_1,
+                                .accent => color.palette_2,
+                                .highlight => color.palette_3,
+                                .special => color.palette_4,
+                            });
+                        }
+                    };
+                    ShapeRenderer(platform.OutPixelType).render_vertex_buffer(
+                        &shape_vertex_buffer,
+                        ud.pixel_buffer,
+                        M33.orthographic_projection(0, real_w, real_h, 0),
+                        M33.viewport(0, 0, real_w, real_h)
+                    );
+                    text_renderer.render_all(
+                        ud.pixel_buffer,
+                        M33.orthographic_projection(0, real_w, real_h, 0),
+                        M33.viewport(0, 0, real_w, real_h)
+                    );
+                }
+            }
 
-            const debug_text_color: BGR = @bitCast(Assets.palette[3]);
-            const color = RGBA.from(BGR, debug_text_color);
-            const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos);
-            const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
-            const mouse: Vector2f = mouse_blk: {
-                const mx = @divFloor(ud.mouse.x, Application.dimension_scale);
-                // inverse y since mouse is given relative to top left corner
-                const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
-                const offset = Vector2f.from(state.camera.pos.x, state.camera.pos.y);
-                const pos = Vector2i.from(mx, my).to(f32).add(offset);
-                break :mouse_blk pos;
-            };
-            const text_height = 6 + 1;
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*1 )), "ms {d: <9.2}", .{ud.ms}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*2 )), "fps {d:0.4}", .{ud.ms / 1000*60}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*3 )), "frame {}", .{ud.frame}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*4 )), "camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*5 )), "mouse {d:.4} {d:.4}", .{mouse.x, mouse.y}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*6 )), "dimensions {d:.4} {d:.4} | real {d:.4} {d:.4}", .{w, h, real_w, real_h}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*7 )), "physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*8 )), "physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*9 )), "to real tile {} {}", .{real_tile.x, real_tile.y}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*10)), "vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*11)), "update  took {d:.8}ms", .{ms_taken_update}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*12)), "render  took {d:.8}ms", .{ms_taken_render}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*13)), "upscale took {d:.8}ms", .{ms_taken_upscale}, color);
-            try renderer.add_text(Vector2f.from(5, real_h - (text_height*14)), "debug   took {d:.8}ms", .{static.ms_taken_debug_previous}, color);
-
-            try renderer.flush_all();
-        
             break :blk Application.perf.profile_end(profile);
         };
 
@@ -499,6 +569,549 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
     return true;
 }
+
+// *****************************************************************
+
+const color = struct {
+    const white = RGBA.from_hex(0xffffffff);
+    const black = RGBA.from_hex(0x000000ff);
+    const cornflowerblue = RGBA.from_hex(0x6495edff);
+
+    const palette_0 = RGBA.from_hex(0x780000ff);
+    const palette_1 = RGBA.from_hex(0xc1121fff);
+    const palette_2 = RGBA.from_hex(0xfdf0d5ff);
+    const palette_3 = RGBA.from_hex(0x003049ff);
+    const palette_4 = RGBA.from_hex(0x669bbcff);
+};
+
+const ImmediateModeGui = imgui.ImmediateModeGui(.{
+    .layout = .{
+        .char_height = 5*text_size_multiplier,
+        .char_width = 4*text_size_multiplier,
+        .widget_margin  = 1,
+        .widget_padding = 1,
+        .container_padding = 1,
+    },
+});
+
+const imgui = struct {
+
+    const LayoutConfig = struct {
+        char_height: i32,
+        char_width: i32,
+        widget_margin: i32,
+        widget_padding: i32,
+        container_padding: i32,
+    };
+
+    const Config = struct {
+        layout: LayoutConfig,
+    };
+
+    const Io = struct {
+        mouse_pos: Vec2(i32) = Vec2(i32).from(0, 0),
+        mouse_down: bool = false,
+    };
+
+    const Style = enum {
+        base,
+        accent,
+        highlight,
+        special,
+    };
+
+    const MouseStateType = enum {
+        free,
+        press,
+        drag,
+        release
+    };
+
+    const MouseEvent = struct {
+        st: MouseStateType = .free,
+        relevant_id: ?u64 = 0,
+        pos: Vec2(i32) = Vec2(i32).from(0,0)
+    };
+
+    fn ImmediateModeGui(comptime config: Config) type {
+        return struct {
+        
+            const Self = @This();
+
+            const DrawCallType = enum {
+                shape,
+                text
+            };
+
+            const DrawCall = struct {
+                draw_call_type: DrawCallType,
+                index: usize,
+            };
+
+            pub const DrawCallText = struct {
+                text: struct {usize, usize},
+                pos: Vec2(f32),
+                style: Style,
+            };
+
+            pub const DrawCallShape = struct {
+                bounding_box: BoundingBox(f32),
+                style: Style,
+            };
+            
+            const DrawCallBigBuffer = struct {
+                allocator: std.mem.Allocator,
+                text: std.ArrayList(DrawCallText),
+                shape: std.ArrayList(DrawCallShape),
+                draw_call_lists: std.ArrayList(std.ArrayList(DrawCall)),
+                draw_call_list_indices: [ContainerCountMax]?usize,
+
+                fn init(allocator: std.mem.Allocator) DrawCallBigBuffer {
+                    var res = DrawCallBigBuffer {
+                        .allocator = allocator,
+                        .text = std.ArrayList(DrawCallText).init(allocator),
+                        .shape = std.ArrayList(DrawCallShape).init(allocator),
+                        .draw_call_lists = std.ArrayList(std.ArrayList(DrawCall)).init(allocator),
+                        .draw_call_list_indices = undefined,
+                    };
+                    for (&res.draw_call_list_indices) |*value| value.* = null;
+                    return res;
+                }
+
+                pub fn render_text(self: *DrawCallBigBuffer, container_id: u64, str: struct {usize, usize}, position: Vec2(i32), style: Style) !void {
+                    if (self.draw_call_list_indices[container_id] == null) {
+                        const list_index = self.draw_call_lists.items.len;
+                        self.draw_call_list_indices[container_id] = list_index;
+                        const draw_call_list = std.ArrayList(DrawCall).init(self.allocator);
+                        try self.draw_call_lists.append(draw_call_list);
+                    }
+                    const list_index = self.draw_call_list_indices[container_id].?;
+                    var draw_call_list = &self.draw_call_lists.items[list_index];
+                    const call_index = self.text.items.len;
+                    try draw_call_list.append(.{
+                        .draw_call_type = .text,
+                        .index = call_index,
+                    });
+                    try self.text.append(.{
+                        .text = str, .style = style, .pos = position.to(f32)
+                    });
+                }
+
+                pub fn render_shape(self: *DrawCallBigBuffer, container_id: u64, bounding_box: BoundingBox(i32), style: Style) !void {
+                    if (self.draw_call_list_indices[container_id] == null) {
+                        const list_index = self.draw_call_lists.items.len;
+                        self.draw_call_list_indices[container_id] = list_index;
+                        const draw_call_list = std.ArrayList(DrawCall).init(self.allocator);
+                        try self.draw_call_lists.append(draw_call_list);
+                    }
+                    const list_index = self.draw_call_list_indices[container_id].?;
+                    var draw_call_list = &self.draw_call_lists.items[list_index];
+                    const call_index = self.shape.items.len;
+                    try draw_call_list.append(.{
+                        .draw_call_type = .shape,
+                        .index = call_index,
+                    });
+                    try self.shape.append(.{
+                        .bounding_box = bounding_box.to(f32), .style = style,
+                    });
+                }
+
+            };
+
+            const WidgetType = enum {
+                header,
+                label,
+                button,
+            };
+
+            const ContainerPersistent = struct {
+                valid: bool = false,
+                parent_hash: u64 = undefined,
+                unique_identifier: u64 = undefined,
+                id: []const u8 = undefined,
+                bounding_box: BoundingBox(i32) = undefined,
+            };
+
+            const Container = struct {
+                builder: *UiBuilder,
+                persistent: *ContainerPersistent,
+                bounding_box_free: BoundingBox(i32) = undefined,
+                mouse_event: ?MouseEvent,
+
+                pub fn header(self: *Container, comptime fmt: []const u8, args: anytype) !void {
+                    
+                    // compute the space required
+                    const available_vetical_space = self.bounding_box_free.height();
+                    const required_vetical_space = 
+                        config.layout.container_padding +
+                        config.layout.widget_margin +
+                        config.layout.char_height +
+                        config.layout.widget_margin
+                    ;
+
+                    if (available_vetical_space < required_vetical_space) return;
+
+                    // compute the everything required to render the header
+                    const text_position = Vec2(i32).from(
+                        self.bounding_box_free.left + config.layout.container_padding,
+                        self.bounding_box_free.top - required_vetical_space + config.layout.widget_margin,
+                    );
+                    const out = self.bounding_box_free.shrink(.top, required_vetical_space);
+                    const header_bb: BoundingBox(i32) = out.leftover;
+                    const bounding_box_free_updated = out.shrinked;
+
+                    // make a copy of the string to be printed
+                    
+                    const len = std.fmt.count(fmt, args);
+                    const index_into_string_data = self.builder.string_data.items.len;
+                    const slice = try self.builder.string_data.addManyAsSlice(len);
+                    _ = std.fmt.bufPrint(slice, fmt, args) catch unreachable;
+                    
+                    // handle moving the container by clicking and dragging the header
+                    var is_hovering = false;
+                    var container_offset: ?Vec2(i32) = null;
+                    if (self.mouse_event) |me| switch (me.st) {
+                        .free => if (header_bb.contains(me.pos)) {
+                            is_hovering = true;
+                            self.mouse_event = null;
+                        },
+                        .press => if (header_bb.contains(me.pos)) {
+                            const parent_hash = self.persistent.parent_hash;
+                            const header_hash = @addWithOverflow(parent_hash, @addWithOverflow(@as(u64, @intFromEnum(WidgetType.header)), core.djb2(fmt))[0])[0];
+                            self.builder.parent_ui.id_active = header_hash;
+                            self.builder.mouse_event = null;
+                            self.mouse_event = null;
+                        },
+                        .drag => {
+                            const parent_hash = self.persistent.parent_hash;
+                            const header_hash = @addWithOverflow(parent_hash, @addWithOverflow(@as(u64, @intFromEnum(WidgetType.header)), core.djb2(fmt))[0])[0];
+                            if (me.relevant_id!=null and me.relevant_id.? == header_hash) {
+                                self.builder.parent_ui.id_active = header_hash;
+                                container_offset = me.pos;
+                                self.builder.mouse_event = null;
+                                self.mouse_event = null;
+                            }
+                        },
+                        .release => {
+                            const parent_hash = self.persistent.parent_hash;
+                            const header_hash = @addWithOverflow(parent_hash, @addWithOverflow(@as(u64, @intFromEnum(WidgetType.header)), core.djb2(fmt))[0])[0];
+                            if (me.relevant_id!=null and me.relevant_id.? == header_hash) {
+                                self.builder.parent_ui.id_active = null;
+                                self.builder.mouse_event = null;
+                                self.mouse_event = null;
+                                // TODO the mouse might have moved and released so... track movement in release event as well, maybe
+                            }
+                        },
+                    };
+
+                    // render the header taking into account whether the container was dragged or not
+                    const id = self.persistent.unique_identifier;
+                    if (container_offset) |offset| {
+                        self.bounding_box_free = bounding_box_free_updated.offset(offset);
+                        self.persistent.bounding_box = self.persistent.bounding_box.offset(offset);
+                        try self.builder.draw_call_data.render_shape(id, header_bb.offset(offset), .accent);
+                        try self.builder.draw_call_data.render_text(id, .{index_into_string_data, len}, text_position.add(offset), .special);
+                    }
+                    else {
+                        self.bounding_box_free = bounding_box_free_updated;
+                        try self.builder.draw_call_data.render_shape(id, header_bb, if (is_hovering) .highlight else .special);
+                        try self.builder.draw_call_data.render_text(id, .{index_into_string_data, len}, text_position, .special);
+                    }
+
+                }
+
+                pub fn label(self: *Container, comptime fmt: []const u8, args: anytype) !void {
+                    const available_vetical_space = self.bounding_box_free.height();
+                    const required_vetical_space = 
+                        config.layout.widget_margin +
+                        config.layout.char_height +
+                        config.layout.widget_margin
+                    ;
+                    
+                    if (available_vetical_space < required_vetical_space) return;
+
+                    const text_position = Vec2(i32).from(
+                        self.bounding_box_free.left + config.layout.container_padding,
+                        self.bounding_box_free.top - required_vetical_space + config.layout.widget_margin,
+                    );
+                    self.bounding_box_free = self.bounding_box_free.shrink(.top, required_vetical_space).shrinked;
+
+                    // make a copy of the string to be printed
+                    const len = std.fmt.count(fmt, args);
+                    const index_into_string_data = self.builder.string_data.items.len;
+                    const slice = try self.builder.string_data.addManyAsSlice(len);
+                    _ = std.fmt.bufPrint(slice, fmt, args) catch unreachable;
+
+                    const id = self.persistent.unique_identifier;
+                    try self.builder.draw_call_data.render_text(id, .{index_into_string_data, len}, text_position, .special);
+                }
+
+                const ButtonState = enum {
+                    normal,
+                    hover,
+                    pressed,
+                    clicked
+                };
+
+                pub fn button(self: *Container, comptime fmt: []const u8, args: anytype) !bool {
+                    
+                    // compute the space required
+                    const space_available_vetical = self.bounding_box_free.height();
+                    const space_available_horizontal = self.bounding_box_free.width();
+                    const space_required_vertical: i32 = 
+                        config.layout.widget_margin +
+                        config.layout.widget_padding +
+                        config.layout.char_height +
+                        config.layout.widget_padding +
+                        config.layout.widget_margin
+                    ;
+
+                    const len = std.fmt.count(fmt, args);
+
+                    const space_required_horizontal: i32 = 
+                        config.layout.container_padding +
+                        config.layout.widget_margin +
+                        config.layout.widget_padding +
+                        (config.layout.char_width * @as(i32, @intCast(len))) +
+                        config.layout.widget_padding +
+                        config.layout.widget_margin +
+                        config.layout.container_padding
+                    ;
+                    
+                    if (space_available_vetical < space_required_vertical) return false;
+                    if (space_available_horizontal < space_required_horizontal) return false;
+
+                    // compute the everything required to render the button
+                    const text_position = Vec2(i32).from(
+                        self.bounding_box_free.left + config.layout.container_padding + config.layout.widget_margin + config.layout.widget_padding,
+                        self.bounding_box_free.top - space_required_vertical + config.layout.widget_margin + config.layout.widget_padding,
+                    );
+                    const out = self.bounding_box_free.shrink(.top, space_required_vertical);
+                    self.bounding_box_free = out.shrinked;
+                    const iner_bb: BoundingBox(i32) = out.leftover.get_inner_bb_with_padding(config.layout.widget_margin);
+                    const button_bb: BoundingBox(i32) = iner_bb.shrink(.right, space_available_horizontal - space_required_horizontal).shrinked;
+
+                    // make a copy of the string to be printed
+                    const index_into_string_data = self.builder.string_data.items.len;
+                    const slice = try self.builder.string_data.addManyAsSlice(len);
+                    _ = std.fmt.bufPrint(slice, fmt, args) catch unreachable;
+
+                    var button_state: ButtonState = .normal;
+                    
+                    // handle the clicking the button logic
+                    if (self.mouse_event) |me| switch (me.st) {
+                        .free => if (button_bb.contains(me.pos)) {
+                            button_state = .hover;
+                            self.mouse_event = null;
+                            self.builder.mouse_event = null;
+                        },
+                        .press => if (button_bb.contains(me.pos)) {
+                            const parent_hash = self.persistent.parent_hash;
+                            const button_hash = @addWithOverflow(parent_hash, @addWithOverflow(@as(u64, @intFromEnum(WidgetType.button)), core.djb2(fmt))[0])[0];
+                            self.builder.parent_ui.id_active = button_hash;
+                            button_state = .pressed;
+                            self.builder.mouse_event = null;
+                            self.mouse_event = null;
+                        },
+                        .drag => {
+                            const parent_hash = self.persistent.parent_hash;
+                            const button_hash = @addWithOverflow(parent_hash, @addWithOverflow(@as(u64, @intFromEnum(WidgetType.button)), core.djb2(fmt))[0])[0];
+                            if (me.relevant_id!=null and me.relevant_id.? == button_hash) {
+                                self.builder.parent_ui.id_active = button_hash;
+                                button_state = .pressed;
+                                self.mouse_event = null;
+                                self.builder.mouse_event = null;
+                            }
+                        },
+                        .release => {
+                            const parent_hash = self.persistent.parent_hash;
+                            const button_hash = @addWithOverflow(parent_hash, @addWithOverflow(@as(u64, @intFromEnum(WidgetType.button)), core.djb2(fmt))[0])[0];
+                            if (me.relevant_id!=null and me.relevant_id.? == button_hash) {
+                                self.builder.parent_ui.id_active = null;
+                                if (button_bb.contains(me.pos)) button_state = .clicked;
+                                self.mouse_event = null;
+                                self.builder.mouse_event = null;
+                            }
+                        },
+                    };
+
+                    const button_style: Style = switch (button_state) {
+                        .normal => .base,
+                        .hover => .highlight,
+                        .pressed => .accent,
+                        .clicked => .special,
+                    };
+                    const id = self.persistent.unique_identifier;
+                    try self.builder.draw_call_data.render_shape(id, button_bb, button_style);
+                    try self.builder.draw_call_data.render_text(id, .{index_into_string_data, len}, text_position, .base);
+
+                    return button_state == .clicked;
+                }
+
+            };
+
+            const UiBuilder = struct {
+                parent_ui: *Self,
+                /// reset on prepare_frame
+                string_data: std.ArrayList(u8),
+                /// set on prepare_frame
+                mouse_event: ?MouseEvent,
+                io_previous: Io,
+                io: Io,
+                container_stack: std.BoundedArray(u64, ContainerCountMax),
+                /// Each container has its own draw call buffer
+                draw_call_data: DrawCallBigBuffer,
+
+                pub fn begin(self: *UiBuilder, id: []const u8, bounding_box: BoundingBox(i32), comptime is_window: bool) !Container {
+                    const ui = self.parent_ui;
+                    const parent_hash = if (self.container_stack.len > 0) self.container_stack.get(self.container_stack.len-1) else 0;
+                    const container_persistent = ui.get_container(id, parent_hash);
+                    if (!container_persistent.valid) { // this happens only on the first time that a container is retrieved
+                        container_persistent.valid = true;
+                        container_persistent.bounding_box = bounding_box;
+                        // new containers by default are put on top
+                        ui.containers_order.append(container_persistent.unique_identifier) catch unreachable;
+                    }
+                    // TODO on end remove from stack
+                    self.container_stack.append(container_persistent.unique_identifier) catch unreachable;
+                    
+                    var mouse_event_to_pass: ?MouseEvent = null;
+                    if (self.mouse_event) |me| switch (me.st) {
+                        .free, .press => {
+                            if (container_persistent.bounding_box.contains(me.pos)) {
+                                // TODO this is NOT my best work lol
+                                const container_directly_under_the_mouse_is_this_one: bool = blk: {
+                                    var topmost_relevant_container: ?u64 = null;
+                                    for (ui.containers_order.slice()) |container_identifier| {
+                                        const container_bounding_box = ui.get_container_by_unique_id(container_identifier).bounding_box;
+                                        if (container_bounding_box.contains(me.pos)) topmost_relevant_container = container_identifier;
+                                    }
+
+                                    if (topmost_relevant_container) |container_id| {
+                                        const relevant_container = ui.get_container_by_unique_id(container_id);
+                                        break :blk relevant_container.unique_identifier == container_persistent.unique_identifier;
+                                    }
+                                    break :blk false;
+                                };
+                                if (container_directly_under_the_mouse_is_this_one) {
+
+                                    // put the container at the top most layer if it is clicked
+                                    if (is_window and me.st == .press) for (ui.containers_order.slice(), 0..) |unique_id, position| {
+                                        if (unique_id == container_persistent.unique_identifier) {
+                                            const top_most_index = ui.containers_order.len - 1;
+                                            const current_index = position;
+                                            const previous_top_most_container = ui.containers_order.buffer[top_most_index];
+                                            ui.containers_order.buffer[top_most_index] = container_persistent.unique_identifier;
+                                            ui.containers_order.buffer[current_index] = previous_top_most_container;
+                                            break;
+                                        }
+                                    };
+
+                                    mouse_event_to_pass = me;
+                                    // Since we already know that no other container can handle the mouse event, consume it already
+                                    self.mouse_event = null;
+                                }
+                            }
+                        },
+                        .drag, .release => {
+                            // we dont know which container is relevant for this event until the widget hash is compared so just pass it
+                            // to the container until one of them handles it
+                            mouse_event_to_pass = me;
+                        },
+                    };
+                    const container = Container {
+                        .builder = self,
+                        .persistent = container_persistent,
+                        .bounding_box_free = container_persistent.bounding_box,
+                        .mouse_event = mouse_event_to_pass,
+                    };
+                    const style: Style = if (ui.containers_order.slice()[ui.containers_order.len-1] == container.persistent.unique_identifier) .highlight else .base;
+                    if (is_window) try container.builder.draw_call_data.render_shape(container.persistent.unique_identifier, container.persistent.bounding_box, style);
+                    return container;
+                }
+            };
+            
+            // we can have up to 16 containers
+            const ContainerCountMax: usize = 16;
+
+            /// persistent data regarding containers
+            containers: [ContainerCountMax]ContainerPersistent,
+            /// TODO keep track of the order of the windows in a list or something
+            containers_order: std.BoundedArray(u64, ContainerCountMax),
+            /// the widget id being interacted with
+            id_active: ?u64,
+            io_previous: Io,
+            
+            pub fn init(self: *Self) void {
+                for (&self.containers) |*c| c.* = .{};
+                self.containers_order = .{};
+                self.id_active = null;
+                self.io_previous = .{};
+            }
+
+            pub fn prepare_frame(self: *Self, allocator: std.mem.Allocator, io: Io) UiBuilder {
+                const io_previous = self.io_previous;
+                const mouse_went_down = !io_previous.mouse_down and io.mouse_down;
+                const mouse_went_up = io_previous.mouse_down and !io.mouse_down;
+                const mouse_position = io.mouse_pos;
+                const mouse_movement = io.mouse_pos.substract(io_previous.mouse_pos);
+                self.io_previous = io;
+
+                const mouse_event: MouseEvent = if (mouse_went_down) .{.st = .press, .relevant_id = null, .pos = mouse_position}
+                    else if (mouse_went_up) .{.st = .release, .relevant_id = self.id_active, .pos = mouse_position }
+                    else if (io.mouse_down) .{.st = .drag, .relevant_id = self.id_active, .pos = mouse_movement }
+                    else .{.st = .free, .relevant_id = null, .pos = mouse_position};
+
+                return .{
+                    .parent_ui = self,
+                    .string_data = std.ArrayList(u8).init(allocator),
+                    .mouse_event = mouse_event,
+                    .io = io,
+                    .io_previous = io_previous,
+                    .container_stack = .{},
+                    .draw_call_data = DrawCallBigBuffer.init(allocator)
+                };
+                
+                // TODO since we know the positions and sizes of all the containers and their layers in the previous frame, we can calculate which container the mouse is over of right now
+            }
+            
+            fn get_container_by_unique_id(self: *Self, unique_identifier: u64) *ContainerPersistent {
+                const container = &self.containers[unique_identifier];
+                std.debug.assert(container.valid);
+                return container;
+            }
+
+            fn get_container(self: *Self, id: []const u8, parent_hash: u64) *ContainerPersistent {
+                // when a container is requested, its id is used to generate a hash that must be unique
+                const hash = @addWithOverflow(core.djb2(id), parent_hash)[0];
+                const index_initial = hash % ContainerCountMax;
+                // the hash is used to index into the containers array and retrieve it in following frames
+                for (0..ContainerCountMax) |containers_checked| {
+                    const index = index_initial+containers_checked % ContainerCountMax;
+                    const container: *ContainerPersistent = &self.containers[index];
+                    if (container.valid) {
+                        const same_container = std.mem.eql(u8, id, container.id) and parent_hash == container.parent_hash;
+                        // container already existed, just return it
+                        if (same_container) return container
+                        // there is a collision, check the next one
+                        else continue;
+                    }
+                    // container didn't exist yet, set it and return it
+                    else {
+                        container.id = id;
+                        container.parent_hash = parent_hash;
+                        container.unique_identifier = index;
+                        return container;
+                    }
+                }
+                @panic("Not enough containers!");
+            }
+
+        };
+
+    }
+
+};
 
 const Door = struct {
     pos: Vec2(u8),
@@ -1348,7 +1961,7 @@ pub const particles_generators = struct {
     }
 };
 
-pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type {
+pub fn ShapeRenderer(comptime output_pixel_type: type) type {
     return struct {
 
         const shader = struct {
@@ -1380,7 +1993,7 @@ pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type
                 Vertex,
                 pipeline_configuration,
                 struct {
-                    inline fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector3f {
+                    inline fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vec3(f32) {
                         out_invariant.tint = vertex.tint;
                         return context.mvp_matrix.apply_to_vec2(vertex.pos);
                     }
@@ -1388,189 +2001,55 @@ pub fn ShapeRenderer(comptime output_pixel_type: type, comptime color: RGB) type
                 struct {
                     inline fn fragment_shader(context: Context, invariants: Invariant) output_pixel_type {
                         _ = context;
-                        const out_color = comptime output_pixel_type.from(RGB, color);
+                        const out_color = comptime output_pixel_type.from(RGBA, color.white);
                         const tint = output_pixel_type.from(RGBA, invariants.tint);
                         return out_color.tint(tint);
                     }
                 }.fragment_shader,
             );
         };
-        
-        const Self = @This();
 
-        allocator: std.mem.Allocator,
-        vertex_buffer: std.ArrayList(shader.Vertex),
-
-        pub fn init(allocator: std.mem.Allocator) !Self {
-            var self: Self = undefined;
-            self.allocator = allocator;
-            self.vertex_buffer = std.ArrayList(shader.Vertex).init(allocator);
-            return self;
-        }
-
-        pub fn add_quad_from_bb(self: *Self, bb: BoundingBox(f32), tint: RGBA) !void {
-            const pos = Vector2f.from(bb.left, bb.bottom);
-            const size = Vector2f.from(bb.right - bb.left, bb.top - bb.bottom);
+        pub fn add_quad_from_bb(vertex_buffer: *std.ArrayList(shader.Vertex), bounding_box: BoundingBox(f32), tint: RGBA) !void {
+            const size = Vector2f.from(bounding_box.right - bounding_box.left, bounding_box.top - bounding_box.bottom);
+            if (size.x == 0 or size.y == 0) return;
+            const pos = Vector2f.from(bounding_box.left, bounding_box.bottom);
             const vertices = [4] shader.Vertex {
                 .{ .pos = .{ .x = pos.x,          .y = pos.y          }, .tint = tint },
                 .{ .pos = .{ .x = pos.x + size.x, .y = pos.y          }, .tint = tint },
                 .{ .pos = .{ .x = pos.x + size.x, .y = pos.y + size.y }, .tint = tint },
                 .{ .pos = .{ .x = pos.x,          .y = pos.y + size.y }, .tint = tint },
             };
-            try self.vertex_buffer.appendSlice(&vertices);
+            try vertex_buffer.appendSlice(&vertices);
+        }
+
+        pub fn add_quad_border(vertex_buffer: *std.ArrayList(shader.Vertex), bounding_box: BoundingBox(f32), thickness: f32, tint: RGBA) !void {
+            const line_left = BoundingBox(f32).from(bounding_box.top+thickness, bounding_box.bottom-thickness, bounding_box.left-thickness, bounding_box.left);
+            const line_bottom = BoundingBox(f32).from(bounding_box.bottom, bounding_box.bottom-thickness, bounding_box.left-thickness, bounding_box.right+thickness);
+            const line_right = BoundingBox(f32).from(bounding_box.top+thickness, bounding_box.bottom-thickness, bounding_box.right, bounding_box.right+thickness);
+            const line_top = BoundingBox(f32).from(bounding_box.top+thickness, bounding_box.top, bounding_box.left-thickness, bounding_box.right+thickness);
+            try add_quad_from_bb(vertex_buffer, line_left, tint);
+            try add_quad_from_bb(vertex_buffer, line_bottom, tint);
+            try add_quad_from_bb(vertex_buffer, line_right, tint);
+            try add_quad_from_bb(vertex_buffer, line_top, tint);
         }
         
-        pub fn add_quad(self: *Self, pos: Vector2f, size: Vector2f, tint: RGBA) !void {
+        pub fn add_quad(vertex_buffer: *std.ArrayList(shader.Vertex), pos: Vector2f, size: Vector2f, tint: RGBA) !void {
             const vertices = [4] shader.Vertex {
                 .{ .pos = .{ .x = pos.x,          .y = pos.y          }, .tint = tint },
                 .{ .pos = .{ .x = pos.x + size.x, .y = pos.y          }, .tint = tint },
                 .{ .pos = .{ .x = pos.x + size.x, .y = pos.y + size.y }, .tint = tint },
                 .{ .pos = .{ .x = pos.x,          .y = pos.y + size.y }, .tint = tint },
             };
-            try self.vertex_buffer.appendSlice(&vertices);
+            try vertex_buffer.appendSlice(&vertices);
         }
 
-        pub fn render(self: *Self, pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
+        pub fn render_vertex_buffer(vertex_buffer: *std.ArrayList(shader.Vertex), pixel_buffer: Buffer2D(output_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
             const context = shader.Context {
                 .mvp_matrix = mvp_matrix,
             };
-            shader.Pipeline.render(pixel_buffer, context, self.vertex_buffer.items, @divExact(self.vertex_buffer.items.len, 4), .{ .viewport_matrix = viewport_matrix, });
-            self.vertex_buffer.clearRetainingCapacity();
+            shader.Pipeline.render(pixel_buffer, context, vertex_buffer.items, @divExact(vertex_buffer.items.len, 4), .{ .viewport_matrix = viewport_matrix, });
         }
-
-        pub fn deinit(self: *Self) void {
-            self.vertex_buffer.clearAndFree();
-        }
-    };
-}
-
-pub fn TextRenderer(comptime out_pixel_type: type, comptime max_size_per_print: usize, comptime size: comptime_float) type {
-    return struct {
-
-        const texture = font.texture;
-        const char_width: f32 = (base_width - pad_left - pad_right) * size;
-        const char_height: f32 = (base_height - pad_top - pad_bottom) * size;
-        // NOTE the font has quite a lot of padding so rather than rendering the whole 8x8 quad, only render the relevant part of the quad
-        // the rest is just transparent anyway
-        const base_width: f32 = 8;
-        const base_height: f32 = 8;
-        const pad_top: f32 = 0;
-        const pad_bottom: f32 = 3;
-        const pad_left: f32 = 0;
-        const pad_right: f32 = 5;
-        const space_between_characters: f32 = 1;
-        
-        const Shader = struct {
-
-            pub const Context = struct {
-                mvp_matrix: M33,
-            };
-
-            pub const Invariant = struct {
-                tint: RGBA,
-                uv: Vector2f,
-            };
-
-            pub const Vertex = struct {
-                pos: Vector2f,
-                uv: Vector2f,
-                tint: RGBA,
-            };
-
-            pub const pipeline_configuration = graphics.GraphicsPipelineQuads2DConfiguration {
-                .blend_with_background = true,
-                .do_quad_clipping = true,
-                .do_scissoring = false,
-                .trace = false
-            };
-
-            pub const Pipeline = graphics.GraphicsPipelineQuads2D(
-                out_pixel_type,
-                Context,
-                Invariant,
-                Vertex,
-                pipeline_configuration,
-                struct {
-                    inline fn vertex_shader(context: Context, vertex: Vertex, out_invariant: *Invariant) Vector3f {
-                        out_invariant.tint = vertex.tint;
-                        out_invariant.uv = vertex.uv;
-                        return context.mvp_matrix.apply_to_vec2(vertex.pos);
-                    }
-                }.vertex_shader,
-                struct {
-                    inline fn fragment_shader(context: Context, invariants: Invariant) out_pixel_type {
-                        _ = context;
-                        const sample = texture.point_sample(false, invariants.uv);
-                        const sample_adapted = out_pixel_type.from(RGBA, sample); 
-                        const tint = out_pixel_type.from(RGBA, invariants.tint);
-                        return sample_adapted.tint(tint);
-                    }
-                }.fragment_shader,
-            );
-        };
-
-        vertex_buffer: std.ArrayList(Shader.Vertex),
-        
-        const Self = @This();
-
-        pub fn init(allocator: std.mem.Allocator) !Self {
-            return .{
-                .vertex_buffer = std.ArrayList(Shader.Vertex).init(allocator)
-            };
-        }
-
-        pub fn deinit(self: *Self) void {
-            self.vertex_buffer.clearAndFree();
-        }
-
-        pub fn print(self: *Self, pos: Vector2f, comptime fmt: []const u8, args: anytype, tint: RGBA) !void {
-            var buff: [max_size_per_print]u8 = undefined;
-            const str = try std.fmt.bufPrint(&buff, fmt, args);
-            for (str, 0..) |c, i| {
-
-                // x and y are the bottom left of the quad
-                const x: f32 = pos.x + @as(f32, @floatFromInt(i)) * char_width + @as(f32, @floatFromInt(i));
-                const y: f32 = pos.y;
-                
-                // texture left and right
-                const u_1: f32 = @as(f32, @floatFromInt(c%16)) * base_width + pad_left;
-                const u_2: f32 = u_1 + base_width - pad_left - pad_right;
-                // texture top and bottom. Note that the texture is invertex so the mat here is also inverted
-                const v_1: f32 = (@as(f32, @floatFromInt(c/16)) + 1) * base_height - pad_bottom;
-                const v_2: f32 = @as(f32, @floatFromInt(c/16)) * base_height + pad_top;
-
-                // NOTE the texture is reversed hence the weird uv coordinates
-                const vertices = [4] Shader.Vertex {
-                    .{ .pos = .{ .x = x,              .y = y               }, .uv = .{ .x = u_1, .y = v_1 }, .tint = tint },
-                    .{ .pos = .{ .x = x + char_width, .y = y               }, .uv = .{ .x = u_2, .y = v_1 }, .tint = tint },
-                    .{ .pos = .{ .x = x + char_width, .y = y + char_height }, .uv = .{ .x = u_2, .y = v_2 }, .tint = tint },
-                    .{ .pos = .{ .x = x,              .y = y + char_height }, .uv = .{ .x = u_1, .y = v_2 }, .tint = tint }
-                };
-                
-                try self.vertex_buffer.appendSlice(&vertices);                
-            }
-        }
-
-        pub fn width(self: *Self) f32 {
-            _ = self;
-            return char_width;
-        }
-        
-        pub fn height(self: *Self) f32 {
-            _ = self;
-            return char_height;
-        }
-
-        pub fn render_all(self: *Self, pixel_buffer: Buffer2D(out_pixel_type), mvp_matrix: M33, viewport_matrix: M33) void {
-            Shader.Pipeline.render(
-                pixel_buffer,
-                .{ .mvp_matrix = mvp_matrix, },
-                self.vertex_buffer.items,
-                self.vertex_buffer.items.len/4,
-                .{ .viewport_matrix = viewport_matrix, }
-            );
-            self.vertex_buffer.clearRetainingCapacity();
-        }
+    
     };
 }
 
