@@ -422,33 +422,150 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         break :blk Application.perf.profile_end(profile);
     };
 
+    const scalers = struct {
+        pub fn upscale_2(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
+            var y: usize = 0;
+            var x: usize = 0;
+            var pixel_out_index: usize = 0;
+            var rows: usize = 0;
+            const game_w = src.width;
+            const limit = dst.data.len - 2;
+            while (pixel_out_index<=limit) {
+                const pixel = src.data[y*game_w + x];
+                std.log.debug("src[{}]", .{y*game_w + x});
+                dst.data[pixel_out_index+0] = pixel;
+                std.log.debug("dst[{}]", .{pixel_out_index+0});
+                dst.data[pixel_out_index+1] = pixel;
+                std.log.debug("dst[{}]", .{pixel_out_index+1});
+                x += 1;
+                if (x == game_w) {
+                    rows += 1;
+                    x = 0;
+                    if (rows == 2) {
+                        y += 1;
+                        rows = 0;
+                    }
+                }
+                pixel_out_index += 2;
+            }
+        }
+        pub fn upscale_4(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
+            var y: usize = 0;
+            var x: usize = 0;
+            var pixel_out_index: usize = 0;
+            var rows: usize = 0;
+            const game_w = src.width;
+            const limit = dst.data.len - 4;
+            while (pixel_out_index<=limit) {
+                const pixel = src.data[y*game_w + x];
+                dst.data[pixel_out_index+0] = pixel;
+                dst.data[pixel_out_index+1] = pixel;
+                dst.data[pixel_out_index+2] = pixel;
+                dst.data[pixel_out_index+3] = pixel;
+                x += 1;
+                if (x == game_w) {
+                    rows += 1;
+                    x = 0;
+                    if (rows == 4) {
+                        y += 1;
+                        rows = 0;
+                    }
+                }
+                pixel_out_index += 4;
+            }
+        }
+        pub fn upscale_b(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
+            const scale: usize = @divExact(dst.width, src.width);
+            std.debug.assert(scale == @divExact(dst.height, src.height));
+            var y: usize = 0;
+            var x: usize = 0;
+            var pixel_out_index: usize = 0;
+            var rows: usize = 0;
+            const game_w = src.width;
+            const limit = dst.data.len - scale;
+            while (pixel_out_index<=limit) {
+                const pixel = src.data[y*game_w + x];
+                for (dst.data[pixel_out_index..pixel_out_index+scale]) |*p| p.* = pixel;
+                x += 1;
+                if (x == game_w) {
+                    rows += 1;
+                    x = 0;
+                    if (rows == scale) {
+                        y += 1;
+                        rows = 0;
+                    }
+                }
+                pixel_out_index += scale;
+            }
+        }
+        pub fn upscale_4_b(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
+            const game_w = src.width;
+            const game_w_4 = 4*game_w;
+            const limit = dst.data.len - 4;
+            var pixel_out_index: usize = 0;
+            var i: usize = 0;
+            while (pixel_out_index<=limit) {
+                const x = i%game_w;
+                const y = @divFloor(i, game_w_4);
+                const pixel = src.data[y*game_w + x];
+                dst.data[pixel_out_index+0] = pixel;
+                dst.data[pixel_out_index+1] = pixel;
+                dst.data[pixel_out_index+2] = pixel;
+                dst.data[pixel_out_index+3] = pixel;
+                i+=1;
+                pixel_out_index += 4;
+            }
+        }
+        pub fn upscale(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
+            const srcw = src.width;
+            const dstw = dst.width;
+            const dsth = dst.height;
+            const scale: usize = @divExact(dst.width, src.width);
+            std.debug.assert(scale == @divExact(dst.height, src.height));
+            
+            const dst_width_limit = dstw-scale;
+            const dst_height_limit = dsth-scale;
+
+            var src_y: usize = 0;
+            var dst_box_y: usize = 0;
+            while (dst_box_y <= dst_height_limit) {
+                const offset_src_y = src_y * srcw;
+                var j: usize = 0;
+                while (j < scale):(j+=1) {
+                    const offset_dst_y = (dst_box_y + j) * dstw;
+                    var src_x: usize = 0;
+                    var dst_box_x: usize = 0;
+                    while (dst_box_x <= dst_width_limit) {
+                        const value = src.data[offset_src_y + src_x];
+                        // std.log.debug("src[{}]", .{offset_src_y + src_x});
+                        const offset = offset_dst_y + dst_box_x;
+                        var i: usize = 0;
+                        while (i < scale):(i += 1) {
+                            dst.data[offset + i] = value;
+                            // std.log.debug("dst[{}]", .{offset + i});
+                        }
+                        src_x += 1;
+                        dst_box_x += scale;
+                    }
+                }
+                src_y += 1;
+                dst_box_y += scale;
+            }
+
+        }
+    };
+
+    const staticb = struct {
+        var upscale4 = true;
+    };
+    if (ud.key_pressed('U')) staticb.upscale4 = !staticb.upscale4;
+
     // scale to 4 times bigger render target
     // The game is being rendered to a 1/4 size of the window, so scale the image back up to the real size
     const ms_taken_upscale: f32 = blk: {
         const profile = Application.perf.profile_start();
-        var y: usize = 0;
-        var x: usize = 0;
-        var pixel_out_index: usize = 0;
-        var rows: usize = 0;
-        const game_w = state.game_render_target.width;
-        const limit = ud.pixel_buffer.data.len - 4;
-        while (pixel_out_index<=limit) {
-            const pixel = state.game_render_target.data[y*game_w + x];
-            ud.pixel_buffer.data[pixel_out_index+0] = pixel;
-            ud.pixel_buffer.data[pixel_out_index+1] = pixel;
-            ud.pixel_buffer.data[pixel_out_index+2] = pixel;
-            ud.pixel_buffer.data[pixel_out_index+3] = pixel;
-            x += 1;
-            if (x == game_w) {
-                rows += 1;
-                x = 0;
-                if (rows == 4) {
-                    y += 1;
-                    rows = 0;
-                }
-            }
-            pixel_out_index += 4;
-        }
+        if (staticb.upscale4) scalers.upscale_4(platform.OutPixelType, state.game_render_target, ud.pixel_buffer)
+        else scalers.upscale_b(platform.OutPixelType, state.game_render_target, ud.pixel_buffer);
         break :blk Application.perf.profile_end(profile);
     };
 
@@ -502,7 +619,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             try debug.label("vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y});
             try debug.label("update  took {d:.8}ms", .{ms_taken_update});
             try debug.label("render  took {d:.8}ms", .{ms_taken_render});
-            try debug.label("upscale took {d:.8}ms", .{ms_taken_upscale});
+            try debug.label("upscale took {d:.8}ms upscale4 {} press U", .{ms_taken_upscale, staticb.upscale4});
             try debug.label("ui prev took {d:.8}ms", .{static.ms_taken_ui_previous});
             try debug.label("ui rend took {d:.8}ms", .{static.ms_taken_render_ui_previous});
             // force debug container to be the lowest layer
