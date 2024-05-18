@@ -449,6 +449,14 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 pixel_out_index += 2;
             }
         }
+        pub inline fn store(mem: []u32, v: anytype, comptime len: u32) void {
+            const vector_len = @typeInfo(@TypeOf(v)).Vector.len;
+            const loop_len = if (len == 0) vector_len else len;
+            comptime var i: u32 = 0;
+            inline while (i < loop_len) : (i += 1) {
+                mem[i] = v[i];
+            }
+        }
         pub fn upscale_4(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
             var y: usize = 0;
             var x: usize = 0;
@@ -462,6 +470,55 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 dst.data[pixel_out_index+1] = pixel;
                 dst.data[pixel_out_index+2] = pixel;
                 dst.data[pixel_out_index+3] = pixel;
+                x += 1;
+                if (x == game_w) {
+                    rows += 1;
+                    x = 0;
+                    if (rows == 4) {
+                        y += 1;
+                        rows = 0;
+                    }
+                }
+                pixel_out_index += 4;
+            }
+        }
+        pub fn upscale_4_c(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
+            var y: usize = 0;
+            var x: usize = 0;
+            var pixel_out_index: usize = 0;
+            var rows: usize = 0;
+            const game_w = src.width;
+            const limit = dst.data.len - 4;
+            while (pixel_out_index<=limit) {
+                const pixel = src.data[y*game_w + x];
+                dst.data[pixel_out_index+0] = pixel;
+                dst.data[pixel_out_index+1] = pixel;
+                dst.data[pixel_out_index+2] = pixel;
+                dst.data[pixel_out_index+3] = pixel;
+                x += 1;
+                if (x == game_w) {
+                    rows += 1;
+                    x = 0;
+                    if (rows == 4) {
+                        y += 1;
+                        rows = 0;
+                    }
+                }
+                pixel_out_index += 4;
+            }
+        }
+        pub fn upscale_4_store(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
+            var y: usize = 0;
+            var x: usize = 0;
+            var pixel_out_index: usize = 0;
+            var rows: usize = 0;
+            const game_w = src.width;
+            const limit = dst.data.len - 4;
+            const src_data: []u32 = @ptrCast(@alignCast(src.data));
+            const dst_data: []u32 = @ptrCast(@alignCast(dst.data));
+            while (pixel_out_index<=limit) {
+                const pixel_as_vector: @Vector(4, u32) = @splat(src_data[y*game_w + x]);
+                store(dst_data[pixel_out_index..pixel_out_index+4], pixel_as_vector, 0);
                 x += 1;
                 if (x == game_w) {
                     rows += 1;
@@ -565,7 +622,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const ms_taken_upscale: f32 = blk: {
         const profile = Application.perf.profile_start();
         if (staticb.upscale4) scalers.upscale_4(platform.OutPixelType, state.game_render_target, ud.pixel_buffer)
-        else scalers.upscale_b(platform.OutPixelType, state.game_render_target, ud.pixel_buffer);
+        else scalers.upscale_4_store(platform.OutPixelType, state.game_render_target, ud.pixel_buffer);
         break :blk Application.perf.profile_end(profile);
     };
 
