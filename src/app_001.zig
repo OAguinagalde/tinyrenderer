@@ -610,6 +610,103 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             }
 
         }
+        pub fn _upscale_u32_known_scale_asm(src_data: *u32, dst_data: *u32, src_width: u32, src_height: u32, comptime scaling_factor: u32) void {
+            // ; input
+            // rd32| = src_width
+            // ra32| = src_height
+            // rc64| = src_data
+            // rb64| = dst_data
+            // 
+            // ; assembly
+            // r832|src_width = rd32|src_width
+            // r332|size_of_src_row_in_bytes = r832|src_width * 4
+            // r432|square_of_scaling_factor = comptime scaling_factor*scaling_factor
+            // r432|size_of_dst_row_in_bytes *= r332|size_of_src_row_in_bytes
+            // r064|src_row_end = rc64|src_data
+            // r964|dst_row_end = rb64|dst_data
+            // ra32|src_data_len *=  rd32|src_width
+            // rd64|src_data_end = rc64|src_data + (ra32|src_data_len * 4)
+            // while (rc64|src_data != rd64|src_data_end) {
+            //     ; Calculate the address of the first pixel of the next row in src_data
+            //     r064|src_row_end += r332|size_of_src_row_in_bytes
+            //     ; Calculate the address of the first pixel of the next row in dst_data
+            //     r964|dst_row_end += r432|size_of_dst_row_in_bytes
+            //     while (rb64|dst_data != r964|dst_row_end) {
+            //         push rc64|src_data
+            //         while (rc64|src_data != r064|src_row_end) {
+            //             r132|pixel = *rc64|src_data
+            //             ; TODO look into SIMD to replace this whole loop
+            //             comptime inline for(0..scaling_factor) |_| {
+            //                 *(rb64|dst_data) = r132|pixel
+            //                 rb64|dst_data += 4
+            //             }
+            //             rc64|src_data += 4
+            //         }
+            //         pop rc64|src_data
+            //     }
+            //     rc64|src_data = r064|src_row_end
+            // }
+            
+            const comptime_generated_asm_2 = comptime blk: {
+                var comptime_string: []const u8 = "";
+                for  (0..scaling_factor) |_| {
+                    comptime_string = comptime_string ++
+                        \\    mov %%r11d, (%%rbx)
+                        \\    addq $4, %%rbx
+                        \\
+                    ;
+                }
+                break :blk comptime_string;
+            };
+
+            const comptime_generated_asm_1 = std.fmt.comptimePrint(
+                \\    mov ${}, %%r14d
+                \\
+                , .{scaling_factor*scaling_factor}
+            );
+            
+            asm volatile (
+                \\    mov %%edx, %%r8d
+                \\    imul $4, %%r8d, %%r13d
+                \\
+                ++ comptime_generated_asm_1 ++
+                \\    imul %%r13d, %%r14d
+                \\    mov %%rcx, %%r10
+                \\    mov %%rbx, %%r9
+                \\    mul %%edx
+                \\    lea (%%rcx,%%rax,4), %%rdx
+                \\._outer:
+                \\    cmp %%rcx, %%rdx
+                \\    je ._outer_end
+                \\    add %%r13, %r10
+                \\    add %%r14, %r9
+                \\._outer_2:
+                \\    cmp %%rbx, %%r9
+                \\    je ._outer_2_end
+                \\    push %%rcx
+                \\._inner:
+                \\    cmp %%rcx, %%r10
+                \\    je ._inner_end
+                \\    mov (%%rcx), %%r11d
+                \\
+                ++ comptime_generated_asm_2 ++
+                \\    addq $4, %%rcx
+                \\    jmp ._inner
+                \\._inner_end:
+                \\    pop %%rcx
+                \\    jmp ._outer_2
+                \\._outer_2_end:
+                \\    mov %%r10, %%rcx
+                \\    jmp ._outer
+                \\._outer_end:
+                \\
+                :: [dst_data]"{rbx}"(dst_data),
+                [src_data]"{rcx}"(src_data),
+                [src_width]"{edx}"(src_width),
+                [src_height]"{eax}"(src_height),
+                : "memory"
+            );
+        }
         pub fn _upscale_u32_asm(src_data: *u32, dst_data: *u32, src_width: u32, src_height: u32, scaling_factor: u32) void {
             // ; input
             // rd32| = src_width
@@ -709,6 +806,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             std.debug.assert(scale == @divExact(dst.height, src.height));
             _upscale_u32_asm(@ptrCast(@alignCast(src.data)), @ptrCast(@alignCast(dst.data)), @intCast(src.width), @intCast(src.height), @intCast(scale));
         }
+        pub fn upscale_asm_known_scale(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type), comptime scale: u32) void {
+            std.debug.assert(@sizeOf(pixel_type) == @sizeOf(u32));
+            _upscale_u32_known_scale_asm(@ptrCast(@alignCast(src.data)), @ptrCast(@alignCast(dst.data)), @intCast(src.width), @intCast(src.height), scale);
+        }
     };
 
     const staticb = struct {
@@ -720,8 +821,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     // The game is being rendered to a 1/4 size of the window, so scale the image back up to the real size
     const ms_taken_upscale: f32 = blk: {
         const profile = Application.perf.profile_start();
-        if (staticb.upscale4) scalers.upscale_4(platform.OutPixelType, state.game_render_target, ud.pixel_buffer)
-        else scalers.upscale_4_asm(platform.OutPixelType, state.game_render_target, ud.pixel_buffer);
+        if (staticb.upscale4) scalers.upscale_asm_known_scale(platform.OutPixelType, state.game_render_target, ud.pixel_buffer, 4)
+        else scalers.upscale_4(platform.OutPixelType, state.game_render_target, ud.pixel_buffer);
         break :blk Application.perf.profile_end(profile);
     };
 
