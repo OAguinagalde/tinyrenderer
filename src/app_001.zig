@@ -611,11 +611,43 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
         }
         pub fn _upscale_u32_4_asm(src_data: *u32, dst_data: *u32, src_width: u32, src_height: u32, scaling_factor: u32) void {
+            // The input given to the assembly:
+            // |rd32 = src_width
+            // |ra32 = src_height
+            // |rs32 = scaling_factor
+            // |rc64 = src_data
+            // |rb64 = dst_data
+            // 
+            // The assembly code written in my weird made up syntax:
+            // |r832|src_width = rd32|src_width
+            // |ra32|src_data_len *=  rd32|src_width
+            // |rd64|src_data_end = rc64|src_data + (ra32|src_data_len * 4)
+            // |while (rc64|src_data != rd64|src_data_end) {
+            // |    r932|times_a = 0
+            // |    while (r932|times_a != rs32|scaling_factor) {
+            // |        push rc64|src_data
+            // |        r032|progress_row = 0
+            // |        while (r032|progress_row != r832|src_width) {
+            // |            r132|pixel = *rc64|src_data
+            // |            *(rb64|dst_data) = r132|pixel
+            // |            rb64|dst_data += 4
+            // |            *(rb64|dst_data) = r132|pixel
+            // |            rb64|dst_data += 4
+            // |            *(rb64|dst_data) = r132|pixel
+            // |            rb64|dst_data += 4
+            // |            *(rb64|dst_data) = r132|pixel
+            // |            rb64|dst_data += 4
+            // |            r032|progress_row++
+            // |            rc64|src_data += 4
+            // |        }
+            // |        pop rc64|src_data
+            // |        r932|times_a++
+            // |    }
+            // |    rc64|src_data = rc64|src_data + (r864|src_width * 4)
+            // |}
             asm volatile (
                 \\    mov %%edx, %%r8d
                 \\    mul %%edx
-                // calculate the end of src_data (src_data + src_width*src_height) and put it in rdx
-                // we will use it down below on `cmp %%rcx, %%rdx` to know whether we have finished or not
                 \\    lea (%%rcx,%%rax,4), %%rdx
                 \\.outer:
                 \\    cmp %%rcx, %%rdx
@@ -657,7 +689,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 [scaling_factor]"{esi}"(scaling_factor)
                 : "memory"
             );
-
         }
         
         pub fn upscale_4_asm(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
