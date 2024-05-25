@@ -610,78 +610,90 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             }
 
         }
-        pub fn _upscale_u32_4_asm(src_data: *u32, dst_data: *u32, src_width: u32, src_height: u32, scaling_factor: u32) void {
-            // The input given to the assembly:
-            // |rd32 = src_width
-            // |ra32 = src_height
-            // |rs32 = scaling_factor
-            // |rc64 = src_data
-            // |rb64 = dst_data
+        pub fn _upscale_u32_asm(src_data: *u32, dst_data: *u32, src_width: u32, src_height: u32, scaling_factor: u32) void {
+            // ; input
+            // rd32| = src_width
+            // ra32| = src_height
+            // ; TODO look into comptime assemly generation since I´ll most likely know
+            // ; the scaling_factor at compile time and can improve all of this
+            // rs32| = scaling_factor
+            // rc64| = src_data
+            // rb64| = dst_data
             // 
-            // The assembly code written in my weird made up syntax:
-            // |r832|src_width = rd32|src_width
-            // |ra32|src_data_len *=  rd32|src_width
-            // |rd64|src_data_end = rc64|src_data + (ra32|src_data_len * 4)
-            // |while (rc64|src_data != rd64|src_data_end) {
-            // |    r932|times_a = 0
-            // |    while (r932|times_a != rs32|scaling_factor) {
-            // |        push rc64|src_data
-            // |        r032|progress_row = 0
-            // |        while (r032|progress_row != r832|src_width) {
-            // |            r132|pixel = *rc64|src_data
-            // |            *(rb64|dst_data) = r132|pixel
-            // |            rb64|dst_data += 4
-            // |            *(rb64|dst_data) = r132|pixel
-            // |            rb64|dst_data += 4
-            // |            *(rb64|dst_data) = r132|pixel
-            // |            rb64|dst_data += 4
-            // |            *(rb64|dst_data) = r132|pixel
-            // |            rb64|dst_data += 4
-            // |            r032|progress_row++
-            // |            rc64|src_data += 4
-            // |        }
-            // |        pop rc64|src_data
-            // |        r932|times_a++
-            // |    }
-            // |    rc64|src_data = rc64|src_data + (r864|src_width * 4)
-            // |}
+            // ; assembly
+            // ; TODO I can potentially also know this at compile time
+            // r832|src_width = rd32|src_width
+            // r332|size_of_src_row_in_bytes = r832|src_width * 4
+            // r432|square_of_scaling_factor = rs32|scaling_factor
+            // r432|square_of_scaling_factor *= rs32|scaling_factor
+            // r432|size_of_dst_row_in_bytes *= r332|size_of_src_row_in_bytes
+            // r064|src_row_end = rc64|src_data
+            // r964|dst_row_end = rb64|dst_data
+            // ra32|src_data_len *=  rd32|src_width
+            // rd64|src_data_end = rc64|src_data + (ra32|src_data_len * 4)
+            // while (rc64|src_data != rd64|src_data_end) {
+            //     ; Calculate the address of the first pixel of the next row in src_data
+            //     r064|src_row_end += r332|size_of_src_row_in_bytes
+            //     ; Calculate the address of the first pixel of the next row in dst_data
+            //     r964|dst_row_end += r432|size_of_dst_row_in_bytes
+            //     while (rb64|dst_data != r964|dst_row_end) {
+            //         push rc64|src_data
+            //         while (rc64|src_data != r064|src_row_end) {
+            //             r132|pixel = *rc64|src_data
+            //             ; TODO look into SIMD to replace this whole loop
+            //             r232|times_b = 0
+            //             while (r232|times_b != rs32|scaling_factor) {
+            //                 *(rb64|dst_data) = r132|pixel
+            //                 rb64|dst_data += 4
+            //                 r232|times_b++
+            //             }
+            //             rc64|src_data += 4
+            //         }
+            //         pop rc64|src_data
+            //     }
+            //     rc64|src_data = r064|src_row_end
+            // }
             asm volatile (
                 \\    mov %%edx, %%r8d
+                \\    imul $4, %%r8d, %%r13d
+                \\    mov %%esi, %%r14d
+                \\    imul %%r14d, %%r14d
+                \\    imul %%r13d, %%r14d
+                \\    mov %%rcx, %%r10
+                \\    mov %%rbx, %%r9
                 \\    mul %%edx
                 \\    lea (%%rcx,%%rax,4), %%rdx
                 \\.outer:
                 \\    cmp %%rcx, %%rdx
                 \\    je .outer_end
-                \\    xor %%r9d, %%r9d
+                \\    add %%r13, %r10
+                \\    add %%r14, %r9
                 \\.outer_2:
-                \\    cmp %%r9d, %%esi
+                \\    cmp %%rbx, %%r9
                 \\    je .outer_2_end
                 \\    push %%rcx
-                \\    xor %%r10d, %%r10d
                 \\.inner:
-                \\    cmp %%r10d, %%r8d
+                \\    cmp %%rcx, %%r10
                 \\    je .inner_end
                 \\    mov (%%rcx), %%r11d
+                \\    xor %%r12d, %%r12d
+                \\.upscale_single_pixel:
+                \\    cmp %%r12d, %%esi
+                \\    je .upscale_single_pixel_end
                 \\    mov %%r11d, (%%rbx)
                 \\    addq $4, %%rbx
-                \\    mov %%r11d, (%%rbx)
-                \\    addq $4, %%rbx
-                \\    mov %%r11d, (%%rbx)
-                \\    addq $4, %%rbx
-                \\    mov %%r11d, (%%rbx)
-                \\    addq $4, %%rbx
-                \\    inc %%r10d
+                \\    inc %%r12d
+                \\    jmp .upscale_single_pixel
+                \\.upscale_single_pixel_end:
                 \\    addq $4, %%rcx
                 \\    jmp .inner
                 \\.inner_end:
                 \\    pop %%rcx
-                \\    inc %%r9d
                 \\    jmp .outer_2
                 \\.outer_2_end:
-                \\    lea (%%rcx,%%r8,4), %%rcx
+                \\    mov %%r10, %%rcx
                 \\    jmp .outer
                 \\.outer_end:
-                \\
                 :: [dst_data]"{rbx}"(dst_data),
                 [src_data]"{rcx}"(src_data),
                 [src_width]"{edx}"(src_width),
@@ -691,8 +703,11 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             );
         }
         
-        pub fn upscale_4_asm(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
-            _upscale_u32_4_asm(@ptrCast(@alignCast(src.data)), @ptrCast(@alignCast(dst.data)), @intCast(src.width), @intCast(src.height), 4);
+        pub fn upscale_asm(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
+            std.debug.assert(@sizeOf(pixel_type) == @sizeOf(u32));
+            const scale: usize = @divExact(dst.width, src.width);
+            std.debug.assert(scale == @divExact(dst.height, src.height));
+            _upscale_u32_asm(@ptrCast(@alignCast(src.data)), @ptrCast(@alignCast(dst.data)), @intCast(src.width), @intCast(src.height), @intCast(scale));
         }
     };
 
