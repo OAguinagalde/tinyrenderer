@@ -610,6 +610,59 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             }
 
         }
+        pub fn _upscale_u32_4_asm(src_data: *u32, dst_data: *u32, src_width: u32, src_height: u32, scaling_factor: u32) void {
+            asm volatile (
+                \\    mov %%edx, %%r8d
+                \\    mul %%edx
+                // calculate the end of src_data (src_data + src_width*src_height) and put it in rdx
+                // we will use it down below on `cmp %%rcx, %%rdx` to know whether we have finished or not
+                \\    lea (%%rcx,%%rax,4), %%rdx
+                \\.outer:
+                \\    cmp %%rcx, %%rdx
+                \\    je .outer_end
+                \\    xor %%r9d, %%r9d
+                \\.outer_2:
+                \\    cmp %%r9d, %%esi
+                \\    je .outer_2_end
+                \\    push %%rcx
+                \\    xor %%r10d, %%r10d
+                \\.inner:
+                \\    cmp %%r10d, %%r8d
+                \\    je .inner_end
+                \\    mov (%%rcx), %%r11d
+                \\    mov %%r11d, (%%rbx)
+                \\    addq $4, %%rbx
+                \\    mov %%r11d, (%%rbx)
+                \\    addq $4, %%rbx
+                \\    mov %%r11d, (%%rbx)
+                \\    addq $4, %%rbx
+                \\    mov %%r11d, (%%rbx)
+                \\    addq $4, %%rbx
+                \\    inc %%r10d
+                \\    addq $4, %%rcx
+                \\    jmp .inner
+                \\.inner_end:
+                \\    pop %%rcx
+                \\    inc %%r9d
+                \\    jmp .outer_2
+                \\.outer_2_end:
+                \\    lea (%%rcx,%%r8,4), %%rcx
+                \\    jmp .outer
+                \\.outer_end:
+                \\
+                :: [dst_data]"{rbx}"(dst_data),
+                [src_data]"{rcx}"(src_data),
+                [src_width]"{edx}"(src_width),
+                [src_height]"{eax}"(src_height),
+                [scaling_factor]"{esi}"(scaling_factor)
+                : "memory"
+            );
+
+        }
+        
+        pub fn upscale_4_asm(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
+            _upscale_u32_4_asm(@ptrCast(@alignCast(src.data)), @ptrCast(@alignCast(dst.data)), @intCast(src.width), @intCast(src.height), 4);
+        }
     };
 
     const staticb = struct {
@@ -622,7 +675,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const ms_taken_upscale: f32 = blk: {
         const profile = Application.perf.profile_start();
         if (staticb.upscale4) scalers.upscale_4(platform.OutPixelType, state.game_render_target, ud.pixel_buffer)
-        else scalers.upscale_4_store(platform.OutPixelType, state.game_render_target, ud.pixel_buffer);
+        else scalers.upscale_4_asm(platform.OutPixelType, state.game_render_target, ud.pixel_buffer);
         break :blk Application.perf.profile_end(profile);
     };
 
