@@ -423,193 +423,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     };
 
     const scalers = struct {
-        pub fn upscale_2(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
-            var y: usize = 0;
-            var x: usize = 0;
-            var pixel_out_index: usize = 0;
-            var rows: usize = 0;
-            const game_w = src.width;
-            const limit = dst.data.len - 2;
-            while (pixel_out_index<=limit) {
-                const pixel = src.data[y*game_w + x];
-                std.log.debug("src[{}]", .{y*game_w + x});
-                dst.data[pixel_out_index+0] = pixel;
-                std.log.debug("dst[{}]", .{pixel_out_index+0});
-                dst.data[pixel_out_index+1] = pixel;
-                std.log.debug("dst[{}]", .{pixel_out_index+1});
-                x += 1;
-                if (x == game_w) {
-                    rows += 1;
-                    x = 0;
-                    if (rows == 2) {
-                        y += 1;
-                        rows = 0;
-                    }
-                }
-                pixel_out_index += 2;
-            }
-        }
-        pub inline fn store(mem: []u32, v: anytype, comptime len: u32) void {
-            const vector_len = @typeInfo(@TypeOf(v)).Vector.len;
-            const loop_len = if (len == 0) vector_len else len;
-            comptime var i: u32 = 0;
-            inline while (i < loop_len) : (i += 1) {
-                mem[i] = v[i];
-            }
-        }
-        pub fn upscale_4(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
-            var y: usize = 0;
-            var x: usize = 0;
-            var pixel_out_index: usize = 0;
-            var rows: usize = 0;
-            const game_w = src.width;
-            const limit = dst.data.len - 4;
-            while (pixel_out_index<=limit) {
-                const pixel = src.data[y*game_w + x];
-                dst.data[pixel_out_index+0] = pixel;
-                dst.data[pixel_out_index+1] = pixel;
-                dst.data[pixel_out_index+2] = pixel;
-                dst.data[pixel_out_index+3] = pixel;
-                x += 1;
-                if (x == game_w) {
-                    rows += 1;
-                    x = 0;
-                    if (rows == 4) {
-                        y += 1;
-                        rows = 0;
-                    }
-                }
-                pixel_out_index += 4;
-            }
-        }
-        pub fn upscale_4_c(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
-            var y: usize = 0;
-            var x: usize = 0;
-            var pixel_out_index: usize = 0;
-            var rows: usize = 0;
-            const game_w = src.width;
-            const limit = dst.data.len - 4;
-            while (pixel_out_index<=limit) {
-                const pixel = src.data[y*game_w + x];
-                dst.data[pixel_out_index+0] = pixel;
-                dst.data[pixel_out_index+1] = pixel;
-                dst.data[pixel_out_index+2] = pixel;
-                dst.data[pixel_out_index+3] = pixel;
-                x += 1;
-                if (x == game_w) {
-                    rows += 1;
-                    x = 0;
-                    if (rows == 4) {
-                        y += 1;
-                        rows = 0;
-                    }
-                }
-                pixel_out_index += 4;
-            }
-        }
-        pub fn upscale_4_store(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
-            var y: usize = 0;
-            var x: usize = 0;
-            var pixel_out_index: usize = 0;
-            var rows: usize = 0;
-            const game_w = src.width;
-            const limit = dst.data.len - 4;
-            const src_data: []u32 = @ptrCast(@alignCast(src.data));
-            const dst_data: []u32 = @ptrCast(@alignCast(dst.data));
-            while (pixel_out_index<=limit) {
-                const pixel_as_vector: @Vector(4, u32) = @splat(src_data[y*game_w + x]);
-                store(dst_data[pixel_out_index..pixel_out_index+4], pixel_as_vector, 0);
-                x += 1;
-                if (x == game_w) {
-                    rows += 1;
-                    x = 0;
-                    if (rows == 4) {
-                        y += 1;
-                        rows = 0;
-                    }
-                }
-                pixel_out_index += 4;
-            }
-        }
-        pub fn upscale_b(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
-            const scale: usize = @divExact(dst.width, src.width);
-            std.debug.assert(scale == @divExact(dst.height, src.height));
-            var y: usize = 0;
-            var x: usize = 0;
-            var pixel_out_index: usize = 0;
-            var rows: usize = 0;
-            const game_w = src.width;
-            const limit = dst.data.len - scale;
-            while (pixel_out_index<=limit) {
-                const pixel = src.data[y*game_w + x];
-                for (dst.data[pixel_out_index..pixel_out_index+scale]) |*p| p.* = pixel;
-                x += 1;
-                if (x == game_w) {
-                    rows += 1;
-                    x = 0;
-                    if (rows == scale) {
-                        y += 1;
-                        rows = 0;
-                    }
-                }
-                pixel_out_index += scale;
-            }
-        }
-        pub fn upscale_4_b(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
-            const game_w = src.width;
-            const game_w_4 = 4*game_w;
-            const limit = dst.data.len - 4;
-            var pixel_out_index: usize = 0;
-            var i: usize = 0;
-            while (pixel_out_index<=limit) {
-                const x = i%game_w;
-                const y = @divFloor(i, game_w_4);
-                const pixel = src.data[y*game_w + x];
-                dst.data[pixel_out_index+0] = pixel;
-                dst.data[pixel_out_index+1] = pixel;
-                dst.data[pixel_out_index+2] = pixel;
-                dst.data[pixel_out_index+3] = pixel;
-                i+=1;
-                pixel_out_index += 4;
-            }
-        }
-        pub fn upscale(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
-            const srcw = src.width;
-            const dstw = dst.width;
-            const dsth = dst.height;
-            const scale: usize = @divExact(dst.width, src.width);
-            std.debug.assert(scale == @divExact(dst.height, src.height));
-            
-            const dst_width_limit = dstw-scale;
-            const dst_height_limit = dsth-scale;
-
-            var src_y: usize = 0;
-            var dst_box_y: usize = 0;
-            while (dst_box_y <= dst_height_limit) {
-                const offset_src_y = src_y * srcw;
-                var j: usize = 0;
-                while (j < scale):(j+=1) {
-                    const offset_dst_y = (dst_box_y + j) * dstw;
-                    var src_x: usize = 0;
-                    var dst_box_x: usize = 0;
-                    while (dst_box_x <= dst_width_limit) {
-                        const value = src.data[offset_src_y + src_x];
-                        // std.log.debug("src[{}]", .{offset_src_y + src_x});
-                        const offset = offset_dst_y + dst_box_x;
-                        var i: usize = 0;
-                        while (i < scale):(i += 1) {
-                            dst.data[offset + i] = value;
-                            // std.log.debug("dst[{}]", .{offset + i});
-                        }
-                        src_x += 1;
-                        dst_box_x += scale;
-                    }
-                }
-                src_y += 1;
-                dst_box_y += scale;
-            }
-
-        }
         pub fn _upscale_u32_known_scale_asm(src_data: *u32, dst_data: *u32, src_width: u32, src_height: u32, comptime scaling_factor: u32) void {
             // ; input
             // rd32| = src_width
@@ -707,122 +520,51 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 : "memory"
             );
         }
-        pub fn _upscale_u32_asm(src_data: *u32, dst_data: *u32, src_width: u32, src_height: u32, scaling_factor: u32) void {
-            // ; input
-            // rd32| = src_width
-            // ra32| = src_height
-            // ; TODO look into comptime assemly generation since I´ll most likely know
-            // ; the scaling_factor at compile time and can improve all of this
-            // rs32| = scaling_factor
-            // rc64| = src_data
-            // rb64| = dst_data
-            // 
-            // ; assembly
-            // ; TODO I can potentially also know this at compile time
-            // r832|src_width = rd32|src_width
-            // r332|size_of_src_row_in_bytes = r832|src_width * 4
-            // r432|square_of_scaling_factor = rs32|scaling_factor
-            // r432|square_of_scaling_factor *= rs32|scaling_factor
-            // r432|size_of_dst_row_in_bytes *= r332|size_of_src_row_in_bytes
-            // r064|src_row_end = rc64|src_data
-            // r964|dst_row_end = rb64|dst_data
-            // ra32|src_data_len *=  rd32|src_width
-            // rd64|src_data_end = rc64|src_data + (ra32|src_data_len * 4)
-            // while (rc64|src_data != rd64|src_data_end) {
-            //     ; Calculate the address of the first pixel of the next row in src_data
-            //     r064|src_row_end += r332|size_of_src_row_in_bytes
-            //     ; Calculate the address of the first pixel of the next row in dst_data
-            //     r964|dst_row_end += r432|size_of_dst_row_in_bytes
-            //     while (rb64|dst_data != r964|dst_row_end) {
-            //         push rc64|src_data
-            //         while (rc64|src_data != r064|src_row_end) {
-            //             r132|pixel = *rc64|src_data
-            //             ; TODO look into SIMD to replace this whole loop
-            //             r232|times_b = 0
-            //             while (r232|times_b != rs32|scaling_factor) {
-            //                 *(rb64|dst_data) = r132|pixel
-            //                 rb64|dst_data += 4
-            //                 r232|times_b++
-            //             }
-            //             rc64|src_data += 4
-            //         }
-            //         pop rc64|src_data
-            //     }
-            //     rc64|src_data = r064|src_row_end
-            // }
-            asm volatile (
-                \\    mov %%edx, %%r8d
-                \\    imul $4, %%r8d, %%r13d
-                \\    mov %%esi, %%r14d
-                \\    imul %%r14d, %%r14d
-                \\    imul %%r13d, %%r14d
-                \\    mov %%rcx, %%r10
-                \\    mov %%rbx, %%r9
-                \\    mul %%edx
-                \\    lea (%%rcx,%%rax,4), %%rdx
-                \\.outer:
-                \\    cmp %%rcx, %%rdx
-                \\    je .outer_end
-                \\    add %%r13, %r10
-                \\    add %%r14, %r9
-                \\.outer_2:
-                \\    cmp %%rbx, %%r9
-                \\    je .outer_2_end
-                \\    push %%rcx
-                \\.inner:
-                \\    cmp %%rcx, %%r10
-                \\    je .inner_end
-                \\    mov (%%rcx), %%r11d
-                \\    xor %%r12d, %%r12d
-                \\.upscale_single_pixel:
-                \\    cmp %%r12d, %%esi
-                \\    je .upscale_single_pixel_end
-                \\    mov %%r11d, (%%rbx)
-                \\    addq $4, %%rbx
-                \\    inc %%r12d
-                \\    jmp .upscale_single_pixel
-                \\.upscale_single_pixel_end:
-                \\    addq $4, %%rcx
-                \\    jmp .inner
-                \\.inner_end:
-                \\    pop %%rcx
-                \\    jmp .outer_2
-                \\.outer_2_end:
-                \\    mov %%r10, %%rcx
-                \\    jmp .outer
-                \\.outer_end:
-                :: [dst_data]"{rbx}"(dst_data),
-                [src_data]"{rcx}"(src_data),
-                [src_width]"{edx}"(src_width),
-                [src_height]"{eax}"(src_height),
-                [scaling_factor]"{esi}"(scaling_factor)
-                : "memory"
-            );
+        pub fn _upscale_u32_known_scale(_src_data: [*]u32, _dst_data: [*]u32, src_width: u32, src_height: u32, comptime scaling_factor: u32) void {
+            const square_of_scaling_factor: u32 = comptime scaling_factor*scaling_factor;
+            // by default input parameters of functions are const
+            var dst_data = _dst_data;
+            var src_data = _src_data;
+
+            const size_of_dst_row: u32 = square_of_scaling_factor * src_width;
+            const src_data_end = src_data + src_width * src_height;
+            var src_row_end = src_data;
+            var dst_row_end = dst_data;
+            while (src_data != src_data_end) {
+                src_row_end += src_width;
+                dst_row_end += size_of_dst_row;
+                while (dst_data != dst_row_end) {
+                    const saved_src_data = src_data;
+                    while (src_data != src_row_end) {
+                        const pixel = src_data[0];
+                        inline for(0..scaling_factor) |i| {
+                            dst_data[i] = pixel;
+                        }
+                        dst_data += scaling_factor;
+                        src_data += 1;
+                    }
+                    src_data = saved_src_data;
+                }
+                src_data = src_row_end;
+            }
         }
-        
-        pub fn upscale_asm(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type)) void {
-            std.debug.assert(@sizeOf(pixel_type) == @sizeOf(u32));
-            const scale: usize = @divExact(dst.width, src.width);
-            std.debug.assert(scale == @divExact(dst.height, src.height));
-            _upscale_u32_asm(@ptrCast(@alignCast(src.data)), @ptrCast(@alignCast(dst.data)), @intCast(src.width), @intCast(src.height), @intCast(scale));
-        }
-        pub fn upscale_asm_known_scale(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type), comptime scale: u32) void {
+        pub fn upscale_u32_known_scale_asm(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type), comptime scale: u32) void {
             std.debug.assert(@sizeOf(pixel_type) == @sizeOf(u32));
             _upscale_u32_known_scale_asm(@ptrCast(@alignCast(src.data)), @ptrCast(@alignCast(dst.data)), @intCast(src.width), @intCast(src.height), scale);
         }
+        pub fn upscale_u32_known_scale(comptime pixel_type: type, src: Buffer2D(pixel_type), dst: Buffer2D(pixel_type), comptime scale: u32) void {
+            std.debug.assert(@sizeOf(pixel_type) == @sizeOf(u32));
+            _upscale_u32_known_scale(@ptrCast(@alignCast(src.data)), @ptrCast(@alignCast(dst.data)), @intCast(src.width), @intCast(src.height), scale);
+        }
     };
-
-    const staticb = struct {
-        var upscale4 = true;
-    };
-    if (ud.key_pressed('U')) staticb.upscale4 = !staticb.upscale4;
 
     // scale to 4 times bigger render target
     // The game is being rendered to a 1/4 size of the window, so scale the image back up to the real size
     const ms_taken_upscale: f32 = blk: {
         const profile = Application.perf.profile_start();
-        if (staticb.upscale4) scalers.upscale_asm_known_scale(platform.OutPixelType, state.game_render_target, ud.pixel_buffer, 4)
-        else scalers.upscale_4(platform.OutPixelType, state.game_render_target, ud.pixel_buffer);
+        // NOTE debug mode results in a way too slow upscale function so use the assembly on
+        if (builtin.os.tag == .windows and builtin.mode == .Debug) scalers.upscale_u32_known_scale_asm(platform.OutPixelType, state.game_render_target, ud.pixel_buffer, 4)
+        else scalers.upscale_u32_known_scale(platform.OutPixelType, state.game_render_target, ud.pixel_buffer, 4);
         break :blk Application.perf.profile_end(profile);
     };
 
