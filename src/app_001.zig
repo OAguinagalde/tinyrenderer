@@ -30,12 +30,13 @@ const windows = @import("windows.zig");
 const wasm = @import("wasm.zig");
 const platform = if (builtin.os.tag == .windows) windows else wasm;
 
+const SCALE = 4;
 const Application = platform.Application(.{
     .init = init,
     .update = update,
     .dimension_scale = 1,
-    .desired_width = 240*4,
-    .desired_height = 136*4,
+    .desired_width = 240*SCALE,
+    .desired_height = 136*SCALE,
 });
 
 // TODO: currently the wasm target only works if the exported functions are explicitly referenced.
@@ -431,6 +432,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             // rb64| = dst_data
             // 
             // ; assembly
+            // ; NOTE this might not be 100% accurate with the actual code below, but it mostly is an accurate
+            // ; representation of the assembly below...
             // r832|src_width = rd32|src_width
             // r332|size_of_src_row_in_bytes = r832|src_width * 4
             // r432|square_of_scaling_factor = comptime scaling_factor*scaling_factor
@@ -463,6 +466,12 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             const comptime_generated_asm_2 = comptime blk: {
                 var comptime_string: []const u8 = "";
                 for  (0..scaling_factor) |_| {
+                    // Tried also this but didnt make any difference as far as I can tell
+                    // |mov %%r11d, 4(%%rbx)
+                    // |mov %%r11d, 8(%%rbx)
+                    // |mov %%r11d, 12(%%rbx)
+                    // |mov %%r11d, 14(%%rbx)
+                    // |addq $16, %%rbx
                     comptime_string = comptime_string ++
                         \\    mov %%r11d, (%%rbx)
                         \\    addq $4, %%rbx
@@ -478,6 +487,24 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 , .{scaling_factor*scaling_factor}
             );
             
+            // This is the code that copies a pixel from scale_factor x pixels of dst
+            const loop_core = if (scaling_factor == 4)
+                // SIMD version when scaling factor is 4
+                // TODO should probably implement the same for scaling factor 2 and 8
+                // TODO additionally I could copy more than 1 pixel: Load p and p+1, fill ymm 256 bit register and write it to memory
+                // although it would need some extra checks probably? Not really needing the extra speed now anyway lol
+                \\    vbroadcastss (%%rcx), %%xmm0
+                \\    movaps %%xmm0, (%%rbx)
+                \\    addq $16, %%rbx
+                \\
+                else
+                \\    mov (%%rcx), %%r11d
+                \\
+                ++ comptime_generated_asm_2 ++
+                \\
+            ;
+
+            // TODO I probably should reset flags and stuff that I'm not checking? I actually dont know...
             asm volatile (
                 \\    mov %%edx, %%r8d
                 \\    imul $4, %%r8d, %%r13d
@@ -500,9 +527,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 \\._inner:
                 \\    cmp %%rcx, %%r10
                 \\    je ._inner_end
-                \\    mov (%%rcx), %%r11d
                 \\
-                ++ comptime_generated_asm_2 ++
+                ++ loop_core ++
                 \\    addq $4, %%rcx
                 \\    jmp ._inner
                 \\._inner_end:
@@ -563,8 +589,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const ms_taken_upscale: f32 = blk: {
         const profile = Application.perf.profile_start();
         // NOTE debug mode results in a way too slow upscale function so use the assembly on
-        if (builtin.os.tag == .windows and builtin.mode == .Debug) scalers.upscale_u32_known_scale_asm(platform.OutPixelType, state.game_render_target, ud.pixel_buffer, 4)
-        else scalers.upscale_u32_known_scale(platform.OutPixelType, state.game_render_target, ud.pixel_buffer, 4);
+        if (builtin.os.tag == .windows and builtin.mode == .Debug) scalers.upscale_u32_known_scale_asm(platform.OutPixelType, state.game_render_target, ud.pixel_buffer, SCALE)
+        else scalers.upscale_u32_known_scale(platform.OutPixelType, state.game_render_target, ud.pixel_buffer, SCALE);
         break :blk Application.perf.profile_end(profile);
     };
 
@@ -618,7 +644,24 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             try debug.label("vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y});
             try debug.label("update  took {d:.8}ms", .{ms_taken_update});
             try debug.label("render  took {d:.8}ms", .{ms_taken_render});
-            try debug.label("upscale took {d:.8}ms upscale4 {} press U", .{ms_taken_upscale, staticb.upscale4});
+            const stuff = struct {
+                const times_count = 120;
+                var times: [times_count]f32 = undefined;
+                var times_idx: usize = 0;
+                var initialized = false;
+            };
+            if (!stuff.initialized) {
+                stuff.initialized = true;
+                for (&stuff.times) |*val| val.* = 0;
+            }
+            stuff.times[stuff.times_idx] = ms_taken_upscale;
+            stuff.times_idx = (stuff.times_idx + 1) % stuff.times_count;
+            const final_time = calc_time_block: {
+                var ft: f32 = 0;
+                for (&stuff.times) |val| ft += val;
+                break :calc_time_block ft/stuff.times_count;
+            };
+            try debug.label("upscale took {d:.8}ms", .{final_time});
             try debug.label("ui prev took {d:.8}ms", .{static.ms_taken_ui_previous});
             try debug.label("ui rend took {d:.8}ms", .{static.ms_taken_render_ui_previous});
             // force debug container to be the lowest layer
