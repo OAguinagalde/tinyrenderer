@@ -972,6 +972,43 @@ pub fn BoundingBox(comptime T: type) type {
             return .{ .shrinked = shrinked, .leftover = leftover };
         }
 
+        pub inline fn expand(self: Self, comptime s: BoundingBoxSide, units: T) struct { expanded: BoundingBox(T), extra: BoundingBox(T) } {
+            var expanded = self;
+            var extra = self;
+            switch (s) {
+                .top => {
+                    expanded.top += units;
+                    extra = expanded;
+                    extra.bottom += self.height();
+                },
+                .bottom => {
+                    expanded.bottom -= units;
+                    extra = expanded;
+                    extra.top -= self.height();
+                },
+                .left => {
+                    expanded.left -= units;
+                    extra = expanded;
+                    extra.right -= self.width();
+                },
+                .right => {
+                    expanded.right += units;
+                    extra = expanded;
+                    extra.left += self.width();
+                }
+            }
+            return .{ .expanded = expanded, .extra = extra };
+        }
+
+        pub inline fn expand_all(self: Self, units: T) BoundingBox(T) {
+            var expanded = self;
+            expanded.top += units;
+            expanded.bottom -= units;
+            expanded.left -= units;
+            expanded.right += units;
+            return expanded;
+        }
+
         pub inline fn width(self: Self) T {
             return self.right - self.left;
         }

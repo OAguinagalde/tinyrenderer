@@ -109,85 +109,23 @@ pub fn PhysicalWorld(comptime config: PhysicsConfig, comptime is_collision: fn(V
         }
 
         const IsFloored = bool;
+        const IsAgainstWall = bool;
+
+        const ExtraInformation = struct {
+            floor: IsFloored,
+            against_wall: IsAgainstWall,
+        };
         
-        pub fn apply(o: *PhysicalObject) IsFloored {
+        pub fn apply(o: *PhysicalObject) ExtraInformation {
             
             // For now we dont keep track of whether it was previously in the floor or not, we just keep track of whether it is or not.
             var floor: bool = false;
+            var against_wall: bool = false;
             var pos = PhysicalPosDecomposed.from(o.physical_pos);
             var vel: Vector2f = o.velocity;
             
             // Apply gravity
             vel.y -= (config.gravity * o.weight);
-
-            // Horizontal movement
-            if (!std.math.approxEqAbs(f32, vel.x, 0, std.math.floatEps(f32))) {
-
-                // The velocity is basically how many tiles this object is going to move in 1 update.
-                // A velocity of (-3.2, 0) means that the particle is moving 3.2 tiles to the left.
-                var total_movement = vel.x;
-
-                // The reason I do `ceil` is because its always going to be at least 1 check:
-                // Consider a cell |::____::| where the `:` is the space between the next cell and the `pad_{left|right}`.
-                // If the object moves to the pad area, and the next tile is a collision, it needs to be moved.
-                var tiles_to_check: u32 = @intFromFloat(@ceil(@abs(vel.x)));
-
-                // wether the object moved across tiles or not
-                var moved_tile: bool = false;
-
-                // Move the object tile by tile until we collide, or until we moved the object all the way to its target position
-                while (tiles_to_check > 0) : (tiles_to_check -= 1) {
-                    
-                    const movement_ammount = std.math.clamp(total_movement, -1.0, 1.0);
-                    total_movement -= movement_ammount;
-
-                    // First move...
-                    pos.in_tile.x += movement_ammount;
-                    
-                    // ... and then check whether we collided (and if so, move back!)
-                    if (pos.in_tile.x > config.pad_right) {
-                        const right_tile = calculate_real_tile(Vector2i.from(pos.physical_tile.x + 1, pos.physical_tile.y));
-                        if (is_collision(right_tile)) {
-                            // If it collided, remove all its horizontal velocity and put "agains the wall".
-                            pos.in_tile.x = config.pad_right;
-                            vel.x = 0.0;
-                            break;
-                        }
-                        else if (pos.in_tile.x > 1.0) {
-                            pos.in_tile.x -= 1.0;
-                            pos.physical_tile.x += 1;
-                            moved_tile = true;
-                        }
-                    }
-                    else if (pos.in_tile.x < config.pad_left) {
-                        const left_tile = calculate_real_tile(Vector2i.from(pos.physical_tile.x - 1, pos.physical_tile.y));
-                        if (is_collision(left_tile)) {
-                            pos.in_tile.x = config.pad_left;
-                            vel.x = 0.0;
-                            break;
-                        }
-                        else if (pos.in_tile.x < 1.0) {
-                            pos.in_tile.x += 1.0;
-                            pos.physical_tile.x -= 1;
-                            moved_tile = true;                    
-                        }
-                    }
-                    
-                }
-
-                // If we moved tiles we need to check that we are not inside the padding vertically, since it may happen that after moving horizontally, suddenly there is a collision
-                // on top of the object that wasnt there before (meaning that before moving the padding_top could be ignored but now that there is a collision cant be ignored)
-                if (moved_tile) {
-                    if (pos.in_tile.y < config.pad_bottom) {
-                        const bottom_tile = calculate_real_tile(Vector2i.from(pos.physical_tile.x, pos.physical_tile.y - 1));
-                        if (is_collision(bottom_tile)) pos.in_tile.y = config.pad_bottom;
-                    }
-                    else if (pos.in_tile.y > config.pad_top) {
-                        const top_tile = calculate_real_tile(Vector2i.from(pos.physical_tile.x, pos.physical_tile.y + 1));
-                        if (is_collision(top_tile)) pos.in_tile.y = config.pad_top;
-                    }
-                }
-            }
 
             // Vertical movement, same as code above but on the vertical axis
             if (!std.math.approxEqAbs(f32, vel.y, 0, std.math.floatEps(f32))) {
@@ -246,6 +184,77 @@ pub fn PhysicalWorld(comptime config: PhysicsConfig, comptime is_collision: fn(V
                 }
             }
 
+            // Horizontal movement
+            if (!std.math.approxEqAbs(f32, vel.x, 0, std.math.floatEps(f32))) {
+
+                // The velocity is basically how many tiles this object is going to move in 1 update.
+                // A velocity of (-3.2, 0) means that the particle is moving 3.2 tiles to the left.
+                var total_movement = vel.x;
+
+                // The reason I do `ceil` is because its always going to be at least 1 check:
+                // Consider a cell |::____::| where the `:` is the space between the next cell and the `pad_{left|right}`.
+                // If the object moves to the pad area, and the next tile is a collision, it needs to be moved.
+                var tiles_to_check: u32 = @intFromFloat(@ceil(@abs(vel.x)));
+
+                // wether the object moved across tiles or not
+                var moved_tile: bool = false;
+
+                // Move the object tile by tile until we collide, or until we moved the object all the way to its target position
+                while (tiles_to_check > 0) : (tiles_to_check -= 1) {
+                    
+                    const movement_ammount = std.math.clamp(total_movement, -1.0, 1.0);
+                    total_movement -= movement_ammount;
+
+                    // First move...
+                    pos.in_tile.x += movement_ammount;
+                    
+                    // ... and then check whether we collided (and if so, move back!)
+                    if (pos.in_tile.x > config.pad_right) {
+                        const right_tile = calculate_real_tile(Vector2i.from(pos.physical_tile.x + 1, pos.physical_tile.y));
+                        if (is_collision(right_tile)) {
+                            // If it collided, remove all its horizontal velocity and put "agains the wall".
+                            pos.in_tile.x = config.pad_right;
+                            vel.x = 0.0;
+                            against_wall = true;
+                            break;
+                        }
+                        else if (pos.in_tile.x > 1.0) {
+                            pos.in_tile.x -= 1.0;
+                            pos.physical_tile.x += 1;
+                            moved_tile = true;
+                        }
+                    }
+                    else if (pos.in_tile.x < config.pad_left) {
+                        const left_tile = calculate_real_tile(Vector2i.from(pos.physical_tile.x - 1, pos.physical_tile.y));
+                        if (is_collision(left_tile)) {
+                            pos.in_tile.x = config.pad_left;
+                            vel.x = 0.0;
+                            against_wall = true;
+                            break;
+                        }
+                        else if (pos.in_tile.x < 1.0) {
+                            pos.in_tile.x += 1.0;
+                            pos.physical_tile.x -= 1;
+                            moved_tile = true;                    
+                        }
+                    }
+                    
+                }
+
+                // If we moved tiles we need to check that we are not inside the padding vertically, since it may happen that after moving horizontally, suddenly there is a collision
+                // on top of the object that wasnt there before (meaning that before moving the padding_top could be ignored but now that there is a collision cant be ignored)
+                if (moved_tile) {
+                    if (pos.in_tile.y < config.pad_bottom) {
+                        const bottom_tile = calculate_real_tile(Vector2i.from(pos.physical_tile.x, pos.physical_tile.y - 1));
+                        if (is_collision(bottom_tile)) pos.in_tile.y = config.pad_bottom;
+                    }
+                    else if (pos.in_tile.y > config.pad_top) {
+                        const top_tile = calculate_real_tile(Vector2i.from(pos.physical_tile.x, pos.physical_tile.y + 1));
+                        if (is_collision(top_tile)) pos.in_tile.y = config.pad_top;
+                    }
+                }
+            }
+
             // Apply forces and frictions
             if (floor) {
                 vel.x *= config.friction_floor;
@@ -262,7 +271,7 @@ pub fn PhysicalWorld(comptime config: PhysicsConfig, comptime is_collision: fn(V
             const new_physical_position = pos.to_physical_pos();
             o.physical_pos = new_physical_position;
             o.velocity = vel;
-            return floor;
+            return .{ .floor = floor, .against_wall = against_wall};
         }
     
     };

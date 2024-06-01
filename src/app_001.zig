@@ -87,7 +87,17 @@ var state: State = undefined;
 
 pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.entities = try EntitySystem.init_capacity(allocator, 16);
-    state.player = Player.init(0);
+    state.player = undefined;
+    state.player.animation = RuntimeAnimation {
+        .animation = Assets.animation_player_idle,
+        .frame_start = 0,
+    };
+    state.player.attack_start_frame = 0;
+    state.player.jumps = 1;
+    state.player.look_direction = .Right;
+    state.player.physical_component = Physics.PhysicalObject.from(Vector2f.from(0,0), 3);
+    state.player.pos = Vector2f.from(0,0);
+    state.player.hp = 100;
     state.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
     state.animations_in_place = try AnimationSystem.init_capacity(allocator, 1024);
     state.particles = try Particles.init_capacity(allocator, 1024);
@@ -102,7 +112,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.resource_file_name = "res/resources.bin";
     state.resources = try Resources.init(allocator);
     state.game_render_target = Buffer2D(platform.OutPixelType).from(try allocator.alloc(platform.OutPixelType, 240*136), 240);
-    state.play_background_music = true;
+    state.play_background_music = false;
     ImmediateModeGui.init(&state.ui);
     
     // audio stuff
@@ -152,9 +162,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const real_hi: i32 = @intCast(ud.pixel_buffer.height);
     const real_wi: i32 = @intCast(ud.pixel_buffer.width);
 
-    const clear_color: BGR = @bitCast(Assets.palette[0]);
-    state.game_render_target.clear(platform.OutPixelType.from(BGR, clear_color));
-
+    // (input, previous_state) => new_state
     const ms_taken_update: f32 = blk: {
         const profile = Application.perf.profile_start();
 
@@ -183,18 +191,44 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             state.player.attack_start_frame = 0;
         }
 
+        // handle player walking input
+        // player cant walk while attacking
+        const player_can_attack = state.player.attack_start_frame == 0;
+        const player_can_walk = player_can_attack;
         var player_is_walking: bool = false;
-        if (ud.keys['A'] and state.player.attack_start_frame == 0) {
+        if (ud.key_pressing('A') and player_can_walk) {
+            if (!state.player.animation.is(Assets.animation_player_walk)) {
+                std.log.info("player animation walk", .{});
+                state.player.animation = RuntimeAnimation {
+                    .animation = Assets.animation_player_walk,
+                    .frame_start = ud.frame,
+                };
+            }
             state.player.physical_component.velocity.x -= 0.010;
             state.player.look_direction = .Left;
             player_is_walking = true;
         }
-        if (ud.keys['D'] and state.player.attack_start_frame == 0) {
+        if (ud.key_pressing('D') and player_can_walk) {
+            if (!state.player.animation.is(Assets.animation_player_walk)) {
+                std.log.info("player animation walk", .{});
+                state.player.animation = RuntimeAnimation {
+                    .animation = Assets.animation_player_walk,
+                    .frame_start = ud.frame,
+                };
+            }
             state.player.physical_component.velocity.x += 0.010;
             state.player.look_direction = .Right;
             player_is_walking = true;
         }
-        const player_direction_offset: f32 = switch (state.player.look_direction) { .Right => 1, .Left => -1 };
+        if (!player_is_walking and !state.player.animation.is(Assets.animation_player_idle)) {
+            std.log.info("player animation idle", .{});
+            state.player.animation = RuntimeAnimation {
+                .animation = Assets.animation_player_idle,
+                .frame_start = ud.frame,
+            };
+        }
+        
+        // handle player jump input
         if (!ud.keys_old['W'] and ud.keys['W'] and state.player.jumps > 0) {
             state.player.physical_component.velocity.y = 0.17;
             state.player.jumps -= 1;
@@ -206,7 +240,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 100,
             ));
         }
-        if (!ud.keys_old['F'] and ud.keys['F'] and state.player.attack_start_frame == 0) {
+        
+        // handle player attack input
+        if (!ud.keys_old['F'] and ud.keys['F'] and player_can_attack) {
+            const player_direction_offset: f32 = switch (state.player.look_direction) { .Right => 1, .Left => -1 };
             _ = try render_animation_in_place(&state.animations_in_place, RuntimeAnimation.from(Assets.config.player.attack.animation, ud.frame), state.player.pos.add(Vector2f.from(player_direction_offset*8,0)), switch (state.player.look_direction) { .Right => false, .Left => true }, ud.frame);
             state.player.attack_start_frame = ud.frame;
             state.player.physical_component.velocity.x += 0.06 * player_direction_offset;
@@ -225,6 +262,36 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             try state.entities_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, ud.frame);
         }
 
+        const player_physics_stuff = Physics.apply(&state.player.physical_component);
+        state.player.pos = Physics.calculate_real_pos(state.player.physical_component.physical_pos);
+        state.player.hurtbox = Assets.entity_knight_1.hurtbox.offset(state.player.pos);
+
+        // create particles when player moves
+        if (player_physics_stuff.floor) {
+            state.player.jumps = 2;
+            if (player_is_walking and (state.random.float(f32) > 0.8)) {
+                try particle_create(&state.particles, particles_generators.walk(state.player.pos.add(Vector2f.from(0, 1))));
+            }
+        }
+
+        // handle player interaction with doors in the world
+        const interact = ud.key_pressed('E');
+        if (interact) {
+            const player_tile = state.player.tile();
+            for (state.doors.items) |door| {
+                if (player_tile.x == door.pos.x and player_tile.y == door.pos.y) {
+                    const junction = state.resources.junctions.items[door.index];
+                    if (junction.a.x == door.pos.x and junction.a.y == door.pos.y) try load_level(junction.b, ud.frame) else try load_level(junction.a, ud.frame);
+                    return true;
+                }
+            }
+        }
+        
+        // update particle emitters in the world...
+        for (state.particle_emitters.items) |particle_emitter| {
+            if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(particle_emitter.pos.to(f32).scale(8).add(Vec2(f32).from(4,4))));
+        }
+        // ... and the particles from poison... which are hardcoded here... for now...
         if (state.random.float(f32)>0.8) {
             const height = 21;
             const from: f32 = 304;
@@ -232,33 +299,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             try particle_create(&state.particles, particles_generators.poison(Vector2f.from(state.random.float(f32)*(to-from)+from, height)));
         }
 
-        const player_floored = Physics.apply(&state.player.physical_component);
-        state.player.pos = Physics.calculate_real_pos(state.player.physical_component.physical_pos);
-        state.player.hurtbox = Assets.entity_knight_1.hurtbox.offset(state.player.pos);
-
-        if (player_floored) {
-            state.player.jumps = 2;
-            if (player_is_walking and (state.random.float(f32) > 0.8)) {
-                try particle_create(&state.particles, particles_generators.walk(state.player.pos.add(Vector2f.from(0, 1))));
-            }
-        }
-
-        // check for doors to change level
-        const player_tile = state.player.get_current_tile();
-        for (state.doors.items) |door| {
-            if (player_tile.x == door.pos.x and player_tile.y == door.pos.y and ud.key_pressed('E')) {
-                const junction = state.resources.junctions.items[door.index];
-                if (junction.a.x == door.pos.x and junction.a.y == door.pos.y) try load_level(junction.b, ud.frame) else try load_level(junction.a, ud.frame);
-                return true;
-            }
-        }
-        
-        for (state.particle_emitters.items) |particle_emitter| {
-            if (state.random.boolean()) try particle_create(&state.particles, particles_generators.fire(particle_emitter.pos.to(f32).scale(8).add(Vec2(f32).from(4,4))));
-        }
-
+        // simulate NPCs
         try state.entities.entities_update(state.player.pos, ud.frame);
         
+        // handle hitboxes and damage and stuff
         for (state.player_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
             const frames_up = ud.frame - hitbox.frame;
             var do_remove = false;
@@ -268,10 +312,17 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                     // TODO implement different hitbox behaviours
                     .once_per_frame, .once_per_target => {
                         state.player.hp -= hitbox.dmg;
+                        std.log.info("player damaged on frame {} for {} dmg", .{ud.frame, hitbox.dmg});
+                        if (state.player.hp <= 0) {
+                            // the player died, reload form the start
+                            try load_level(Vec2(u8).from(5, 1), ud.frame);
+                            return true;
+                        }
                         state.player.physical_component.velocity = state.player.physical_component.velocity.add(hitbox.knockback);
+                        // blood particles
                         for (0..5) |_| try particle_create(&state.particles, particles_generators.bleed(state.player.pos));
-                        do_remove = true;
                         play(.damage_received_unused);
+                        do_remove = true;
                     },
                 }
             }
@@ -282,6 +333,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
         try update_animations_in_place(&state.animations_in_place, ud.frame);
         try particles_update(&state.particles);
+
         break :blk Application.perf.profile_end(profile);
     };
     
@@ -289,6 +341,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     
     const ms_taken_render: f32 = blk: {
         const profile = Application.perf.profile_start();
+
+        const clear_color: BGR = @bitCast(Assets.palette[0]);
+        state.game_render_target.clear(platform.OutPixelType.from(BGR, clear_color));
+
         const view_matrix_m33 = M33.look_at(Vector2f.from(state.camera.pos.x, state.camera.pos.y), Vector2f.from(0, 1));
         const projection_matrix_m33 = M33.orthographic_projection(0, w, h, 0);
         const viewport_matrix_m33 = M33.viewport(0, 0, w, h);
@@ -372,7 +428,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 }
             );
         }
-        
+
         // render in-place animation
         {
             var it = AnimationSystem.view(.{ Visual }).iterator();
@@ -417,6 +473,26 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             }
             const hb = state.player.hurtbox;
             try renderer.add_quad_from_bb(hb, RGBA.make(0,0,255,100));
+        }
+
+        // render "padding" boxes on edges of screen
+        {
+            const box_top = BoundingBox(f32).from(h,h-8*3,0,w);
+            const box_right = BoundingBox(f32).from(h,0,w-8*3,w);
+            const box_bottom = BoundingBox(f32).from(8*3,0,0,w);
+            const box_left = BoundingBox(f32).from(h,0,0,8*3);
+            try renderer.add_quad_from_bb(box_top.offset(Vec2(f32).from(state.camera.pos.x, state.camera.pos.y)), color.black);
+            try renderer.add_quad_from_bb(box_right.offset(Vec2(f32).from(state.camera.pos.x, state.camera.pos.y)), color.black);
+            try renderer.add_quad_from_bb(box_bottom.offset(Vec2(f32).from(state.camera.pos.x, state.camera.pos.y)), color.black);
+            try renderer.add_quad_from_bb(box_left.offset(Vec2(f32).from(state.camera.pos.x, state.camera.pos.y)), color.black);
+        }
+
+        // render player hp bar
+        {
+            if (state.player.hp > 0) {
+                const square_representing_the_hp = BoundingBox(f32).from(10,5,5,5+@as(f32, @floatFromInt(state.player.hp)));
+                try renderer.add_quad_from_bb(square_representing_the_hp.offset(Vec2(f32).from(state.camera.pos.x, state.camera.pos.y)), color.red_hp_bar);
+            }
         }
 
         try renderer.flush_all();
@@ -610,72 +686,72 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     
     var builder: ImmediateModeGui.UiBuilder = undefined;
 
-    static.ms_taken_ui_previous = blk: {
-        const profile = Application.perf.profile_start();
-        
-        builder = state.ui.prepare_frame(ud.allocator, .{
-            .mouse_pos = ud.mouse,
-            .mouse_down = ud.mouse_left_down,
-        });
-
-        const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos);
-        const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
-        const mouse: Vector2f = mouse_blk: {
-            const mx = @divFloor(ud.mouse.x, Application.dimension_scale);
-            // inverse y since mouse is given relative to top left corner
-            const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
-            const offset = Vector2f.from(state.camera.pos.x, state.camera.pos.y);
-            const pos = Vector2i.from(mx, my).to(f32).add(offset);
-            break :mouse_blk pos;
-        };
-
-        var debug = try builder.begin("debug", BoundingBox(i32).from(real_hi, 0, 0, real_wi), false); {
-            try debug.label("ms {d: <9.2}", .{ud.ms});
-            try debug.label("io {?}", .{builder.io});
-            try debug.label("ms {d: <9.2}", .{ud.ms});
-            try debug.label("fps {d:0.4}", .{ud.ms / 1000*60});
-            try debug.label("frame {}", .{ud.frame});
-            try debug.label("camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z});
-            try debug.label("mouse {d:.4} {d:.4}", .{mouse.x, mouse.y});
-            try debug.label("dimensions {d:.4} {d:.4} | real {d:.4} {d:.4}", .{w, h, real_w, real_h});
-            try debug.label("physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y});
-            try debug.label("physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y});
-            try debug.label("to real tile {} {}", .{real_tile.x, real_tile.y});
-            try debug.label("vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y});
-            try debug.label("update  took {d:.8}ms", .{ms_taken_update});
-            try debug.label("render  took {d:.8}ms", .{ms_taken_render});
-            const stuff = struct {
-                const times_count = 120;
-                var times: [times_count]f32 = undefined;
-                var times_idx: usize = 0;
-                var initialized = false;
-            };
-            if (!stuff.initialized) {
-                stuff.initialized = true;
-                for (&stuff.times) |*val| val.* = 0;
-            }
-            stuff.times[stuff.times_idx] = ms_taken_upscale;
-            stuff.times_idx = (stuff.times_idx + 1) % stuff.times_count;
-            const final_time = calc_time_block: {
-                var ft: f32 = 0;
-                for (&stuff.times) |val| ft += val;
-                break :calc_time_block ft/stuff.times_count;
-            };
-            try debug.label("upscale took {d:.8}ms", .{final_time});
-            try debug.label("ui prev took {d:.8}ms", .{static.ms_taken_ui_previous});
-            try debug.label("ui rend took {d:.8}ms", .{static.ms_taken_render_ui_previous});
-            // force debug container to be the lowest layer
-            for (state.ui.containers_order.slice(), 0..) |container_id, i| if (container_id == debug.persistent.unique_identifier) {
-                const aux = state.ui.containers_order.slice()[0];
-                state.ui.containers_order.slice()[0] = container_id;
-                state.ui.containers_order.slice()[i] = aux;
-            };
-        }
-
-        break :blk Application.perf.profile_end(profile);
-    };
-
     if (state.debug) {
+
+        static.ms_taken_ui_previous = blk: {
+            const profile = Application.perf.profile_start();
+            
+            builder = state.ui.prepare_frame(ud.allocator, .{
+                .mouse_pos = ud.mouse,
+                .mouse_down = ud.mouse_left_down,
+            });
+
+            const physical_pos_decomposed = Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos);
+            const real_tile = Physics.calculate_real_tile(physical_pos_decomposed.physical_tile);
+            const mouse: Vector2f = mouse_blk: {
+                const mx = @divFloor(ud.mouse.x, Application.dimension_scale);
+                // inverse y since mouse is given relative to top left corner
+                const my = @divFloor((Application.height*Application.dimension_scale) - ud.mouse.y, Application.dimension_scale);
+                const offset = Vector2f.from(state.camera.pos.x, state.camera.pos.y);
+                const pos = Vector2i.from(mx, my).to(f32).add(offset);
+                break :mouse_blk pos;
+            };
+
+            var debug = try builder.begin("debug", BoundingBox(i32).from(real_hi, 0, 0, real_wi), false); {
+                try debug.label("ms {d: <9.2}", .{ud.ms});
+                try debug.label("io {?}", .{builder.io});
+                try debug.label("ms {d: <9.2}", .{ud.ms});
+                try debug.label("fps {d:0.4}", .{ud.ms / 1000*60});
+                try debug.label("frame {}", .{ud.frame});
+                try debug.label("camera {d:.8}, {d:.8}, {d:.8}", .{state.camera.pos.x, state.camera.pos.y, state.camera.pos.z});
+                try debug.label("mouse {d:.4} {d:.4}", .{mouse.x, mouse.y});
+                try debug.label("dimensions {d:.4} {d:.4} | real {d:.4} {d:.4}", .{w, h, real_w, real_h});
+                try debug.label("physical pos {d:.4} {d:.4}", .{state.player.physical_component.physical_pos.x, state.player.physical_component.physical_pos.y});
+                try debug.label("physical tile {} {}", .{physical_pos_decomposed.physical_tile.x, physical_pos_decomposed.physical_tile.y});
+                try debug.label("to real tile {} {}", .{real_tile.x, real_tile.y});
+                try debug.label("vel {d:.5} {d:.5}", .{state.player.physical_component.velocity.x, state.player.physical_component.velocity.y});
+                try debug.label("update  took {d:.8}ms", .{ms_taken_update});
+                try debug.label("render  took {d:.8}ms", .{ms_taken_render});
+                const stuff = struct {
+                    const times_count = 120;
+                    var times: [times_count]f32 = undefined;
+                    var times_idx: usize = 0;
+                    var initialized = false;
+                };
+                if (!stuff.initialized) {
+                    stuff.initialized = true;
+                    for (&stuff.times) |*val| val.* = 0;
+                }
+                stuff.times[stuff.times_idx] = ms_taken_upscale;
+                stuff.times_idx = (stuff.times_idx + 1) % stuff.times_count;
+                const final_time = calc_time_block: {
+                    var ft: f32 = 0;
+                    for (&stuff.times) |val| ft += val;
+                    break :calc_time_block ft/stuff.times_count;
+                };
+                try debug.label("upscale took {d:.8}ms", .{final_time});
+                try debug.label("ui prev took {d:.8}ms", .{static.ms_taken_ui_previous});
+                try debug.label("ui rend took {d:.8}ms", .{static.ms_taken_render_ui_previous});
+                // force debug container to be the lowest layer
+                for (state.ui.containers_order.slice(), 0..) |container_id, i| if (container_id == debug.persistent.unique_identifier) {
+                    const aux = state.ui.containers_order.slice()[0];
+                    state.ui.containers_order.slice()[0] = container_id;
+                    state.ui.containers_order.slice()[i] = aux;
+                };
+            }
+
+            break :blk Application.perf.profile_end(profile);
+        };
 
         static.ms_taken_render_ui_previous = blk: {
             const profile = Application.perf.profile_start();
@@ -741,6 +817,7 @@ const color = struct {
     const palette_2 = RGBA.from_hex(0xfdf0d5ff);
     const palette_3 = RGBA.from_hex(0x003049ff);
     const palette_4 = RGBA.from_hex(0x669bbcff);
+    const red_hp_bar = RGBA.from_hex(0xff3333ff);
 };
 
 const ImmediateModeGui = imgui.ImmediateModeGui(.{
@@ -1285,7 +1362,16 @@ const ParticleEmitter = struct {
 pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
     state.entities.clear();
     state.particles.deleteAll();
-    state.player.reset_soft(frame);
+
+    state.player.animation = RuntimeAnimation {
+        .animation = Assets.animation_player_idle,
+        .frame_start = frame,
+    };
+    state.player.attack_start_frame = 0;
+    state.player.jumps = 1;
+    state.player.look_direction = .Right;
+    state.player.hp = 100;
+
     state.doors.clearRetainingCapacity();
     state.particle_emitters.clearRetainingCapacity();
     state.animations_in_place.deleteAll();
@@ -1303,7 +1389,7 @@ pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
             var bb = state.level_background;
             bb.top += 1;
             bb.right += 1;
-            state.camera.set_bounds(bb.scale(Vec2(usize).from(8, 8)).to(f32));
+            state.camera.set_bounds(bb.scale(Vec2(usize).from(8, 8)).to(f32).expand_all(8*3));
 
             for (state.resources.environment_particle_emitters.items) |particle_emitter| {
                 if (level.bb.contains(particle_emitter.pos)) state.particle_emitters.appendAssumeCapacity(.{.pos = particle_emitter.pos, .emitter_type = @enumFromInt(particle_emitter.particle_emitter_type)});
@@ -1328,8 +1414,10 @@ pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
     
     // TODO
     // state.texts = level.static_texts;
-    
-    state.player.spawn(spawn.to(i32));
+
+    state.player.pos = spawn.to(f32).scale(8);
+    state.player.physical_component = Physics.PhysicalObject.from(state.player.pos, 3);
+    state.player.hurtbox = Assets.entity_knight_1.hurtbox.offset(state.player.pos);
 }
 
 fn tile_to_grounded_position(tile: Vector2i) Vector2f {
@@ -1519,41 +1607,18 @@ const Player = struct {
     hurtbox: BoundingBox(f32),
     hp: i32,
     
-    pub fn init(frame: usize) Player {
-        var player: Player = undefined;
-        player.reset_soft(frame);
-        player.physical_component = Physics.PhysicalObject.from(Vector2f.from(0,0), 3);
-        player.pos = Vector2f.from(0,0);
-        // TODO set other config stuff
-        // player.hp = Assets.config.player.hp;
-        player.hp = 100;
-        return player;
-    }
-
-    pub fn reset_soft(self: *Player, frame: usize) void {
-        self.animation = RuntimeAnimation {
-            .animation = Assets.animation_player_idle,
-            .frame_start = frame,
-        };
-        self.attack_start_frame = 0;
-        self.jumps = 1;
-        self.look_direction = .Right;
-    }
-
-    pub fn spawn(self: *Player, pos: Vector2i) void {
-        self.pos = pos.to(f32).scale(8);
-        self.physical_component = Physics.PhysicalObject.from(self.pos, 3);
-        self.hurtbox = Assets.entity_knight_1.hurtbox.offset(self.pos);
-    }
-
-    pub fn get_current_tile(self: *const Player) Vector2i {
+    pub inline fn tile(self: *const Player) Vector2i {
         return Vector2i.from(@intFromFloat(@divFloor(self.pos.x, 8)), @intFromFloat(@divFloor(self.pos.y, 8)));
     }
+
 };
 
 const RuntimeAnimation = struct {
     animation: Assets.AnimationDescriptor,
     frame_start: usize,
+    pub inline fn is(self: RuntimeAnimation, other_animation: Assets.AnimationDescriptor) bool {
+        return other_animation.sprites.ptr == self.animation.sprites.ptr;
+    }
     pub fn calculate_frame(self: RuntimeAnimation, frame: usize) u8 {
         const total_frames: usize = frame - self.frame_start;
         const normalized: usize = total_frames % self.animation.duration;
@@ -1644,6 +1709,7 @@ const EntitySystem = struct {
             const entity_desc = Assets.EntityDescriptor.from(type_component.*);
 
             // find whether the entity is being damaged
+            var entity_killed = false;
             for (state.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
                 // the entity is being hit by `hitbox`
                 if (hitbox.bb.overlaps(hb_component.*)) {
@@ -1653,22 +1719,27 @@ const EntitySystem = struct {
                             hp_component.* -= hitbox.dmg;
                             phys_component.velocity = phys_component.velocity.add(hitbox.knockback);
                             _ = state.entities_damage_dealers.hitboxes.release_by_index(i);
-                            switch (type_component.*) {
-                                .slime, .slime_king  => for (0..5) |_| try particle_create(&state.particles, particles_generators.slime_damaged(pos_component.*)),
-                                else => for (0..5) |_| try particle_create(&state.particles, particles_generators.bleed(pos_component.*))
+                            var splash_factor: usize = 1;
+                            if (hp_component.* <= 0) {
+                                entity_killed = true;
+                                splash_factor = 2;
                             }
+                            switch (type_component.*) {
+                                .slime, .slime_king  => for (0..5*splash_factor) |_| try particle_create(&state.particles, particles_generators.slime_damaged(pos_component.*)),
+                                else => for (0..5*splash_factor) |_| try particle_create(&state.particles, particles_generators.bleed(pos_component.*))
+                            }
+                            if (entity_killed) break;
                             // TODO sfx
                         },
                     }
                 }
-
             }
 
-            if (hp_component.* <= 0) {
+            if (entity_killed) {
                 try self.entities.deleteEntity(e);
                 continue;
             }
-            
+
             const entity_to_player = player_pos.substract(pos_component.*);
             const dist_to_player = entity_to_player.magnitude();
             const is_right = entity_to_player.x>0;
@@ -1680,8 +1751,11 @@ const EntitySystem = struct {
                 .slime => {
                     const slime_component = (try self.entities.getComponent(Assets.EntitySlimeRuntime, e)).?;
                     const charge_duration = 60;
+                    const cooldown_duration = 120;
                     const launch_speed = 0.6;
                     var set_slime_body_as_hitbox = false;
+                    var charging = false;
+                    var climb = false;
                     const is_attacking = slime_component.attack_start_frame != 0;
                     if (!is_attacking) {
                         if (in_attack_range) {
@@ -1689,17 +1763,19 @@ const EntitySystem = struct {
                             slime_component.attack_start_frame = frame;
                             slime_component.attack_direction = if (is_right) .Right else .Left;
                             dir_component.* = if (is_right) .Right else .Left;
+                            charging = true;
                             // TODO animation "charging"
                             play(.slime_attack_a);
                         }
                         else if (in_chase_range) {
                             phys_component.velocity.x = (entity_desc.speed * dir_f32);
                             dir_component.* = if (is_right) .Right else .Left;
-                            // TODO climb wall
+                            climb = true;
                         }
                         else {
                             // TODO animation "iddle"
                         }
+                        set_slime_body_as_hitbox = true;
                     }
                     else {
                         const frames_since_attack_start = frame - slime_component.attack_start_frame;
@@ -1707,6 +1783,8 @@ const EntitySystem = struct {
                         // either charging, attacking (when its launching agains player), recovering
                         if (frames_since_attack_start < charge_duration) {
                             // do nothing, keep charging
+                            set_slime_body_as_hitbox = true;
+                            charging = true;
                         }
                         else if (frames_since_attack_start == charge_duration) {
                             // launch towards the player
@@ -1714,32 +1792,39 @@ const EntitySystem = struct {
                             phys_component.velocity.y = 0.07;
                             
                             set_slime_body_as_hitbox = true;
-                            
                             // TODO animation "damaging hitbox"
                             play(.slime_attack_b);
+                        }
+                        else if (frames_since_attack_start < charge_duration + cooldown_duration) {
+                            if (@abs(phys_component.velocity.x) <= 0.1 and @abs(phys_component.velocity.y) <= 0.1) {}
+                            else set_slime_body_as_hitbox = true;
+                            // do nothing, until cooldown is reacharged
+                            // TODO animation "tired"
                         }
                         else if (@abs(phys_component.velocity.x) <= 0.1 and @abs(phys_component.velocity.y) <= 0.1) {
                             // back to normal
                             slime_component.attack_start_frame = 0;
                             // TODO animation "normal"
                         }
-                        else {
-                            // TODO set hitbox
-                            set_slime_body_as_hitbox = true;
-                        }
                     }
 
-                    const is_floored = Physics.apply(phys_component);
+                    var old_phys_component = phys_component.*;
+                    var extra_information = Physics.apply(phys_component);
+                    if (climb and extra_information.against_wall) {
+                        old_phys_component.velocity.y = 0.03;
+                        extra_information = Physics.apply(&old_phys_component);
+                        phys_component.* = old_phys_component;
+                    }
+                    
                     pos_component.* = Physics.calculate_real_pos(phys_component.physical_pos);
                     hb_component.* = entity_desc.hurtbox.offset(pos_component.*);
-                    _ = is_floored;
 
                     if (set_slime_body_as_hitbox) {
-                        const damage: i32 = @intFromFloat(@as(f32, @floatFromInt(entity_desc.attack_dmg)) * std.math.clamp(@abs(phys_component.velocity.x)/launch_speed, 0, 1));
+                        const damage: i32 = if (is_attacking and !charging) @intFromFloat(@as(f32, @floatFromInt(entity_desc.attack_dmg)) * std.math.clamp(@abs(phys_component.velocity.x)/launch_speed, 0, 1)) else entity_desc.attack_dmg;
                         const hitbox = BoundingBox(f32).from(4, 0, -3, 3).offset(pos_component.*);
                         const behaviour: Assets.HitboxType = .once_per_frame;
                         const duration = 1;
-                        const knockback = phys_component.velocity;
+                        const knockback = if (is_attacking and !charging) phys_component.velocity else Vec2(f32).from((state.random.float(f32)*2-1)*3, (state.random.float(f32)*2-1)*3);
                         try state.player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame);
                     }
                 },
@@ -2379,7 +2464,7 @@ pub const Assets = struct {
         .chase_range = 6*8,
         .attack_dmg = 15,
         .attack_cooldown = 60,
-        .attack_range = 3*8,
+        .attack_range = 4*8,
         .hurtbox = BoundingBox(f32).from(4, 0, -3, 3),
     };
     pub const entity_knight_1 = EntityDescriptor {
