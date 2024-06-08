@@ -80,10 +80,10 @@ pub fn Ecs(comptime types: anytype) type {
             if (self.deletedEntities.items.len > 0) {
                 // reuse deleted entities whenever possible
                 const index_to_be_reused = self.deletedEntities.pop();
-                const new_entity = self.entities.items[index_to_be_reused];
+                const entity = self.entities.items[index_to_be_reused];
                 return Entity {
                     .id = index_to_be_reused,
-                    .version = new_entity.version
+                    .version = entity.version
                 };
             }
             const next_entity_id = self.entities.items.len;
@@ -98,6 +98,46 @@ pub fn Ecs(comptime types: anytype) type {
             };
             self.entities.appendAssumeCapacity(new_entity_data);
             return new_entity_index;
+        }
+
+        pub fn new_entity(self: *Self) Entity {
+            if (self.deletedEntities.items.len > 0) {
+                // reuse deleted entities whenever possible
+                const index_to_be_reused = self.deletedEntities.pop();
+                const entity = self.entities.items[index_to_be_reused];
+                return Entity {
+                    .id = index_to_be_reused,
+                    .version = entity.version
+                };
+            }
+            const next_entity_id = self.entities.items.len;
+            std.debug.assert(next_entity_id < self.capacity); // MaxEntitiesReached
+            const new_entity_data = EntityData {
+                .components = set_without_components,
+                .version = 0
+            };
+            const new_entity_index = Entity {
+                .id = @intCast(next_entity_id),
+                .version = 0
+            };
+            self.entities.appendAssumeCapacity(new_entity_data);
+            return new_entity_index;
+        }
+        
+        pub fn require_component(self: Self, comptime T: type, entity: Entity) *T {
+            var entity_data: EntityData = self.entities.items[entity.id];
+            std.debug.assert(entity_data.version == entity.version);
+            std.debug.assert(entity_data.components.isSet(getComponentId(T)));
+            return &getComponentContainer(T).items[entity.id];
+        }
+
+        pub fn set_component(self: *Self, comptime T: type, entity: Entity) *T {
+            const entity_data = &self.entities.items[entity.id];
+            std.debug.assert(entity_data.*.version == entity.version); // RemovedEntity
+            const component_id = getComponentId(T);
+            entity_data.*.components.set(component_id);
+            const component_container = getComponentContainer(T);
+            return &component_container.*.items[entity.id];
         }
         
         pub fn getComponent(self: Self, comptime T: type, entity: Entity) !?*T {
@@ -135,6 +175,13 @@ pub fn Ecs(comptime types: anytype) type {
             self.deletedEntities.appendAssumeCapacity(entity.id);
         }
 
+        pub fn delete(self: *Self, entity: Entity) void {
+            const entity_data = &self.entities.items[entity.id];
+            std.debug.assert(entity_data.version == entity.version);
+            entity_data.*.version += 1;
+            entity_data.*.components = set_without_components;
+            self.deletedEntities.appendAssumeCapacity(entity.id);
+        }
         
         pub fn deleteAll(self: *Self) void {
             for (self.entities.items, 0..) |*entity_data, i| {
@@ -197,6 +244,59 @@ pub fn Ecs(comptime types: anytype) type {
                         .index = 0
                     };
                 }
+            };
+        }
+
+        /// `view_types` is a tuple of `type`s. exameple: `.{u32, i32, bool}`
+        pub fn Iterator_(comptime view_types: anytype) type {
+            return struct {
+                
+                parent_ecs: *const Self,
+                index: usize,
+
+                /// The bit field used as a mask to filter the entities that match this component view
+                const mask: std.bit_set.IntegerBitSet(32) = blk: {
+                    
+                    // Check that `view_types` is indeed a tuple of types
+                    const type_of_tuple = @TypeOf(view_types);
+                    const tuple_info = @typeInfo(type_of_tuple);
+                    if (tuple_info != .Struct or tuple_info.Struct.is_tuple == false) {
+                        @compileError("expected tuple, found " ++ @typeName(type_of_tuple));
+                    }
+                    
+                    const tuple: std.builtin.Type.Struct = tuple_info.Struct;
+                    var bit_field = set_without_components;
+                    for (tuple.fields) |field| {
+                        const ith_type = @field(view_types, field.name);
+                        const component_id = getComponentId(ith_type);
+                        bit_field.set(component_id);
+                    }
+                    break :blk bit_field;
+                };
+
+                pub fn next(self: *@This()) ?Entity {
+                    
+                    if (self.index >= self.parent_ecs.entities.items.len) return null;
+                    
+                    for (self.parent_ecs.entities.items[self.index..], self.index..) |entity, i| {
+                        self.index = i+1;
+                        const difference = mask.differenceWith(entity.components);
+                        
+                        if (difference.intersectWith(mask).mask != 0) continue;
+
+                        return .{ .id = @intCast(i), .version = entity.version };
+                    }
+                    return null;
+                }
+
+            };
+        }
+
+        /// `view_types` is a tuple of `type`s. exameple: `.{u32, i32, bool}`
+        pub fn iterator(self: *const Self, comptime view_types: anytype) Iterator_(view_types) {
+            return .{
+                .index = 0,
+                .parent_ecs = self,
             };
         }
 

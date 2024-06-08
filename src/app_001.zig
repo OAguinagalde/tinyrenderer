@@ -81,6 +81,8 @@ const State = struct {
     sound_library: [@typeInfo(sounds).Enum.fields.len]wav.Sound,
     play_background_music: bool,
     ui: ImmediateModeGui,
+    random_: core.Random,
+    npcs: npc.ECS,
 };
 
 var state: State = undefined;
@@ -101,8 +103,10 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
     state.animations_in_place = try AnimationSystem.init_capacity(allocator, 1024);
     state.particles = try Particles.init_capacity(allocator, 1024);
+    state.npcs = try npc.ECS.init_capacity(allocator, 16);
     state.rng_engine = std.rand.DefaultPrng.init(@bitCast(platform.timestamp()));
     state.random = state.rng_engine.random();
+    state.random_ = core.Random.init(@bitCast(platform.timestamp()));
     state.entities_damage_dealers = try HitboxSystem.init_capacity(allocator, 64);
     state.player_damage_dealers = try HitboxSystem.init_capacity(allocator, 64);
     state.doors = try std.ArrayList(Door).initCapacity(allocator, 32); // doors are set on load_level
@@ -301,6 +305,15 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
         // simulate NPCs
         try state.entities.entities_update(state.player.pos, ud.frame);
+
+        npc.slimes_update(ud.frame);
+        npc.knights_update(ud.frame);
+
+        // check that the hitboxes that damage the player are properly cleared
+        for (state.entities_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
+            const frames_up = ud.frame - hitbox.frame;
+            if (frames_up >= hitbox.duration) _ = state.entities_damage_dealers.hitboxes.release_by_index(i);
+        }
         
         // handle hitboxes and damage and stuff
         for (state.player_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
@@ -409,6 +422,9 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 );
             }
         }
+
+        npc.slimes_render(ud.frame, &renderer);
+        npc.knights_render(ud.frame, &renderer);
         
         // render player
         {
@@ -471,6 +487,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             for (state.entities_damage_dealers.hitboxes.slice()) |hb| {
                 try renderer.add_quad_from_bb(hb.bb, RGBA.make(0,255,0,100));
             }
+            npc.slimes_debug_draw(&renderer);
+            npc.knights_debug_draw(&renderer);
             const hb = state.player.hurtbox;
             try renderer.add_quad_from_bb(hb, RGBA.make(0,0,255,100));
         }
@@ -1397,7 +1415,10 @@ pub fn load_level(spawn: Vec2(u8), frame: usize) !void {
 
             for (state.resources.entity_spawners.items) |entity_spawn| {
                 if (level.bb.contains(entity_spawn.pos)) {
-                    try state.entities.spawn(@enumFromInt(entity_spawn.entity_type), tile_to_grounded_position(entity_spawn.pos.to(i32)), frame);
+                    const t: Assets.EntityType = @enumFromInt(entity_spawn.entity_type);
+                    if (t == .slime) npc.slimes_spawn(tile_to_grounded_position(entity_spawn.pos.to(i32)), frame)
+                    else if (t == .knight_1) npc.knights_spawn(tile_to_grounded_position(entity_spawn.pos.to(i32)), frame)
+                    else try state.entities.spawn(@enumFromInt(entity_spawn.entity_type), tile_to_grounded_position(entity_spawn.pos.to(i32)), frame);
                 }
             }
 
@@ -1633,6 +1654,681 @@ const RuntimeAnimation = struct {
             .frame_start = frame
         };
     }
+};
+
+/// returns a random f32 [0,1]
+const f = struct {
+    pub inline fn random_float() f32 {
+        return @floatCast(state.random_.f());
+    }
+}.random_float;
+
+// Given a type T, returns a unique identifier for that type T
+pub fn identify_type(comptime T: type) usize {
+    const magic = struct {
+        // NOTE capture T so that the identity of `magic` is different for each input T
+        // and so the address of `dummy` is different as well
+        const CaptureType = T;
+        var dummy: u8 = undefined;
+    };
+    return @intFromPtr(&magic.dummy);
+}
+
+test "identify_type" {
+    const SomeType = struct {thing:u32};
+    const OtherType = struct {thing:u32};
+    try std.testing.expect(identify_type(SomeType) == identify_type(SomeType));
+    try std.testing.expect(identify_type(OtherType) == identify_type(OtherType));
+    try std.testing.expect(identify_type(SomeType) != identify_type(OtherType));
+}
+
+/// use zig magic to make an equal type to T, but not the same.
+/// alternative_always(SomeType, opaque{}) != alternative_always(SomeType, opaque{})
+pub fn alternative_always(comptime T: type, comptime pass_opaque_here_thanks: type) type {
+    var ti = @typeInfo(T);
+    switch(ti) {
+        .Struct => |*s| {
+            s.fields = s.fields ++ .{
+                .{
+                    .name = std.fmt.comptimePrint("{s}", .{@typeName(T)}),
+                    .type = type,
+                    .default_value = &pass_opaque_here_thanks,
+                    .is_comptime = true,
+                    .alignment = 0,
+                },
+            };
+            s.decls = &.{};
+        },
+        .Enum => |*e| {
+            e.fields = e.fields ++ .{
+                .{
+                    .name = std.fmt.comptimePrint("{s}", .{@typeName(T)}),
+                    // .type = type,
+                    // .default_value = &pass_opaque_here_thanks,
+                    // .is_comptime = true,
+                    // .alignment = 0,
+                    .value = e.fields[e.fields.len-1].value
+                },
+            };
+            e.decls = &.{};
+        },
+        else => @compileError("Can only make alternative types out of Struct or Unions")
+    }
+    
+    return @Type(ti);
+}
+
+/// use zig magic to make an equal type to T, but not the same.
+/// alternative(SomeType) == alternative(SomeType)
+pub fn alternative(comptime T: type) type {
+    var ti = @typeInfo(T);
+    ti.Struct.fields = ti.Struct.fields ++ .{
+       .{
+           .name = std.fmt.comptimePrint("{s}", .{@typeName(T)}),
+           .type = type,
+           .default_value = &T,
+           .is_comptime = true,
+           .alignment = 0,
+       },
+    };
+    ti.Struct.decls = &.{};
+    return @Type(ti);
+}
+
+test "alternative" {
+    const SomeType = struct {thing:u32};
+    const OtherType = struct {thing:u32};
+    const Aaa = OtherType;
+    try std.io.getStdOut().writeAll("\n");
+    try std.testing.expect(Aaa == OtherType);
+    try std.testing.expect(SomeType != OtherType);
+    try std.testing.expect(SomeType == SomeType);
+    try std.testing.expect(OtherType == OtherType);
+    try std.testing.expect(SomeType != OtherType);
+    const AlmostSomeType = alternative(SomeType);
+    try std.testing.expect(AlmostSomeType != SomeType);
+    try std.testing.expect(AlmostSomeType == AlmostSomeType);
+    try std.testing.expect(AlmostSomeType == alternative(SomeType));
+    try std.testing.expect(alternative(SomeType) == alternative(SomeType));
+    try std.testing.expect(alternative(SomeType) != alternative(alternative(SomeType)));
+    try std.testing.expect(alternative(alternative(alternative(SomeType))) != alternative(alternative(SomeType)));
+    const AlternativeVersion = alternative_always(SomeType,opaque{});
+    try std.testing.expect(AlternativeVersion == AlternativeVersion);
+    try std.testing.expect(alternative_always(SomeType,opaque{}) != alternative_always(SomeType,opaque{}));
+    try std.testing.expect(alternative_always(SomeType,opaque{}) != alternative_always(SomeType,opaque{}));
+}
+
+const npc = struct {
+    
+    const Pos = Vec2(f32);
+    const Anim = RuntimeAnimation;
+    const Hp = i32;
+    const Phys = Physics.PhysicalObject;
+    const Dir = Direction;
+    const LookDir = Direction;
+    const Damage = i32;
+    const Hurtbox = BoundingBox(i32);
+    const Hitbox = HitboxData;
+    const SlimeStatus = struct {
+        attack_start_frame: usize,
+        movement_frame: usize,
+    };
+    const KnightState = enum { idle, charging, attack_1_cooldown, chaining, attack_2_cooldown };
+    const KnightStatus = struct {
+        attack_direction: LookDir,
+        state_change_frame: usize,
+        state: KnightState,
+    };
+    
+    const ECS = Ecs(.{
+        Pos, Anim, Hp, Phys, Dir,
+        // slime components
+        SlimeStatus,
+        // knight components
+        KnightStatus,
+    });
+    
+    const slime_description = struct {
+        const attack_range = 4*8;
+        const chase_range = 6*8;
+        const charge_duration = 120;
+        const cooldown_duration = 120;
+        const launch_speed = 0.6;
+        const launch_vertical_speed = 0.07;
+        const movement_frames = 70;
+        const weight = 2;
+        const hp = 30;
+        const speed = 0.08;
+        const launch_dmg = 15;
+        const contact_dmg = 5;
+        const attack_cooldown = 120;
+        const hurtbox = BoundingBox(f32).from(4, 0, -3, 3);
+        const hitbox = BoundingBox(f32).from(4, 0, -3, 3);
+        const render_offset = Vec2(f32).from(-4, 0);
+        const animations = struct {
+            const idle = Assets.AnimationDescriptor.from( &[_]u8 { 66, 67 }, 60);
+        };
+    };
+
+    pub fn slimes_spawn(position: Vec2(f32), frame: usize) void {
+        
+        const desc = slime_description;
+        const npcs = &state.npcs;
+
+        const e = npcs.new_entity();
+        const pos = npcs.set_component(Pos, e);
+        const phys = npcs.set_component(Phys, e);
+        const hp = npcs.set_component(Hp, e);
+        const status = npcs.set_component(SlimeStatus, e);
+        const dir = npcs.set_component(Dir, e);
+        const anim = npcs.set_component(Anim, e);
+        
+        status.* = SlimeStatus {
+            .attack_start_frame = 0,
+            .movement_frame = 0,
+        };
+        pos.* = position;
+        phys.* = Phys.from(position, desc.weight);
+        anim.* = Anim.from(desc.animations.idle, frame);
+        dir.* = .Right;
+        hp.* = desc.hp;
+    }
+
+    pub fn slimes_update(frame: usize) void {
+
+        const slime_damagers = &state.entities_damage_dealers;
+        const player_pos = state.player.pos;
+        const player_damage_dealing_hitboxes = &state.player_damage_dealers;
+        const npcs = &state.npcs;
+        const system_particles = &state.particles;
+        const desc = slime_description;
+
+        // damage, kill, knockback...
+        {
+            var it = npcs.iterator(.{Pos,Hp,Phys,SlimeStatus});
+            while (it.next()) |e| {
+                const pos = npcs.require_component(Pos, e);
+                const hp = npcs.require_component(Hp, e);
+                const phys = npcs.require_component(Phys, e);
+
+                const real_burtbox = desc.hurtbox.offset(pos.*);
+                var slime_killed = false;
+                for (slime_damagers.hitboxes.slice(), 0..) |hitbox, i| {
+                    if (hitbox.bb.overlaps(real_burtbox)) {
+                        hp.* -= hitbox.dmg;
+                        phys.velocity = phys.velocity.add(hitbox.knockback);
+                        _ = slime_damagers.hitboxes.release_by_index(i);
+                        // TODO sfx
+                        var splash_factor: usize = 1;
+                        if (hp.* <= 0) {
+                            slime_killed = true;
+                            splash_factor = 2;
+                        }
+                        for (0..5*splash_factor) |_| {
+                            // TODO make this accept a number of particles to generate
+                            particle_create(system_particles, particles_generators.slime_damaged(pos.*)) catch unreachable;
+                        }
+                        if (slime_killed) break;
+                    }
+                }
+                if (slime_killed) {
+                    npcs.delete(e);
+                    continue;
+                }
+            }
+        }
+
+        // behaviour / ai stuff...
+        {
+            var it = npcs.iterator(.{Pos, SlimeStatus, Phys, Dir});
+            while (it.next()) |e| {
+                const pos = npcs.require_component(Pos, e);
+                const phys = npcs.require_component(Phys, e);
+                const status = npcs.require_component(SlimeStatus, e);
+                const dir = npcs.require_component(Dir, e);
+                
+                const slime_to_player = player_pos.substract(pos.*);
+                const player_distance = slime_to_player.magnitude();
+                
+                const in_attack_range = player_distance <= desc.attack_range;
+                const in_chase_range = player_distance <= desc.chase_range;
+                const mid_attack = status.attack_start_frame != 0;
+                
+                var touching_the_slime_damages = true;
+                var charging = false;
+                var chasing = false;
+                if (!mid_attack) {
+                    if (in_attack_range) {
+                        // the slime is in attack range, start launch charge
+                        status.attack_start_frame = frame;
+                        charging = true;
+                        // TODO charging animation
+                        play(.slime_attack_a);
+                    }
+                    else if (in_chase_range) {
+                        if (status.movement_frame > 0) {
+                            status.movement_frame -= 1;
+                        }
+                        else {
+                            // TODO impulse animation
+                            dir.* = if (slime_to_player.x >= 0) .Right else .Left;
+                            const fdir: f32 = if (slime_to_player.x >= 0) 1 else -1;
+                            phys.velocity.x += desc.speed * fdir;
+                            status.movement_frame = desc.movement_frames;
+                        }
+                        chasing = true;
+                    }
+                    else {
+                        // TODO iddle animation
+                    }
+                }
+                else {
+                    // the slime is either charging, mid-launch or recovering post launch
+                    const frames_since_attack_start = frame - status.attack_start_frame;
+                    if (frames_since_attack_start < desc.charge_duration) {
+                        // do nothing, keep charging until the slime is done and can launch itself
+                        charging = true;
+                    }
+                    else if (frames_since_attack_start == desc.charge_duration) {
+                        // launch towards the direction saved when attack started originally
+                        const fdir: f32 = if (dir.* == .Right) 1 else -1;
+                        phys.velocity.x += desc.launch_speed * fdir;
+                        phys.velocity.y += desc.launch_vertical_speed;
+                        // TODO animation launching?
+                        play(.slime_attack_b);
+                    }
+                    else if (frames_since_attack_start < desc.charge_duration + desc.cooldown_duration) {
+                        // after launching, for the next `desc.cooldown_duration` the slime doesnt do damage on contact and is immobile
+                        if (@abs(phys.velocity.x) <= 0.1 and @abs(phys.velocity.y) <= 0.1) {
+                            touching_the_slime_damages = false;
+                        }
+                        // TODO tired animation
+                    }
+                    else if (@abs(phys.velocity.x) <= 0.1 and @abs(phys.velocity.y) <= 0.1) {
+                        // if after the cooldown is finished the slime is still in movement (probably falling or being attacked?)
+                        // then do nothing until it finally stops moving
+                        status.attack_start_frame = 0;
+                        // TODO animation normal
+                    }
+                }
+                var phys_old = phys.*;
+                var extra_information = Physics.apply(phys);
+                if (chasing and extra_information.against_wall) {
+                    // if the slime is chasing and encounters a wall, give it vertical speed so that it "climbs" whatever walk its against
+                    // and then recalculate the physics with that extra vertical speed
+                    phys_old.velocity.y = 0.2;
+                    extra_information = Physics.apply(&phys_old);
+                    phys.* = phys_old;
+                }
+                pos.* = Physics.calculate_real_pos(phys.physical_pos);
+                
+                // Set any hitbox that needs to be set...
+                if (mid_attack or touching_the_slime_damages) {
+                    // during the "launch" attack, the damage is proportional to the speed of the slime,
+                    // with a cap of slimes launch damage otherwise its just the contact damage
+                    const damage: i32 =
+                        if (mid_attack and !charging) @intFromFloat(@as(f32, @floatFromInt(desc.launch_dmg)) * std.math.clamp(@abs(phys.velocity.x)/desc.launch_speed, 0, 1))
+                        else desc.contact_dmg
+                    ;
+                    const hitbox = desc.hitbox.offset(pos.*);
+                    const hitbox_behaviour: Assets.HitboxType = .once_per_frame;
+                    const duration = 1;
+                    // the knockback generated by the hitbox in this frame is proportional to the speed of the slime
+                    const knockback =
+                        if (mid_attack and !charging) phys.velocity.scale(1.2)
+                        else Vec2(f32).from((f()*2-1)*3, (f()*2-1)*3)
+                    ;
+                    player_damage_dealing_hitboxes.add(hitbox, damage, knockback, hitbox_behaviour, duration, frame) catch unreachable;
+                }
+            }
+
+        }
+
+    }
+
+    pub fn slimes_render(frame: usize, renderer: *Renderer(platform.OutPixelType)) void {
+
+        const npcs = &state.npcs;
+        const desc = slime_description;
+        const sprite_atlas = &state.resources.sprite_atlas;
+
+        var it = npcs.iterator(.{Pos,Anim,Dir,SlimeStatus});
+        while (it.next()) |e| {
+            const pos = npcs.require_component(Pos, e);
+            const anim = npcs.require_component(Anim, e);
+            const dir = npcs.require_component(Dir, e);
+
+            const do_mirror = dir.* == .Left;
+            const sprite = anim.calculate_frame(frame);
+            const final_position = pos.add(desc.render_offset) ;
+            renderer.add_sprite_from_atlas_by_index(
+                // sprite atlas descriptors
+                Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                // color palette
+                @constCast(&Assets.palette),
+                // sprite atlas
+                Buffer2D(u4).from(sprite_atlas, 16*8),
+                // sprite index into atlas
+                @intCast(sprite),
+                // the destination square on the render target
+                BoundingBox(f32).from_bl_size(
+                    final_position,
+                    Vec2(f32).from(8,8)
+                ),
+                // extra parameters
+                .{ .mirror_horizontally = do_mirror, .blend = true, }
+            ) catch unreachable;
+        }
+
+    }
+
+    pub fn slimes_debug_draw(renderer: *Renderer(platform.OutPixelType)) void {
+
+        const desc = slime_description;
+        const npcs = &state.npcs;
+
+        var it = npcs.iterator(.{Pos, SlimeStatus});
+        while (it.next()) |e| {
+            const pos = npcs.require_component(Pos, e);
+            renderer.add_quad_from_bb(
+                desc.hurtbox.offset(pos.*),
+                RGBA.make(0,255,0,100)
+            ) catch unreachable;
+        }
+
+    }
+
+    const knight_description = struct {
+        const attack_range = 2*8;
+        const chase_range = 7*8;
+        const charge_duration = 35;
+        const chain_charge_duration = 35;
+        const cooldown_duration_1 = 120;
+        const cooldown_duration_2 = 150;
+        const weight = 5;
+        const hp = 70;
+        const speed = 0.03;
+        const attack_dmg = 29;
+        const knockback = Vec2(f32).from(0.25, 0);
+        const knockback_chain = Vec2(f32).from(1.20*0.25, 0);
+        const hurtbox = BoundingBox(f32).from(6, 0, -3, 3);
+        const hitbox = BoundingBox(f32).from(6, 1, 3, 8);
+        const hitbox_chain = BoundingBox(f32).from(7, 1, 3, 10);
+        const render_offset = Vec2(f32).from(-4, 0);
+        const effect_offset_charge = Vector2f.from(3,0);
+        const effect_offset_attack = Vector2f.from(7,0);
+
+        const animations = struct {
+            const idle = Assets.AnimationDescriptor.from( &[_]u8 { 64, 65 }, 60);
+            const preparing_attack = Assets.AnimationDescriptor.from( &[_]u8 { 213, 214, 215, 216, 217 }, 10);
+            const attack = Assets.AnimationDescriptor.from( &[_]u8 { 145, 146, 0, 0, 147, 148 }, 18);
+        };
+    };
+
+    pub fn knights_spawn(position: Vec2(f32), frame: usize) void {
+        
+        const desc = knight_description;
+        const npcs = &state.npcs;
+
+        const e = npcs.new_entity();
+        const pos = npcs.set_component(Pos, e);
+        const phys = npcs.set_component(Phys, e);
+        const hp = npcs.set_component(Hp, e);
+        const status = npcs.set_component(KnightStatus, e);
+        const dir = npcs.set_component(LookDir, e);
+        const anim = npcs.set_component(Anim, e);
+        
+        status.* = KnightStatus {
+            .state_change_frame = 0,
+            .state = KnightState.idle,
+            .attack_direction = .Left,
+        };
+        pos.* = position;
+        phys.* = Phys.from(position, desc.weight);
+        anim.* = Anim.from(desc.animations.idle, frame);
+        dir.* = .Right;
+        hp.* = desc.hp;
+    }
+
+    pub fn knights_update(frame: usize) void {
+
+        const player_pos = state.player.pos;
+        // const player_damage_dealing_hitboxes = &state.player_damage_dealers;
+        const npcs = &state.npcs;
+        const desc = knight_description;
+        const system_particles = &state.particles;
+        const system_in_place_animations = &state.animations_in_place;
+        const system_player_damage_dealers = &state.player_damage_dealers;
+
+        // damage, kill, knockback...
+        {
+            var it = npcs.iterator(.{Pos,Hp,Phys,KnightStatus});
+            while (it.next()) |e| {
+                const pos = npcs.require_component(Pos, e);
+                const hp = npcs.require_component(Hp, e);
+                const phys = npcs.require_component(Phys, e);
+
+                const real_burtbox = desc.hurtbox.offset(pos.*);
+                var killed = false;
+                for (system_player_damage_dealers.hitboxes.slice(), 0..) |hitbox, i| {
+                    if (hitbox.bb.overlaps(real_burtbox)) {
+                        hp.* -= hitbox.dmg;
+                        phys.velocity = phys.velocity.add(hitbox.knockback);
+                        _ = system_player_damage_dealers.hitboxes.release_by_index(i);
+                        // TODO sfx
+                        var splash_factor: usize = 1;
+                        if (hp.* <= 0) {
+                            killed = true;
+                            splash_factor = 2;
+                        }
+                        for (0..5*splash_factor) |_| {
+                            // TODO make this accept a number of particles to generate
+                            particle_create(system_particles, particles_generators.bleed(pos.*)) catch unreachable;
+                        }
+                        if (killed) break;
+                    }
+                }
+                if (killed) {
+                    npcs.delete(e);
+                    continue;
+                }
+            }
+        }
+
+        // behaviour / ai stuff...
+        {
+            var it = npcs.iterator(.{Pos, KnightStatus, Phys, LookDir});
+            while (it.next()) |e| {
+                const pos = npcs.require_component(Pos, e);
+                const phys = npcs.require_component(Phys, e);
+                const status = npcs.require_component(KnightStatus, e);
+                const look_dir = npcs.require_component(LookDir, e);
+                
+                const entity_to_player = player_pos.substract(pos.*);
+                const player_distance = entity_to_player.magnitude();
+                
+                const in_attack_range = player_distance <= desc.attack_range;
+                const in_chase_range = player_distance <= desc.chase_range;
+                
+                if (status.state == .idle) {
+                    if (in_attack_range) {
+                        // start attack charge
+                        status.state = .charging;
+                        status.state_change_frame = frame;
+                        status.attack_direction = if (entity_to_player.x >= 0) .Right else .Left;
+                        look_dir.* = status.attack_direction;
+                        const fdir: f32 = if (status.attack_direction == .Left) -1 else 1;
+                        _ = render_animation_in_place(
+                            system_in_place_animations,
+                            RuntimeAnimation.from(desc.animations.preparing_attack, frame),
+                            pos.add(desc.effect_offset_charge.scale_vec(Vec2(f32).from(fdir,1))),
+                            false,
+                            frame
+                        ) catch unreachable;
+                        // TODO knight animation "charging"?
+                        play(.knight_prepare);
+                    }
+                    else if (in_chase_range) {
+                        const fdir: f32 = if (status.attack_direction == .Left) -1 else 1;
+                        phys.velocity.x = (desc.speed * fdir);
+                        look_dir.* = if (entity_to_player.x >= 0) .Right else .Left;
+                        // TODO jump or if cant, then taunt
+                    }
+                    else {
+                        // TODO animation "idle"
+                        // TODO roam
+                    }
+                }
+
+                const fdir: f32 = if (status.attack_direction == .Left) -1 else 1;
+
+                if (status.state == .charging) {
+                    const frames_since_charge_start = frame - status.state_change_frame;
+                    if (frames_since_charge_start == desc.charge_duration) {
+                        // charge completed, so swing blade in front
+                        
+                        const damage: i32 = desc.attack_dmg;
+                        const hitbox = desc.hitbox.scale(Vector2f.from(fdir, 1)).offset(pos.*);
+                        const behaviour: Assets.HitboxType = .once_per_frame;
+                        const duration = desc.animations.attack.duration;
+                        const knockback = desc.knockback.scale_vec(Vec2(f32).from(fdir, 1));
+                        system_player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame) catch unreachable;
+
+                        const mirror_animation = status.attack_direction == .Left;
+                        _ = render_animation_in_place(
+                            system_in_place_animations,
+                            RuntimeAnimation.from(desc.animations.attack, frame),
+                            pos.add(desc.effect_offset_attack.scale_vec(Vec2(f32).from(fdir,1))),
+                            mirror_animation,
+                            frame
+                        ) catch unreachable;
+
+                        play(.knight_attack);
+                        phys.velocity.x = (desc.speed * fdir);
+                        status.state = .attack_1_cooldown;
+                        status.state_change_frame = frame;
+                    }
+                }
+
+                if (status.state == .attack_1_cooldown) {
+                    const frames_since_attack = frame - status.state_change_frame;
+                    if (frames_since_attack < desc.cooldown_duration_1) {
+                        if (in_attack_range and ((entity_to_player.x >= 0) == (status.attack_direction == .Right))) {
+                            // if player still in front, chain attack
+                            play(.knight_prepare);
+                            _ = render_animation_in_place(
+                                system_in_place_animations,
+                                RuntimeAnimation.from(desc.animations.preparing_attack, frame),
+                                pos.add(desc.effect_offset_charge.scale_vec(Vec2(f32).from(fdir,1))),
+                                false,
+                                frame
+                            ) catch unreachable;
+                            status.state = .chaining;
+                            status.state_change_frame = frame;
+                        }
+                    }
+                    else if (frames_since_attack == desc.cooldown_duration_1) {
+                        // cooled down from first attack
+                        status.state = .idle;
+                        status.state_change_frame = 0;
+                    }
+                }
+
+                if (status.state == .chaining) {
+                    const frames_since_chaining_started = frame - status.state_change_frame;
+                    if (frames_since_chaining_started == desc.chain_charge_duration) {
+                        const damage: i32 = desc.attack_dmg*2;
+                        const hitbox = desc.hitbox_chain.scale(Vector2f.from(fdir, 1)).offset(pos.*);
+                        const behaviour: Assets.HitboxType = .once_per_frame;
+                        const duration = desc.animations.attack.duration;
+                        const knockback = desc.knockback_chain.scale_vec(Vec2(f32).from(fdir, 1));
+                        system_player_damage_dealers.add(hitbox, damage, knockback, behaviour, duration, frame) catch unreachable;
+
+                        const mirror_animation = status.attack_direction == .Left;
+                        _ = render_animation_in_place(
+                            system_in_place_animations,
+                            RuntimeAnimation.from(desc.animations.attack, frame),
+                            pos.add(desc.effect_offset_attack.scale_vec(Vec2(f32).from(fdir,1))),
+                            mirror_animation,
+                            frame
+                        ) catch unreachable;
+
+                        play(.knight_attack);
+                        phys.velocity.x = (desc.speed * fdir);
+                        status.state = .attack_2_cooldown;
+                        status.state_change_frame = frame;
+                    }
+                }
+
+                if (status.state == .attack_2_cooldown) {
+                    const frames_since_attack = frame - status.state_change_frame;
+                    if (frames_since_attack == desc.cooldown_duration_2) {
+                        // cooled down from attack 2, back to idle
+                        status.state = .idle;
+                        status.state_change_frame = 0;
+                    }
+                }
+
+                _ = Physics.apply(phys);
+                pos.* = Physics.calculate_real_pos(phys.physical_pos);
+            }
+
+        }
+
+    }
+
+    pub fn knights_render(frame: usize, renderer: *Renderer(platform.OutPixelType)) void {
+
+        const npcs = &state.npcs;
+        const desc = knight_description;
+        const sprite_atlas = &state.resources.sprite_atlas;
+
+        var it = npcs.iterator(.{Pos,Anim,Dir,KnightStatus});
+        while (it.next()) |e| {
+            const pos = npcs.require_component(Pos, e);
+            const anim = npcs.require_component(Anim, e);
+            const loook_dir = npcs.require_component(LookDir, e);
+
+            const do_mirror = loook_dir.* == .Left;
+            const sprite = anim.calculate_frame(frame);
+            const final_position = pos.add(desc.render_offset);
+            renderer.add_sprite_from_atlas_by_index(
+                // sprite atlas descriptors
+                Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                // color palette
+                @constCast(&Assets.palette),
+                // sprite atlas
+                Buffer2D(u4).from(sprite_atlas, 16*8),
+                // sprite index into atlas
+                @intCast(sprite),
+                // the destination square on the render target
+                BoundingBox(f32).from_bl_size(
+                    final_position,
+                    Vec2(f32).from(8,8)
+                ),
+                // extra parameters
+                .{ .mirror_horizontally = do_mirror, .blend = true, }
+            ) catch unreachable;
+        }
+
+    }
+
+    pub fn knights_debug_draw(renderer: *Renderer(platform.OutPixelType)) void {
+
+        const desc = knight_description;
+        const npcs = &state.npcs;
+
+        var it = npcs.iterator(.{Pos, KnightStatus});
+        while (it.next()) |e| {
+            const pos = npcs.require_component(Pos, e);
+            renderer.add_quad_from_bb(
+                desc.hurtbox.offset(pos.*),
+                RGBA.make(0,255,0,100)
+            ) catch unreachable;
+        }
+
+    }
+
 };
 
 const EntitySystem = struct {
@@ -2297,27 +2993,28 @@ pub fn ShapeRenderer(comptime output_pixel_type: type) type {
     };
 }
 
+pub const HitboxData = struct {
+    bb: BoundingBox(f32),
+    dmg: i32,
+    knockback: Vector2f,
+    behaviour: Assets.HitboxType,
+    duration: usize,
+    frame: usize,
+    
+    pub inline fn from(bb: BoundingBox(f32), dmg: i32, knockback: Vector2f, behaviour: Assets.HitboxType, duration: usize, frame: usize) HitboxData {
+        return HitboxData {
+            .bb = bb,
+            .dmg = dmg,
+            .knockback = knockback,
+            .behaviour = behaviour,
+            .duration = duration,
+            .frame = frame,
+        };
+    }
+};
+
 const HitboxSystem = struct {
     
-    pub const HitboxData = struct {
-        bb: BoundingBox(f32),
-        dmg: i32,
-        knockback: Vector2f,
-        behaviour: Assets.HitboxType,
-        duration: usize,
-        frame: usize,
-        
-        pub inline fn from(bb: BoundingBox(f32), dmg: i32, knockback: Vector2f, behaviour: Assets.HitboxType, duration: usize, frame: usize) HitboxData {
-            return HitboxData {
-                .bb = bb,
-                .dmg = dmg,
-                .knockback = knockback,
-                .behaviour = behaviour,
-                .duration = duration,
-                .frame = frame,
-            };
-        }
-    };
     
     hitboxes: Pool(HitboxData),
     
