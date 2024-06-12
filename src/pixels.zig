@@ -221,4 +221,9 @@ pub const BGRA = extern struct {
             else => @compileError("Conversion from " ++ T ++ " -> " ++ BGRA ++ " not implemented!"),
         };
     }
+
+    /// expects a `0xRRGGBBAA` and returns the color itself
+    pub fn from_hex(color: u32) BGRA {
+        return from(RGBA, RGBA.from_hex(color));
+    }
 };

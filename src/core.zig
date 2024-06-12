@@ -61,3 +61,46 @@ pub const Random = struct {
     }
 
 };
+
+pub fn SparseSet(comptime T: type, comptime capacity: usize) type {
+    return struct {
+        
+        const Self = @This();
+        
+        next: usize,
+        dense: [capacity]struct { sparse_index: usize, value: T },
+        sparse: [capacity]usize,
+        
+        pub fn is_set(self: *const Self, index: usize) bool {
+            return self.sparse[index] < self.next and self.dense[self.sparse[index]].sparse_index == index;
+        }
+
+        pub fn get(self: *const Self, index: usize) *T {
+            std.debug.assert(self.is_set(index));
+            return &self.dense[self.sparse[index]].value;
+        }
+
+        pub fn set(self: *Self, index: usize, v: T) void {
+            std.debug.assert(!self.is_set(index));
+            self.dense[self.next].sparse_index = index;
+            self.dense[self.next].value = v;
+            self.sparse[index] = self.next;
+            self.next += 1;
+        }
+
+        pub fn remove(self: *Self, index: usize) void {
+            std.debug.assert(self.is_set(index));
+            self.dense[self.sparse[index]].sparse_index = self.dense[self.next - 1].sparse_index;
+            self.dense[self.sparse[index]].value = self.dense[self.next - 1].value;
+            self.sparse[self.dense[self.next - 1].sparse_index] = self.sparse[index];
+            self.sparse[index] = self.next;
+            self.next -= 1;
+        }
+
+        pub fn clear(self: *Self) void {
+            self.next = 0;
+        }
+
+    };
+}
+

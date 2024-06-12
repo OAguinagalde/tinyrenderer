@@ -131,6 +131,13 @@ pub fn Ecs(comptime types: anytype) type {
             return &getComponentContainer(T).items[entity.id];
         }
 
+        pub fn try_component(self: Self, comptime T: type, entity: Entity) ?*T {
+            var entity_data: EntityData = self.entities.items[entity.id];
+            std.debug.assert(entity_data.version == entity.version);
+            if (entity_data.components.isSet(getComponentId(T))) return &getComponentContainer(T).items[entity.id];
+            return null;
+        }
+
         pub fn set_component(self: *Self, comptime T: type, entity: Entity) *T {
             const entity_data = &self.entities.items[entity.id];
             std.debug.assert(entity_data.*.version == entity.version); // RemovedEntity
@@ -138,6 +145,13 @@ pub fn Ecs(comptime types: anytype) type {
             entity_data.*.components.set(component_id);
             const component_container = getComponentContainer(T);
             return &component_container.*.items[entity.id];
+        }
+
+        pub fn remove_component(self: *Self, comptime T: type, entity: Entity) void {
+            const entity_data: *EntityData = &self.entities.items[entity.id];
+            std.debug.assert(entity_data.*.version == entity.version); // RemovedEntity
+            const component_id = getComponentId(T);
+            entity_data.*.components.unset(component_id);
         }
         
         pub fn getComponent(self: Self, comptime T: type, entity: Entity) !?*T {
@@ -373,7 +387,7 @@ test "ecs" {
     const Color = struct { r: u8, g: u8, b: u8, a: u8 };
     const Position = struct { x: i32, y: i32 };
 
-    var ecs = try Ecs(.{Color, Position}, 100).init(std.heap.page_allocator);
+    var ecs = try Ecs(.{Color, Position}).init_capacity(std.heap.page_allocator, 100);
 
     // Creating entities
     const e1 = try ecs.newEntity();
@@ -410,9 +424,9 @@ test "ecs" {
 test "view" {
     const Color = struct { r: u8, g: u8, b: u8, a: u8 };
     const Position = struct { x: i32, y: i32 };
-    const ECS = Ecs(.{Color, Position}, 100);
+    const ECS = Ecs(.{Color, Position});
     
-    var ecs = try ECS.init(std.heap.page_allocator);
+    var ecs = try ECS.init_capacity(std.heap.page_allocator, 100);
 
     std.debug.print("Create 10 Position. Also set Color for 3 and 7\n", .{});
     for (0..10) |i| {
