@@ -1224,6 +1224,152 @@ const game = struct {
 
 };
 
+pub fn ScrollingLog(comptime memory_len: usize) type {
+    return struct {
+        const Self = @This();
+        
+        first: *align(1) usize,
+        previous: *align(1) usize,
+        memory: [memory_len]u8,
+
+        pub fn init(self: *Self) void {
+            self.memory = undefined;
+            for (&self.memory) |*b| b.* = 0;
+            self.previous = @ptrCast(&self.memory);
+            self.first = @ptrCast(&self.memory);
+        }
+        
+        fn ptr(pointer: anytype) usize {
+            return @intFromPtr(pointer);
+        }
+        
+        pub fn append(self: *Self, message: []const u8) void {
+            
+            if (message.len == 0) return;
+            if (message.len + @sizeOf(usize) > memory_len) @panic("message is too big!");
+
+            const memory_end = ptr(&self.memory) + self.memory.len;
+
+            const prev_ptr = self.previous;
+            const prev_len = prev_ptr.*;
+            const prev_str_ptr = ptr(prev_ptr) + @sizeOf(usize);
+            
+            if (prev_len == 0) {
+                // This only ever happens on new logs
+                const message_len_storage: *align(1) usize = @ptrCast(&self.memory);
+                message_len_storage.* = message.len;
+                const owned_message = self.memory[@sizeOf(usize) .. @sizeOf(usize) + message.len];
+                for (owned_message, 0..) |*c, i| c.* = message[i];
+                return;
+            }
+
+            var curr_ptr = prev_str_ptr + prev_len;
+            var curr_len = message.len;
+            var curr_str_ptr = curr_ptr + @sizeOf(usize);
+            
+            if (curr_str_ptr + curr_len > memory_end) {
+                
+                // if there is enough space for a length value make it zero
+                if (curr_ptr + @sizeOf(usize) <= memory_end) {
+                    const message_len_storage: *align(1) usize = @ptrFromInt(curr_ptr);
+                    message_len_storage.* = 0;
+                }
+
+                curr_ptr = @intFromPtr(&self.memory);
+                curr_len = message.len;
+                curr_str_ptr = curr_ptr + @sizeOf(usize);
+                
+            }
+            
+            while (curr_str_ptr + curr_len > ptr(self.first)) {
+
+                // if, while overriding previous messages, we reach the last message we appended, then it means we override everything
+                if (self.first == self.previous) {
+                    self.first = @ptrCast(&self.memory);
+                    break;
+                }
+
+                // "first" is the string we are about to overwrite
+                const first_ptr = self.first;
+                const first_len = first_ptr.*;
+                const first_str_ptr = ptr(first_ptr) + @sizeOf(usize);
+
+                const space_left = memory_end - ptr(first_ptr);
+
+                if (space_left >= @sizeOf(usize) and first_len != 0) {
+                    
+                    // if this new "first" is not valid, wrap
+                    const space_left_again = memory_end - (first_str_ptr + first_len);
+                    if (space_left_again <= @sizeOf(usize)) {
+                        self.first = @ptrCast(&self.memory);
+                        break;
+                    }
+                    else {
+                        self.first = @ptrFromInt(first_str_ptr + first_len);
+                        if (self.first.* == 0) { self.first = @ptrCast(&self.memory); break; }
+                    }
+
+                }
+                else {
+                    self.first = @ptrCast(&self.memory);
+                    break;
+                }
+
+            }
+
+            const message_len_storage: *align(1) usize = @ptrFromInt(curr_ptr);
+            message_len_storage.* = message.len;
+            const index_message_start = curr_str_ptr - ptr(&self.memory);
+            const owned_message = self.memory[index_message_start .. index_message_start + message.len];
+            for (owned_message, 0..) |*c, i| c.* = message[i];
+            std.debug.assert(owned_message.len == message.len);
+            std.debug.assert(std.mem.eql(u8, owned_message, message));
+
+            self.previous = @ptrFromInt(curr_ptr);
+        }
+        
+        const Iterator = struct {
+            
+            self: *Self,
+            current: *align(1) usize,
+            done: bool,
+            
+            pub fn next(self: *Iterator) ?[]u8 {
+                if (self.done) return null;
+                // get string
+                const curr_ptr = self.current;
+                const curr_len = curr_ptr.*;
+                const curr_str_ptr = ptr(curr_ptr) + @sizeOf(usize);
+                const str_start_index = curr_str_ptr - ptr(&self.self.memory);
+                const str = self.self.memory[str_start_index .. str_start_index + curr_len];
+                if (self.current == self.self.previous) {
+                    self.done = true;
+                    return str;
+                }
+                // calc next
+                const memory_end = ptr(&self.self.memory) + self.self.memory.len;
+                const space_left = memory_end - (curr_str_ptr + curr_len);
+                if (space_left <= @sizeOf(usize)) {
+                    self.current = @ptrCast(&self.self.memory);
+                }
+                else {
+                    self.current = @ptrFromInt(curr_str_ptr + curr_len);
+                    if (self.current.* == 0) self.current = @ptrCast(&self.self.memory);
+                }
+                return str;
+            }
+        };
+
+        pub fn iterator(self: *Self) Iterator {
+            return .{
+                .self = self,
+                .current = self.first,
+                .done = false,
+            };
+        }
+
+    };
+}
 const ImmediateModeGui = imgui.ImmediateModeGui(.{
     .layout = .{
         .char_height = 5*1,
