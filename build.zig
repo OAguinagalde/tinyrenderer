@@ -3,9 +3,17 @@ const Build = std.Build;
 
 pub fn build(b: *Build) !void {
 
-    const target_win32 = b.option([]const u8, "win32", "default compilation for win32");
+    var target_win32 = b.option([]const u8, "win32", "default compilation for win32");
     const target_wasm = b.option([]const u8, "wasm", "default compilation for wasm");
     const run_step = b.step("run", "Run the application");
+
+    // if nothing defined, default to something on build
+    const do_default = target_win32 == null and target_wasm == null;
+    if (do_default) {
+        target_win32 = "src/app_004.zig";
+    }
+    
+    const check = b.step("check", "Check if foo compiles");
 
     if (target_win32) |root_file| {
 
@@ -32,6 +40,29 @@ pub fn build(b: *Build) !void {
         b.installArtifact(exe);
         var step_run = b.addRunArtifact(exe);
         run_step.dependOn(&step_run.step);
+
+        // To activate on save diagnose on vscode
+        // > https://kristoff.it/blog/improving-your-zls-experience/
+        // 1. Install Error Lens
+        // 2. Set the zls settings on vscode:
+        // 
+        //     {
+        //       "enable_build_on_save": true,
+        //       "build_on_save_step": "check"
+        //     }
+        // 
+        // 3. Make sure that `zig build check` builds whatever you are working on.
+        // On every save it will (just) check the program and on error show a diagnostick on directly in vscode
+        {
+            const exe_check = b.addExecutable(.{
+                .name = "windows",
+                .root_source_file = .{ .cwd_relative = root_file },
+                .target = target,
+                .optimize = optimization_options,
+            });
+            exe_check.root_module.addImport("win32", win32);
+            check.dependOn(&exe_check.step);
+        }
 
         const exe_options = b.addOptions();
         exe.root_module.addOptions("build_options", exe_options);
