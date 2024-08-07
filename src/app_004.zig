@@ -56,6 +56,7 @@ const State = struct {
     rng: core.Random,
     ui: ImmediateModeGui,
     resources: Resources,
+    scrolling_log: ScrollingLog(1024*3),
 };
 
 var state: State = undefined;
@@ -65,6 +66,7 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     state.camera = Camera.init(Vector3f { .x = 0, .y = 0, .z = 0 });
     state.debug = true;
     state.rng = core.Random.init(@bitCast(platform.timestamp()));
+    state.scrolling_log.init();
     state.entities = try game.ECS.init_capacity(allocator, 32);
     ImmediateModeGui.init(&state.ui);
     state.resources = try Resources.init(allocator);
@@ -75,10 +77,10 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     game.slime_spawn(Vec2(f32).from(5*8, 8*2), 0);
     game.player_spawn(Vec2(f32).from(4*8, 8*2), 0);
 
-    for (&game.skill_registry.casted_skills) |cs| std.log.debug("cs {?}", .{cs});
-    for (&game.skill_registry.instant_skills) |cs| std.log.debug("cs {?}", .{cs});
+    for (&game.skill_registry.casted_skills) |cs| log("cs {?}", .{cs});
+    for (&game.skill_registry.instant_skills) |cs| log("cs {?}", .{cs});
 
-    std.log.debug("{any}", .{@typeInfo(game.skills.instant).Struct.decls});
+    log("{any}", .{@typeInfo(game.skills.instant).Struct.decls});
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
@@ -298,6 +300,20 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 try debug.label("upscale took {d:.8}ms", .{final_time});
                 try debug.label("ui prev took {d:.8}ms", .{static.ms_taken_ui_previous});
                 try debug.label("ui rend took {d:.8}ms", .{static.ms_taken_render_ui_previous});
+                
+                try debug.label("Logs...", .{});
+                // render the last #want logs
+                const want = 8;
+                var skip_left = if (state.scrolling_log.count > want) state.scrolling_log.count - want else 0;
+                var it = state.scrolling_log.iterator();
+                while (it.next()) |message| {
+                    if (skip_left>0) {
+                        skip_left -= 1;
+                        continue;
+                    }
+                    try debug.label("{s}", .{message});
+                }
+                
                 // force debug container to be the lowest layer
                 for (state.ui.containers_order.slice(), 0..) |container_id, i| if (container_id == debug.persistent.unique_identifier) {
                     const aux = state.ui.containers_order.slice()[0];
@@ -359,6 +375,12 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     }
 
     return true;
+}
+
+fn log(comptime fmt: []const u8, args: anytype) void {
+    var buffer: [1024*16] u8 = undefined;
+    const message: []const u8 = std.fmt.bufPrint(&buffer, fmt, args) catch @panic("Failed to log!");
+    state.scrolling_log.append(message);
 }
 
 const color = struct {
@@ -761,17 +783,17 @@ const game = struct {
             pub fn get_skill_id() usize { return id; }
             pub fn get_cast_time() usize { return spell.cast_time; }
             pub fn check(origin: Entity, target: Entity, frame: usize) bool {
-                std.log.info("checking cast", .{});
+                log("checking cast", .{});
                 const self_id = get_skill_id();
                 var entities = &state.entities;
                 var origin_cooldowns = entities.require_component(Cooldowns, origin);
                 if (!origin_cooldowns.is_cooldown(self_id, frame, spell.cooldown)) {
-                    std.log.info("ability is in cooldown!", .{});
+                    log("ability is in cooldown!", .{});
                     return false;
                 }
                 const origin_casting_info = entities.require_component(CastingInfo, origin);
                 if (origin_casting_info.is_casting) {
-                    std.log.info("already casting!", .{});
+                    log("already casting!", .{});
                     return false;
                 }
 
@@ -779,21 +801,21 @@ const game = struct {
                 const origin_pos = entities.require_component(Pos, origin);
                 const origin_look_dir = entities.require_component(LookDir, origin);
                 const origin_to_target = target_pos.x - origin_pos.x;
-                    std.log.info("pos! {}", .{target_pos.x - origin_pos.y});
+                    log("pos! {}", .{target_pos.x - origin_pos.y});
                 const origin_to_target_direction = if (origin_to_target >= 0) Direction.Right else Direction.Left;
                 const origin_to_target_magnitude = if (origin_to_target >= 0) origin_to_target else -origin_to_target;
                 if (origin_to_target_magnitude > spell.range) {
-                    std.log.info("out of range!", .{});
+                    log("out of range!", .{});
                     return false;
                 }
                 if (origin_look_dir.* != origin_to_target_direction) {
-                    std.log.info("looking away! {s} vs {s}", .{@tagName(origin_look_dir.*), @tagName(origin_to_target_direction)});
+                    log("looking away! {s} vs {s}", .{@tagName(origin_look_dir.*), @tagName(origin_to_target_direction)});
                     return false;
                 }
                 return true;
             }
             pub fn cast_start(origin: Entity, target: Entity, frame: usize) bool {
-                std.log.info("starting cast", .{});
+                log("starting cast", .{});
                 const self_id = get_skill_id();
                 var entities = &state.entities;
                 if (entities.try_component(game.ActionToDo, origin)) |_| {
@@ -801,7 +823,7 @@ const game = struct {
                 }
                 var origin_cooldowns = entities.require_component(Cooldowns, origin);
                 if (!origin_cooldowns.is_cooldown(self_id, frame, spell.cooldown)) {
-                    std.log.info("failed cooldown check", .{});
+                    log("failed cooldown check", .{});
                     return false;
                 }
                 var origin_casting_info = entities.require_component(CastingInfo, origin);
@@ -819,7 +841,7 @@ const game = struct {
                 return true;
             }
             pub fn cast_finish(origin: Entity, target: Entity, frame: usize) bool {
-                std.log.info("finishing cast", .{});
+                log("finishing cast", .{});
                 const self_id = get_skill_id();
                 var entities = &state.entities;
                 var origin_cooldowns = entities.require_component(Cooldowns, origin);
@@ -848,7 +870,7 @@ const game = struct {
                     }
                 }
                 origin_casting_info.cast_finish();
-                std.log.debug("cast! {}", .{spell.damage});
+                log("cast! {}", .{spell.damage});
                 return true;
             }
         });
@@ -899,7 +921,7 @@ const game = struct {
                         // TODO exp, etc
                     }
                 }
-                std.log.debug("melee! {}", .{weapon.damage});
+                log("melee! {}", .{weapon.damage});
                 return true;
             }
         });
@@ -1023,8 +1045,8 @@ const game = struct {
     // pub fn require_field_in_struct(comptime T: type, comptime field: std.builtin.Type.StructField) bool {
     //     const struct_info: std.builtin.Type.Struct = @typeInfo(T).Struct;
     //     inline for (struct_info.fields) |fld| {
-    //         std.log.debug("flda {?}", .{fld});
-    //         std.log.debug("fldb {?}", .{field});
+    //         log("flda {?}", .{fld});
+    //         log("fldb {?}", .{field});
     //         if (std.mem.eql(std.builtin.Type.StructField, &[1]std.builtin.Type.StructField{fld}, &[1]std.builtin.Type.StructField{field})) return true;
     //     }
     //     return false;
@@ -1076,7 +1098,7 @@ const game = struct {
                         origin_cooldowns.start_cooldown(self_id, frame);
                         target_casting_info.cast_cancel();
                     }
-                    std.log.debug("kicked!", .{});
+                    log("kicked!", .{});
                     return true;
                 }
             });
@@ -1228,6 +1250,7 @@ pub fn ScrollingLog(comptime memory_len: usize) type {
     return struct {
         const Self = @This();
         
+        count: usize,
         first: *align(1) usize,
         previous: *align(1) usize,
         memory: [memory_len]u8,
@@ -1237,12 +1260,32 @@ pub fn ScrollingLog(comptime memory_len: usize) type {
             for (&self.memory) |*b| b.* = 0;
             self.previous = @ptrCast(&self.memory);
             self.first = @ptrCast(&self.memory);
+            self.count = 0;
         }
         
         fn ptr(pointer: anytype) usize {
             return @intFromPtr(pointer);
         }
         
+        pub fn _log_debug_visualization(self: *Self) void {
+            var b: [memory_len*2]u8 = [1]u8{'#'} ** (memory_len*2);
+            
+            var it = self.iterator();
+            while (it.next()) |item| {
+                const index = item.ptr - 8 - &self.memory;
+                _ = std.fmt.bufPrint(b[index..], "{d:0>8}", .{item.len}) catch @panic("");
+                _ = std.fmt.bufPrint(b[index+8..], "{s}", .{item}) catch @panic("");
+            }
+            
+            for (&self.memory, 0..) |*c, i| {
+                b[memory_len+i] = ' ';
+                if (ptr(c) == ptr(self.first)) b[memory_len+i] = 'f';
+                if (ptr(c) == ptr(self.previous)) b[memory_len+i] = 'p';
+            }
+            std.log.debug("1|{s}", .{b[0..memory_len]});
+            std.log.debug("2|{s}", .{b[memory_len..]});
+        }
+
         pub fn append(self: *Self, message: []const u8) void {
             
             if (message.len == 0) return;
@@ -1255,9 +1298,10 @@ pub fn ScrollingLog(comptime memory_len: usize) type {
             const prev_str_ptr = ptr(prev_ptr) + @sizeOf(usize);
             
             if (prev_len == 0) {
-                // This only ever happens on new logs
+                // This only ever happens on the first `append` call
                 const message_len_storage: *align(1) usize = @ptrCast(&self.memory);
                 message_len_storage.* = message.len;
+                self.count = 1;
                 const owned_message = self.memory[@sizeOf(usize) .. @sizeOf(usize) + message.len];
                 for (owned_message, 0..) |*c, i| c.* = message[i];
                 return;
@@ -1267,50 +1311,71 @@ pub fn ScrollingLog(comptime memory_len: usize) type {
             var curr_len = message.len;
             var curr_str_ptr = curr_ptr + @sizeOf(usize);
             
+            // if there isn't enough space for this message without divinding it
+            // then just clear everything to the right of the buffer and start again from 0
             if (curr_str_ptr + curr_len > memory_end) {
                 
-                // if there is enough space for a length value make it zero
+                var it = self.iterator();
+                while (it.next()) |item| if (ptr(item.ptr) >= curr_ptr) {
+                    self.count -= 1;
+                };
+
+                // but there is enough space for a length value, then make it zero to make it clear we wrapped
                 if (curr_ptr + @sizeOf(usize) <= memory_end) {
                     const message_len_storage: *align(1) usize = @ptrFromInt(curr_ptr);
                     message_len_storage.* = 0;
                 }
 
+                self.first = @ptrCast(&self.memory);
                 curr_ptr = @intFromPtr(&self.memory);
                 curr_len = message.len;
                 curr_str_ptr = curr_ptr + @sizeOf(usize);
-                
+
             }
             
-            while (curr_str_ptr + curr_len > ptr(self.first)) {
+            // remove as many messages as we need to in order to make space for the new message
+            // (this `while` is basically moving self.first to the right in the buffer until there is no need to move it any more)
+            while (curr_ptr <= ptr(self.first) and curr_str_ptr + curr_len > ptr(self.first)) {
 
-                // if, while overriding previous messages, we reach the last message we appended, then it means we override everything
+                // while overriding messages, we reached the last message we appended (aka `previous`) meaning we overrided EVERY message
                 if (self.first == self.previous) {
                     self.first = @ptrCast(&self.memory);
+                    self.count = 0;
                     break;
                 }
 
-                // "first" is the string we are about to overwrite
+                // on every iteration of this `while`, `first` will point to the next message which is about to be overriden
                 const first_ptr = self.first;
                 const first_len = first_ptr.*;
                 const first_str_ptr = ptr(first_ptr) + @sizeOf(usize);
 
+                // space left after we override this message
                 const space_left = memory_end - ptr(first_ptr);
 
+                // If there is at least 1 more message (after the one about to be overriden)...
                 if (space_left >= @sizeOf(usize) and first_len != 0) {
                     
-                    // if this new "first" is not valid, wrap
                     const space_left_again = memory_end - (first_str_ptr + first_len);
+                    // there is not enough for 2...
                     if (space_left_again <= @sizeOf(usize)) {
+                        self.count -= 1;
                         self.first = @ptrCast(&self.memory);
                         break;
                     }
+                    // there is potentially even more messages...
                     else {
+                        self.count -= 1;
                         self.first = @ptrFromInt(first_str_ptr + first_len);
-                        if (self.first.* == 0) { self.first = @ptrCast(&self.memory); break; }
+                        if (self.first.* == 0 or self.count == 0) {
+                            self.first = @ptrCast(&self.memory);
+                            break;
+                        }
                     }
 
                 }
                 else {
+                    // This means that either there wasnt space for a message here at all,
+                    // or that the space was just unused because on a previous append the space wasn't big enough
                     self.first = @ptrCast(&self.memory);
                     break;
                 }
@@ -1320,6 +1385,7 @@ pub fn ScrollingLog(comptime memory_len: usize) type {
             const message_len_storage: *align(1) usize = @ptrFromInt(curr_ptr);
             message_len_storage.* = message.len;
             const index_message_start = curr_str_ptr - ptr(&self.memory);
+            self.count += 1;
             const owned_message = self.memory[index_message_start .. index_message_start + message.len];
             for (owned_message, 0..) |*c, i| c.* = message[i];
             std.debug.assert(owned_message.len == message.len);
