@@ -75,12 +75,10 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
     try state.resources.load_from_bytes(bytes);
 
     game.slime_spawn(Vec2(f32).from(5*8, 8*2), 0);
+    game.slime_spawn(Vec2(f32).from(7*8, 8*2), 0);
     game.player_spawn(Vec2(f32).from(4*8, 8*2), 0);
 
-    for (&game.skill_registry.casted_skills) |cs| log("cs {?}", .{cs});
-    for (&game.skill_registry.instant_skills) |cs| log("cs {?}", .{cs});
-
-    log("{any}", .{@typeInfo(game.skills.instant).Struct.decls});
+    for (&game.skill_registry.all_skills) |cs| log("skill > {?}", .{cs});
 }
 
 pub fn update(ud: *platform.UpdateData) anyerror!bool {
@@ -97,6 +95,8 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const ms_taken_update: f32 = blk: {
         const profile = Application.perf.profile_start();
 
+        if (ud.key_pressed('G')) state.debug = !state.debug;
+        
         const entities = &state.entities;
         
         const player: Entity = label: {
@@ -106,48 +106,59 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             }
             unreachable;
         };
-
-        const slime_maybe: ?Entity = label: {
-            var it = entities.iterator(.{game.GameTags});
-            while (it.next()) |e| {
-                if (!entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsPlayer))) break :label e;
+        
+        const player_target: *game.Target = entities.require_component(game.Target, player);
+        if (player_target.entity) |e| if (!entities.valid_entity(e)) { player_target.entity = null; };
+        
+        if (ud.key_pressed('Q')) {
+            const targets_capacity = 12;
+            var targets_len: usize = 0;
+            const targets_first_12: [targets_capacity]?Entity = label: {
+                var list: [targets_capacity]?Entity = undefined;
+                for (&list) |*i| i.* = null;
+                var index: usize = 0;
+                var it = entities.iterator(.{game.GameTags});
+                log("Looking for targets...", .{});
+                while (it.next()) |e| {
+                    if (entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsTarget))) {
+                        list[index] = e;
+                        log("- target {?}", .{e});
+                        index += 1;
+                        if (index == targets_capacity) break;
+                    }
+                }
+                targets_len = index;
+                break :label list;
+                // TODO order the target list based on position and select the next one
+            };
+            if (targets_len > 0) {
+                player_target.entity = targets_first_12[state.rng.u()%targets_len];
+                log("Target changed to {}", .{player_target.entity.?.id});
             }
-            break :label null;
+        }
+
+        const player_skills = & [_] struct { number_key: u8, skill: type } {
+            .{ .number_key = '0', .skill = game.skills.slime_melee },
+            .{ .number_key = '1', .skill = game.skills.unarmed_melee },
+            .{ .number_key = '2', .skill = game.skills.kick },
+            .{ .number_key = '3', .skill = game.skills.fireball },
         };
 
-        if (ud.key_pressed('G')) state.debug = !state.debug;
-        if (ud.key_pressed('1')) {
-            if (slime_maybe) |slime|
-            if (game.skills.instant.unarmed_melee.check(player, slime, ud.frame)) {
-                const action = if (entities.try_component(game.ActionToDo, player)) |a| a else entities.set_component(game.ActionToDo, player);
-                action.* = .{ .instant = .{
-                    .skill = game.skills.instant.unarmed_melee.get_skill_id(),
-                    .target = slime
-                }};
-            };
+        if (player_target.entity) |target| {
+            inline for (player_skills) |ps| {
+                if (ud.key_pressed(ps.number_key)) {
+                    if (ps.skill.check(player, target, ud.frame)) {
+                        const action = if (entities.try_component(game.ActionTargeted, player)) |a| a else entities.set_component(game.ActionTargeted, player);
+                        action.* = .{
+                            .skill = ps.skill.get_skill_id(),
+                            .target = target
+                        };
+                    }
+                }
+            }
         }
-        if (ud.key_pressed('3')) {
-            if (slime_maybe) |slime|
-            if (game.skills.instant.kick.check(player, slime, ud.frame)) {
-                const action = if (entities.try_component(game.ActionToDo, player)) |a| a else entities.set_component(game.ActionToDo, player);
-                action.* = .{ .instant = .{
-                    .skill = game.skills.instant.kick.get_skill_id(),
-                    .target = slime
-                }};
-            };
-        }
-        if (ud.key_pressed('4')) {
-            if (slime_maybe) |slime|
-            if (game.skills.casted.fireball.check(player, slime, ud.frame)) {
-                const action = if (entities.try_component(game.ActionToDo, player)) |a| a else entities.set_component(game.ActionToDo, player);
-                action.* = .{ .casted = .{
-                    .skill = game.skills.casted.fireball.get_skill_id(),
-                    .target = slime
-                }};
-            };
-        }
-
-        // given the current situation and each entities behaviour, decide on whether they want to do an Action
+        
+        // TODO IA
         {
             var it = entities.iterator(.{game.Behaviour});
             while (it.next()) |e| {
@@ -160,25 +171,17 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             }
         }
 
-        // execute any skills that the AI has decided its time to execute skills
+        // process skills
         {
-            var it = entities.iterator(.{game.ActionToDo});
+            var it = entities.iterator(.{game.ActionTargeted});
             while (it.next()) |e| {
-                const action = entities.require_component(game.ActionToDo, e);
-                switch (action.*) {
-                    .instant => |a| {
-                        const skill = game.get_instant_skill(a.skill);
-                        const target = a.target;
-                        const origin = e;
-                        std.debug.assert(skill.do(origin, target, ud.frame));
-                    },
-                    .casted => |a| {
-                        const skill = game.get_casted_skill(a.skill);
-                        const target = a.target;
-                        const origin = e;
-                        std.debug.assert(skill.cast_start(origin, target, ud.frame));
-                    },
-                }
+                const a = entities.require_component(game.ActionTargeted, e);
+                const skill = game.get_skill(a.skill);
+                const target = a.target;
+                const origin = e;
+                if (skill.cast_start) |fn_cast_start| std.debug.assert(fn_cast_start(origin, target, ud.frame))
+                else if (skill.do) |fn_do| std.debug.assert(fn_do(origin, target, ud.frame))
+                else log("ERROR: failed to process skill!", .{});
             }
         }
         
@@ -187,10 +190,10 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         while (it.next()) |e| {
             const casting = entities.require_component(game.CastingInfo, e);
             if (casting.is_casting) {
-                const skill = game.get_casted_skill(casting.skill_id);
-                if (casting.finished(ud.frame, skill.get_cast_time())) {
-                    std.debug.assert(skill.cast_finish(e, casting.target, ud.frame));
-                }
+                const skill = game.get_skill(casting.skill_id);
+                if (skill.get_cast_time) |fn_get_cast_time| if (casting.finished(ud.frame, fn_get_cast_time())) {
+                    std.debug.assert(skill.cast_finish.?(e, casting.target, ud.frame));
+                };
             }
         }
 
@@ -219,6 +222,58 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
         game.entities_render(&renderer);
 
+        var it = state.entities.iterator(.{game.Cooldowns});
+        while (it.next()) |e| {
+            var tags = state.entities.require_component(game.GameTags, e);
+            if (tags.isSet(@intFromEnum(game.Tag.IsPlayer))) {
+                var cds = state.entities.require_component(game.Cooldowns, e);
+                var index: usize = 0;
+                renderer.add_sprite_from_atlas_by_index(
+                    // sprite atlas descriptors
+                    Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                    // color palette
+                    @constCast(&game.palette),
+                    // sprite atlas
+                    Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
+                    // sprite index into atlas
+                    @intCast(191),
+                    // the destination square on the render target
+                    BoundingBox(f32).from_bl_size(
+                        Vec2(usize).from(8 + (3*index) + (8*index), 8).to(f32),
+                        Vec2(f32).from(8,8)
+                    ),
+                    // extra parameters
+                    .{ .mirror_horizontally = false, .blend = true, }
+                ) catch unreachable;
+                for (cds.times) |cd| if (cd.id != 0){
+                    index += 1;
+                    renderer.add_sprite_from_atlas_by_index(
+                        Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                        @constCast(&game.palette),
+                        Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
+                        if (cd.id == @intFromEnum(game.skill_type.fireball)) @intCast(189) else @intCast(190),
+                        BoundingBox(f32).from_bl_size(
+                            Vec2(usize).from(8 + (3*index) + (8*index), 8).to(f32),
+                            Vec2(f32).from(8,8)
+                        ),
+                        // extra parameters
+                        .{ .mirror_horizontally = false, .blend = true, }
+                    ) catch unreachable;
+                    const skill_cd = game.get_skill(cd.id).get_cd.?();
+                    if (cds.in_cooldown(cd.id, ud.frame, skill_cd)) {
+                        var percentage = @as(f32, @floatFromInt(ud.frame - cd.used_at)) / @as(f32, @floatFromInt(skill_cd));
+                        percentage = if (percentage > 1) 1 else if (percentage < 0) 0 else percentage;
+                        renderer.add_quad_border(BoundingBox(f32).from_bl_size(
+                            Vec2(usize).from(8 + (3*index) + (8*index), 8).to(f32),
+                            Vec2(f32).from(8*percentage,8)
+                        ), 1, RGBA.from_hex(0xff000077)) catch unreachable;
+                    }
+                };
+
+                break;
+            }
+        }
+
         try renderer.flush_all();
 
         break :blk Application.perf.profile_end(profile);
@@ -236,6 +291,12 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         var ms_taken_ui_previous: f32 = 0;
     };
     
+    var ui_builder: ImmediateModeGui.UiBuilder = undefined;
+    ui_builder = state.ui.prepare_frame(ud.allocator, .{
+        .mouse_pos = ud.mouse,
+        .mouse_down = ud.mouse_left_down,
+    });
+
     var builder: ImmediateModeGui.UiBuilder = undefined;
 
     if (state.debug) {
@@ -277,7 +338,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 try debug.label("update  took {d:.8}ms", .{ms_taken_update});
                 try debug.label("render  took {d:.8}ms", .{ms_taken_render});
                 try debug.label("player cooldowns {?}", .{state.entities.require_component(game.Cooldowns, player).*});
-                try debug.label("player action td {?}", .{if (state.entities.try_component(game.ActionToDo, player)) |a| a else null});
+                try debug.label("player action td {?}", .{if (state.entities.try_component(game.ActionTargeted, player)) |a| a else null});
                 try debug.label("player casting   {?}", .{state.entities.require_component(game.CastingInfo, player).*});
 
                 const stuff = struct {
@@ -301,17 +362,19 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 try debug.label("ui prev took {d:.8}ms", .{static.ms_taken_ui_previous});
                 try debug.label("ui rend took {d:.8}ms", .{static.ms_taken_render_ui_previous});
                 
-                try debug.label("Logs...", .{});
+                try debug.label("# Logs", .{});
                 // render the last #want logs
-                const want = 8;
-                var skip_left = if (state.scrolling_log.count > want) state.scrolling_log.count - want else 0;
-                var it = state.scrolling_log.iterator();
-                while (it.next()) |message| {
-                    if (skip_left>0) {
-                        skip_left -= 1;
-                        continue;
+                {
+                    const want = 16;
+                    var skip_left = if (state.scrolling_log.count > want) state.scrolling_log.count - want else 0;
+                    var it = state.scrolling_log.iterator();
+                    while (it.next()) |message| {
+                        if (skip_left>0) {
+                            skip_left -= 1;
+                            continue;
+                        }
+                        try debug.label("{s}", .{message});
                     }
-                    try debug.label("{s}", .{message});
                 }
                 
                 // force debug container to be the lowest layer
@@ -381,6 +444,7 @@ fn log(comptime fmt: []const u8, args: anytype) void {
     var buffer: [1024*16] u8 = undefined;
     const message: []const u8 = std.fmt.bufPrint(&buffer, fmt, args) catch @panic("Failed to log!");
     state.scrolling_log.append(message);
+    std.log.debug("{s}", .{message});
 }
 
 const color = struct {
@@ -670,8 +734,9 @@ const game = struct {
     const Pos = Vec2(f32);
     const Hp = i32;
     const GameTags = std.bit_set.IntegerBitSet(32);
-    const Tag = enum { IsPlayer, };
+    const Tag = enum { IsPlayer, IsTarget };
     const Sprite = usize;
+    const Target = struct { entity: ?Entity };
     const CastingInfo = struct {
         is_casting: bool,
         cast_start_frame: usize,
@@ -718,9 +783,9 @@ const game = struct {
             return cds;
         }
 
-        pub fn is_cooldown(self: *Cooldowns, id: usize, frame: usize, cooldown: usize) bool {
-            for (&self.times) |cd| if (cd.id == id) return frame - cd.used_at > cooldown;
-            return true;
+        pub fn in_cooldown(self: *Cooldowns, id: usize, frame: usize, cooldown: usize) bool {
+            for (&self.times) |cd| if (cd.id == id) return frame - cd.used_at < cooldown;
+            return false;
         }
 
         pub fn start_cooldown(self: *Cooldowns, id: usize, frame: usize) void {
@@ -735,13 +800,8 @@ const game = struct {
         skill: usize,
         target: Entity,
     };
-    const ActionType = enum { instant, casted };
-    const ActionToDo = union(ActionType) {
-        instant: ActionTargeted,
-        casted: ActionTargeted,
-    };
     const ECS = Ecs(.{
-        Pos, Hp, LookDir, GameTags, Cooldowns, CastingInfo, Phys, Sprite, EntityStatus, ActionToDo, Behaviour, CastingInfo
+        Pos, Hp, LookDir, GameTags, Cooldowns, CastingInfo, Phys, Sprite, EntityStatus, Behaviour, CastingInfo, Target, ActionTargeted
     });
 
     const Weapon = struct {
@@ -766,34 +826,36 @@ const game = struct {
         const unarmed_melee = Weapon {
             .damage = 2,
             .speed = 75,
-            .range = 2,
+            .range = 8,
         };
     };
 
-    pub fn ICastedSkill(comptime skill: type) type {
-        return skill;
-    }
-    pub fn ISkill(comptime skill: type) type {
-        return skill;
-    }
-
-    pub fn ranged_cast(comptime spell: Spell, comptime id: usize) ICastedSkill(type) {
-        return ICastedSkill(struct {
+    pub fn ranged_cast(comptime spell: Spell, comptime id: usize) type {
+        return struct {
             const self = @This();
             pub fn get_skill_id() usize { return id; }
             pub fn get_cast_time() usize { return spell.cast_time; }
+            pub fn get_cd() usize { return spell.cooldown; }
+            pub fn get_dispatcher() SkillDispatcher {
+                return .{
+                    .cast_start = cast_start,
+                    .cast_finish = cast_finish,
+                    .check = check,
+                    .get_cast_time = get_cast_time,
+                    .get_cd = get_cd,
+                };
+            }
             pub fn check(origin: Entity, target: Entity, frame: usize) bool {
-                log("checking cast", .{});
                 const self_id = get_skill_id();
                 var entities = &state.entities;
                 var origin_cooldowns = entities.require_component(Cooldowns, origin);
-                if (!origin_cooldowns.is_cooldown(self_id, frame, spell.cooldown)) {
-                    log("ability is in cooldown!", .{});
+                if (origin_cooldowns.in_cooldown(self_id, frame, spell.cooldown)) {
+                    log("cast skill check failed: ability is in cooldown!", .{});
                     return false;
                 }
                 const origin_casting_info = entities.require_component(CastingInfo, origin);
                 if (origin_casting_info.is_casting) {
-                    log("already casting!", .{});
+                    log("cast skill check failed: already casting!", .{});
                     return false;
                 }
 
@@ -801,33 +863,29 @@ const game = struct {
                 const origin_pos = entities.require_component(Pos, origin);
                 const origin_look_dir = entities.require_component(LookDir, origin);
                 const origin_to_target = target_pos.x - origin_pos.x;
-                    log("pos! {}", .{target_pos.x - origin_pos.y});
                 const origin_to_target_direction = if (origin_to_target >= 0) Direction.Right else Direction.Left;
                 const origin_to_target_magnitude = if (origin_to_target >= 0) origin_to_target else -origin_to_target;
                 if (origin_to_target_magnitude > spell.range) {
-                    log("out of range!", .{});
+                    log("cast skill check failed: out of range!", .{});
                     return false;
                 }
                 if (origin_look_dir.* != origin_to_target_direction) {
-                    log("looking away! {s} vs {s}", .{@tagName(origin_look_dir.*), @tagName(origin_to_target_direction)});
+                    log("cast skill check failed: looking away!", .{});
                     return false;
                 }
+                log("cast skill check success!", .{});
                 return true;
             }
             pub fn cast_start(origin: Entity, target: Entity, frame: usize) bool {
-                log("starting cast", .{});
                 const self_id = get_skill_id();
                 var entities = &state.entities;
-                if (entities.try_component(game.ActionToDo, origin)) |_| {
-                    entities.remove_component(ActionToDo, origin);
+                if (entities.try_component(game.ActionTargeted, origin)) |_| {
+                    entities.remove_component(ActionTargeted, origin);
                 }
                 var origin_cooldowns = entities.require_component(Cooldowns, origin);
-                if (!origin_cooldowns.is_cooldown(self_id, frame, spell.cooldown)) {
-                    log("failed cooldown check", .{});
-                    return false;
-                }
+                std.debug.assert(!origin_cooldowns.in_cooldown(self_id, frame, spell.cooldown));
                 var origin_casting_info = entities.require_component(CastingInfo, origin);
-                if (origin_casting_info.is_casting) return false;
+                std.debug.assert(!origin_casting_info.is_casting);
                 const target_pos = entities.require_component(Pos, target);
                 const origin_pos = entities.require_component(Pos, origin);
                 const origin_look_dir = entities.require_component(LookDir, origin);
@@ -836,8 +894,9 @@ const game = struct {
                 const origin_to_target_direction = if (origin_to_target >= 0) Direction.Right else Direction.Left;
                 const origin_to_target_magnitude = if (origin_to_target >= 0) origin_to_target else -origin_to_target;
 
-                if (origin_to_target_magnitude > spell.range or origin_look_dir.* != origin_to_target_direction) return false;
+                std.debug.assert(!(origin_to_target_magnitude > spell.range or origin_look_dir.* != origin_to_target_direction));
                 origin_casting_info.cast_start(frame, self_id, target);
+                log("cast skill started!", .{});
                 return true;
             }
             pub fn cast_finish(origin: Entity, target: Entity, frame: usize) bool {
@@ -856,10 +915,16 @@ const game = struct {
 
                 const origin_to_target = target_pos.x - origin_pos.x;
                 const origin_to_target_magnitude = if (origin_to_target >= 0) origin_to_target else -origin_to_target;
-                if (origin_to_target_magnitude > spell.range) return false;
+                if (origin_to_target_magnitude > spell.range) {
+                    log("cast finish failed: out of range!", .{});
+                    return false;
+                }
 
                 const origin_to_target_direction = if (origin_to_target >= 0) Direction.Right else Direction.Left;
-                if (origin_look_dir.* != origin_to_target_direction) return false;
+                if (origin_look_dir.* != origin_to_target_direction) {
+                    log("cast finish failed: looking away!", .{});
+                    return false;
+                }
 
                 origin_cooldowns.start_cooldown(self_id, frame);
                 target_hp.* -= spell.damage;
@@ -870,28 +935,49 @@ const game = struct {
                     }
                 }
                 origin_casting_info.cast_finish();
-                log("cast! {}", .{spell.damage});
+                log("cast skill finished! (damage: {})", .{spell.damage});
                 return true;
             }
-        });
+        };
     }
 
-    pub fn melee(comptime weapon: Weapon, comptime id: usize) ISkill(type) {
-        return ISkill(struct {
-            const self = @This();
+    pub fn melee(comptime weapon: Weapon, comptime id: usize) type {
+        return struct {
             pub fn get_skill_id() usize { return id; }
+            pub fn get_cd() usize { return weapon.speed; }
+            pub fn get_dispatcher() SkillDispatcher {
+                return .{
+                    .do = do,
+                    .check = check,
+                    .get_cd = get_cd,
+                };
+            }
             pub fn check(origin: Entity, target: Entity, frame: usize) bool {
                 const self_id = get_skill_id();
                 var entities = &state.entities;
                 var origin_cooldowns = entities.require_component(Cooldowns, origin);
-                if (!origin_cooldowns.is_cooldown(self_id, frame, weapon.speed)) return false;
+                if (origin_cooldowns.in_cooldown(self_id, frame, weapon.speed)) {
+                    log("melee skill check failed: ability is in cooldown!", .{});
+                    return false;
+                }
                 const target_pos = entities.require_component(Pos, target);
                 const origin_pos = entities.require_component(Pos, origin);
                 const origin_look_dir = entities.require_component(LookDir, origin);
                 const origin_to_target = target_pos.x - origin_pos.x;
                 const origin_to_target_direction = if (origin_to_target >= 0) Direction.Right else Direction.Left;
                 const origin_to_target_magnitude = if (origin_to_target >= 0) origin_to_target else -origin_to_target;
-                return (origin_to_target_magnitude <= weapon.range and origin_look_dir.* == origin_to_target_direction) ;
+                const is_in_range = origin_to_target_magnitude <= weapon.range;
+                if (!is_in_range) {
+                    log("melee skill check failed: not in range! {d:0>4}", .{origin_to_target_magnitude});
+                    return false;
+                }
+                const is_in_front = origin_look_dir.* == origin_to_target_direction;
+                if (!is_in_front) {
+                    log("melee skill check failed: enemy is behind!", .{});
+                    return false;
+                }
+                log("melee skill check success!",.{});
+                return true;
             }
             pub fn do(origin: Entity, target: Entity, frame: usize) bool {
                 const self_id = get_skill_id();
@@ -900,19 +986,21 @@ const game = struct {
                 const target_pos = entities.require_component(Pos, target);
                 const origin_pos = entities.require_component(Pos, origin);
                 const origin_look_dir = entities.require_component(LookDir, origin);
+                var origin_casting_info = entities.require_component(CastingInfo, origin);
                 var origin_cooldowns = entities.require_component(Cooldowns, origin);
                 var origin_tags = entities.require_component(GameTags, origin);
-                
+                if (entities.try_component(game.ActionTargeted, origin)) |_| entities.remove_component(ActionTargeted, origin);
                 const is_player = origin_tags.isSet(@intFromEnum(Tag.IsPlayer));
-
-                if (!origin_cooldowns.is_cooldown(self_id, frame, weapon.speed)) return false;
-
+                std.debug.assert(!origin_cooldowns.in_cooldown(self_id, frame, weapon.speed));
                 const origin_to_target = target_pos.x - origin_pos.x;
                 const origin_to_target_direction = if (origin_to_target >= 0) Direction.Right else Direction.Left;
                 const origin_to_target_magnitude = if (origin_to_target >= 0) origin_to_target else -origin_to_target;
-
-                if (origin_to_target_magnitude > weapon.range and origin_look_dir.* != origin_to_target_direction) return false;
+                std.debug.assert(!(origin_to_target_magnitude > weapon.range and origin_look_dir.* != origin_to_target_direction));
                 // TODO system_damage_number(weapon.damage, target_pos);
+                if (origin_casting_info.is_casting) {
+                    log("melee skill cancelled casting {}", .{origin_casting_info.skill_id});
+                    origin_casting_info.cast_cancel();
+                }
                 origin_cooldowns.start_cooldown(self_id, frame);
                 target_hp.* -= weapon.damage;
                 if (target_hp.* <= 0) {
@@ -921,10 +1009,10 @@ const game = struct {
                         // TODO exp, etc
                     }
                 }
-                log("melee! {}", .{weapon.damage});
+                log("melee skill done! (damage: {})", .{weapon.damage});
                 return true;
             }
-        });
+        };
     }
 
     // TODO spawn entities whose AI is to walk to each other till skills.melee(weapons.slime_melee).check(), and then do the skill as soon as possible
@@ -932,188 +1020,99 @@ const game = struct {
     // TODO make any "casted" skill that sets the CastingInfo and can then be cancelled by kick
     // TODO make "global cooldown" for player
 
-    fn get_field_index_in_namespace(comptime field_type: type, comptime namespace: type) usize {
-        for (@typeInfo(namespace).Struct.fields, 0..) |fld, i| {
-            if (fld.type == field_type) return i;
-        }
-        unreachable;
-    }
-    
-    const InstantSkillDispatcher = struct {
-        do: *const fn (origin: Entity, target: Entity, frame: usize) bool,
-        check: *const fn (origin: Entity, target: Entity, frame: usize) bool,
+    const SkillDispatcher = struct {
+        check: ?*const fn (origin: Entity, target: Entity, frame: usize) bool = null,
+        cast_start: ?*const fn (origin: Entity, target: Entity, frame: usize) bool = null,
+        do: ?*const fn (origin: Entity, target: Entity, frame: usize) bool = null,
+        cast_finish: ?*const fn (origin: Entity, target: Entity, frame: usize) bool = null,
+        get_cast_time: ?*const fn () usize = null,
+        get_cd: ?*const fn () usize = null,
     };
 
-    const CastedSkillDispatcher = struct {
-        check: *const fn (origin: Entity, target: Entity, frame: usize) bool,
-        cast_start: *const fn (origin: Entity, target: Entity, frame: usize) bool,
-        cast_finish: *const fn (origin: Entity, target: Entity, frame: usize) bool,
-        get_cast_time: *const fn () usize,
-    };
-
-    // comptime {
-    //     for (@typeInfo(skills.instant).Struct.fields, 0..) |fld, i| {
-    //         skill_registry.instant_skills[i] =  .{
-    //             .skill_id = type.get_skill_id() ,
-    //             .dispatcher = InstantSkillDispatcher {
-    //                 .do = &fld.type.do,
-    //                 .check = &fld.type.check,
-    //             }
-    //         };
-    //     }
-    //     for (@typeInfo(skills.casted).Struct.fields, 0..) |fld, i| {
-    //         skill_registry.casted_skills[i] = .{
-    //             .skill_id = type.get_skill_id() ,
-    //             .dispatcher = CastedSkillDispatcher {
-    //                 .check = &fld.type.check,
-    //                 .cast_start = &fld.type.cast_start,
-    //                 .cast_finish = &fld.type.cast_finish,
-    //                 .get_cast_time = &fld.type.get_cast_time,
-    //             }
-    //         };
-    //     }
-    // }
-
-    fn register_entry_instant(comptime skill: type) registry_entry_instant {
+    fn register_entry(comptime skill: type) registry_entry {
         return .{
             .skill_id = skill.get_skill_id() ,
-            .dispatcher = InstantSkillDispatcher {
-                .check = &skill.check,
-                .do = &skill.do,
-            }
+            .dispatcher = skill.get_dispatcher(),
         };
     }
 
-    fn register_entry_casted(comptime skill: type) registry_entry_casted {
-        return .{
-            .skill_id = skill.get_skill_id() ,
-            .dispatcher = CastedSkillDispatcher {
-                .check = &skill.check,
-                .cast_start = &skill.cast_start,
-                .cast_finish = &skill.cast_finish,
-                .get_cast_time = &skill.get_cast_time,
-            }
-        };
-    }
-
-    const registry_entry_casted = struct { skill_id: usize, dispatcher: CastedSkillDispatcher };
-    const registry_entry_instant = struct { skill_id: usize, dispatcher: InstantSkillDispatcher };
-    
+    const registry_entry = struct { skill_id: usize, dispatcher: SkillDispatcher };
     const skill_registry = struct {
-        var instant_skills = [_] registry_entry_instant {
-            register_entry_instant(skills.instant.kick),
-            register_entry_instant(skills.instant.unarmed_melee),
-            register_entry_instant(skills.instant.slime_melee),
-        };
-        var casted_skills = [_] registry_entry_casted {
-            register_entry_casted(skills.casted.fireball)
+        var all_skills = [_] registry_entry {
+            register_entry(skills.unarmed_melee),
+            register_entry(skills.kick),
+            register_entry(skills.slime_melee),
+            register_entry(skills.fireball),
         };
     };
 
-    pub fn get_instant_skill(skill_id: usize) InstantSkillDispatcher {
-        for (&skill_registry.instant_skills) |o| if (o.skill_id == skill_id) return o.dispatcher;
+    pub fn get_skill(skill_id: usize) SkillDispatcher {
+        for (&skill_registry.all_skills) |o| if (o.skill_id == skill_id) return o.dispatcher;
         unreachable;
     }
-
-    pub fn get_casted_skill(skill_id: usize) CastedSkillDispatcher {
-        for (&skill_registry.casted_skills) |o| if (o.skill_id == skill_id) return o.dispatcher;
-        unreachable;
-    }
-
-    // pub fn is_struct_shaped_like_other(comptime T1: type, comptime T2: type) bool {
-    //     switch (@typeInfo(T1)) { .Struct => {}, else => return false }
-    //     switch (@typeInfo(T2)) { .Struct => {}, else => return false }
-    //     return T1 == T2;
-    // }
-
-    // test "same_struct" {
-    //     try std.testing.expect(std.meta.eql(IInstantSkill, skills.kick));
-    //     try std.testing.expect(std.meta.eql(IInstantSkill, skills.unarmed_melee));
-    //     try std.testing.expect(std.meta.eql(IInstantSkill, skills.slime_melee));
-    //     try std.testing.expect(!std.meta.eql(IInstantSkill, skills.fireball));
-    //     try std.testing.expect(false);
-    // }
-
-    // test "require field" {
-    //     const struct_info: std.builtin.Type.Struct = @typeInfo(IInstantSkill).Struct;
-    //     inline for (struct_info.fields) |fld| {
-    //         try std.testing.expect(require_field_in_struct(skills.kick, fld));
-    //         try std.testing.expect(false);
-    //     }
-    // }
-    
-    // pub fn require_field_in_struct(comptime T: type, comptime field: std.builtin.Type.StructField) bool {
-    //     const struct_info: std.builtin.Type.Struct = @typeInfo(T).Struct;
-    //     inline for (struct_info.fields) |fld| {
-    //         log("flda {?}", .{fld});
-    //         log("fldb {?}", .{field});
-    //         if (std.mem.eql(std.builtin.Type.StructField, &[1]std.builtin.Type.StructField{fld}, &[1]std.builtin.Type.StructField{field})) return true;
-    //     }
-    //     return false;
-    // }
     
     const skill_type = enum (usize) {
-        kick,
+        kick = 1,
         unarmed_melee,
         slime_melee,
         fireball
     };
     
     const skills = struct {
-        const instant = struct {
-            const kick = ISkill(struct {
-                const cooldown = 60*10;
-                const range = 5;
-                const self = @This();
-                pub fn get_skill_id() usize { return @intFromEnum(skill_type.kick); }
-                pub fn check(origin: Entity, target: Entity, frame: usize) bool {
-                    const self_id = get_skill_id();
-                    const entities = &state.entities;
-                    var origin_cooldowns = entities.require_component(Cooldowns, origin);
-                    if (!origin_cooldowns.is_cooldown(self_id, frame, cooldown)) return false;
-                    const target_pos = entities.require_component(Pos, target);
-                    const origin_pos = entities.require_component(Pos, origin);
-                    const origin_look_dir = entities.require_component(LookDir, origin);
-                    const origin_to_target = target_pos.x - origin_pos.x;
-                    const origin_to_target_direction = if (origin_to_target >= 0) Direction.Right else Direction.Left;
-                    const origin_to_target_magnitude = if (origin_to_target >= 0) origin_to_target else -origin_to_target;
-                    return (origin_to_target_magnitude <= range and origin_look_dir.* == origin_to_target_direction) ;
+        const kick = struct {
+            const cooldown = 60*10;
+            const range = 5;
+            const self = @This();
+            pub fn get_skill_id() usize { return @intFromEnum(skill_type.kick); }
+            pub fn get_cd() usize { return cooldown; }
+            pub fn get_dispatcher() SkillDispatcher {
+                return .{
+                    .do = do,
+                    .check = check,
+                    .get_cd = get_cd,
+                };
+            }
+            pub fn check(origin: Entity, target: Entity, frame: usize) bool {
+                const self_id = get_skill_id();
+                const entities = &state.entities;
+                var origin_cooldowns = entities.require_component(Cooldowns, origin);
+                if (origin_cooldowns.in_cooldown(self_id, frame, cooldown)) return false;
+                const target_pos = entities.require_component(Pos, target);
+                const origin_pos = entities.require_component(Pos, origin);
+                const origin_look_dir = entities.require_component(LookDir, origin);
+                const origin_to_target = target_pos.x - origin_pos.x;
+                const origin_to_target_direction = if (origin_to_target >= 0) Direction.Right else Direction.Left;
+                const origin_to_target_magnitude = if (origin_to_target >= 0) origin_to_target else -origin_to_target;
+                return (origin_to_target_magnitude <= range and origin_look_dir.* == origin_to_target_direction) ;
+            }
+            pub fn do(origin: Entity, target: Entity, frame: usize) bool {
+                const self_id = get_skill_id();
+                const entities = &state.entities;
+                const target_pos = entities.require_component(Pos, target);
+                const target_casting_info = entities.require_component(CastingInfo, target);
+                const origin_pos = entities.require_component(Pos, origin);
+                const origin_look_dir = entities.require_component(LookDir, origin);
+                var origin_cooldowns = entities.require_component(Cooldowns, origin);
+                std.debug.assert(!origin_cooldowns.in_cooldown(self_id, frame, cooldown));
+                const origin_to_target = target_pos.x - origin_pos.x;
+                const origin_to_target_direction = if (origin_to_target >= 0) Direction.Right else Direction.Left;
+                const origin_to_target_magnitude = if (origin_to_target >= 0) origin_to_target else -origin_to_target;
+                if (origin_to_target_magnitude <= range and origin_look_dir.* == origin_to_target_direction) {
+                    origin_cooldowns.start_cooldown(self_id, frame);
+                    target_casting_info.cast_cancel();
                 }
-                pub fn do(origin: Entity, target: Entity, frame: usize) bool {
-                    const self_id = get_skill_id();
-                    const entities = &state.entities;
-                    const target_pos = entities.require_component(Pos, target);
-                    const target_casting_info = entities.require_component(CastingInfo, target);
-                    const origin_pos = entities.require_component(Pos, origin);
-                    const origin_look_dir = entities.require_component(LookDir, origin);
-                    var origin_cooldowns = entities.require_component(Cooldowns, origin);
-
-                    if (!origin_cooldowns.is_cooldown(self_id, frame, cooldown)) return false;
-
-                    const origin_to_target = target_pos.x - origin_pos.x;
-                    const origin_to_target_direction = if (origin_to_target >= 0) Direction.Right else Direction.Left;
-                    const origin_to_target_magnitude = if (origin_to_target >= 0) origin_to_target else -origin_to_target;
-
-                    if (origin_to_target_magnitude <= range and origin_look_dir.* == origin_to_target_direction) {
-                        origin_cooldowns.start_cooldown(self_id, frame);
-                        target_casting_info.cast_cancel();
-                    }
-                    log("kicked!", .{});
-                    return true;
-                }
-            });
-            const unarmed_melee = melee(weapons.unarmed_melee, @intFromEnum(skill_type.unarmed_melee));
-            const slime_melee = melee(weapons.slime_melee, @intFromEnum(skill_type.slime_melee));
+                log("kicked!", .{});
+                return true;
+            }
         };
-        const casted = struct {
-            const fireball = ranged_cast(.{
-                .cooldown = 60*7,
-                .range = 5*8,
-                .damage = 12,
-                .cast_time = 60 + 30
-            }, @intFromEnum(skill_type.fireball));
-        };
-
+        const fireball = ranged_cast(.{
+            .cooldown = 60*7,
+            .range = 5*8,
+            .damage = 12,
+            .cast_time = 60 + 30
+        }, @intFromEnum(skill_type.fireball));
+        const slime_melee = melee(weapons.slime_melee, @intFromEnum(skill_type.slime_melee));
+        const unarmed_melee = melee(weapons.unarmed_melee, @intFromEnum(skill_type.unarmed_melee));
     };
 
     pub fn entities_update_physics() void {
@@ -1151,6 +1150,15 @@ const game = struct {
         const entities = &state.entities;
         const sprite_atlas = &state.resources.sprite_atlas;
 
+        const player: Entity = label: {
+            var it = entities.iterator(.{game.GameTags});
+            while (it.next()) |e| {
+                if (entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsPlayer))) break :label e;
+            }
+            unreachable;
+        };
+        const player_target: *game.Target = entities.require_component(game.Target, player);
+
         var it = entities.iterator(.{Pos, Sprite});
         while (it.next()) |e| {
             const pos = entities.require_component(Pos, e);
@@ -1173,6 +1181,25 @@ const game = struct {
                 // extra parameters
                 .{ .mirror_horizontally = false, .blend = true, }
             ) catch unreachable;
+            if (player_target.entity) |t| if (e.id == t.id and e.version == t.version) {
+                renderer.add_sprite_from_atlas_by_index(
+                    // sprite atlas descriptors
+                    Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                    // color palette
+                    @constCast(&palette),
+                    // sprite atlas
+                    Buffer2D(u4).from(sprite_atlas, 16*8),
+                    // sprite index into atlas
+                    @intCast(207),
+                    // the destination square on the render target
+                    BoundingBox(f32).from_bl_size(
+                        final_position.add(Vec2(f32).from(0, 8)),
+                        Vec2(f32).from(8,8)
+                    ),
+                    // extra parameters
+                    .{ .mirror_horizontally = false, .blend = true, }
+                ) catch unreachable;
+            };
         }
 
     }
@@ -1195,6 +1222,7 @@ const game = struct {
         look_dir.* = .Right;
         hp.* = 35;
         tags.mask = 0;
+        tags.set(@intFromEnum(Tag.IsTarget));
         sprite.* = 66;
         for (&cooldowns.times) |*cd| cd.* = .{.id = 0, .used_at = 0};
         casting.is_casting = false;
@@ -1214,6 +1242,7 @@ const game = struct {
         const casting = entities.set_component(CastingInfo, e);
         const sprite = entities.set_component(Sprite, e);
         const phys = entities.set_component(Phys, e);
+        const target = entities.set_component(Target, e);
         
         pos.* = position;
         phys.* = Phys.from(position, 0.7);
@@ -1222,6 +1251,7 @@ const game = struct {
         tags.mask = 0;
         tags.set(@intFromEnum(Tag.IsPlayer));
         sprite.* = 64;
+        target.entity = null;
         for (&cooldowns.times) |*cd| cd.* = .{.id = 0, .used_at = 0};
         casting.is_casting = false;
 

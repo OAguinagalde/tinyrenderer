@@ -181,6 +181,11 @@ pub fn Ecs(comptime types: anytype) type {
             entity_data.*.components.unset(component_id);
         }
 
+        pub fn valid_entity(self: *Self, entity: Entity) bool {
+            const entity_data = &self.entities.items[entity.id];
+            return entity_data.*.version == entity.version;
+        }
+
         pub fn deleteEntity(self: *Self, entity: Entity) !void {
             const entity_data = &self.entities.items[entity.id];
             if (entity_data.*.version != entity.version) return error.RemovedEntity;
