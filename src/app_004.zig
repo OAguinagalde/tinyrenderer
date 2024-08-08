@@ -92,6 +92,13 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const real_hi: i32 = @intCast(ud.pixel_buffer.height);
     const real_wi: i32 = @intCast(ud.pixel_buffer.width);
 
+    const player_skills = & [_] struct { number_key: u8, skill: type } {
+        .{ .number_key = '0', .skill = game.skills.slime_melee },
+        .{ .number_key = '1', .skill = game.skills.unarmed_melee },
+        .{ .number_key = '2', .skill = game.skills.kick },
+        .{ .number_key = '3', .skill = game.skills.fireball },
+    };
+
     const ms_taken_update: f32 = blk: {
         const profile = Application.perf.profile_start();
 
@@ -136,13 +143,6 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 log("Target changed to {}", .{player_target.entity.?.id});
             }
         }
-
-        const player_skills = & [_] struct { number_key: u8, skill: type } {
-            .{ .number_key = '0', .skill = game.skills.slime_melee },
-            .{ .number_key = '1', .skill = game.skills.unarmed_melee },
-            .{ .number_key = '2', .skill = game.skills.kick },
-            .{ .number_key = '3', .skill = game.skills.fireball },
-        };
 
         if (player_target.entity) |target| {
             inline for (player_skills) |ps| {
@@ -222,53 +222,91 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
 
         game.entities_render(&renderer);
 
+        const player: Entity = label: {
+            var it = state.entities.iterator(.{game.GameTags});
+            while (it.next()) |e| {
+                if (state.entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsPlayer))) break :label e;
+            }
+            unreachable;
+        };
+
+        // render the casting bar of the player
+        {
+            const pos = state.entities.require_component(game.Pos, player);
+            const final_position = pos.add(Vec2(f32).from(-4, 0)) ;
+            // const cds = state.entities.require_component(game.Cooldowns);
+            const casting = state.entities.require_component(game.CastingInfo, player);
+            if (casting.is_casting) {
+                const skill_id = casting.skill_id;
+                const skill_cast_time = game.get_skill(skill_id).get_cast_time.?();
+                const cast_start_frame = casting.cast_start_frame;
+                var percentage = @as(f32, @floatFromInt(ud.frame - cast_start_frame)) / @as(f32, @floatFromInt(skill_cast_time));
+                percentage = if (percentage > 1) 1 else if (percentage < 0) 0 else percentage;
+                renderer.add_quad_border(
+                    BoundingBox(f32).from_bl_size(
+                        final_position.add(Vec2(f32).from(0, 9)),
+                        Vec2(f32).from(percentage*8,0)
+                    ),
+                    1,
+                    RGBA.from_hex(0x00ff00ff)
+                ) catch unreachable;
+            }
+        }
+
         var it = state.entities.iterator(.{game.Cooldowns});
         while (it.next()) |e| {
             var tags = state.entities.require_component(game.GameTags, e);
             if (tags.isSet(@intFromEnum(game.Tag.IsPlayer))) {
                 var cds = state.entities.require_component(game.Cooldowns, e);
-                var index: usize = 0;
-                renderer.add_sprite_from_atlas_by_index(
-                    // sprite atlas descriptors
-                    Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
-                    // color palette
-                    @constCast(&game.palette),
-                    // sprite atlas
-                    Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
-                    // sprite index into atlas
-                    @intCast(191),
-                    // the destination square on the render target
-                    BoundingBox(f32).from_bl_size(
-                        Vec2(usize).from(8 + (3*index) + (8*index), 8).to(f32),
-                        Vec2(f32).from(8,8)
-                    ),
-                    // extra parameters
-                    .{ .mirror_horizontally = false, .blend = true, }
-                ) catch unreachable;
-                for (cds.times) |cd| if (cd.id != 0){
-                    index += 1;
+                
+                const offset_y: usize = 8*3;
+                const offset_x: usize = 8*2;
+                // TODO make player skills non comptime lol
+                inline for (player_skills, 0..) |ps, index| {
+                    const skill_id = ps.skill.get_skill_id();
+                    const skill_sprite: usize = switch (skill_id) {
+                        @intFromEnum(game.skill_type.fireball) => 190,
+                        else => 189,
+                    };
+                    // render the skill placeholder
                     renderer.add_sprite_from_atlas_by_index(
                         Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
                         @constCast(&game.palette),
                         Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
-                        if (cd.id == @intFromEnum(game.skill_type.fireball)) @intCast(189) else @intCast(190),
+                        191,
                         BoundingBox(f32).from_bl_size(
-                            Vec2(usize).from(8 + (3*index) + (8*index), 8).to(f32),
+                            Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
                             Vec2(f32).from(8,8)
                         ),
-                        // extra parameters
                         .{ .mirror_horizontally = false, .blend = true, }
                     ) catch unreachable;
-                    const skill_cd = game.get_skill(cd.id).get_cd.?();
-                    if (cds.in_cooldown(cd.id, ud.frame, skill_cd)) {
-                        var percentage = @as(f32, @floatFromInt(ud.frame - cd.used_at)) / @as(f32, @floatFromInt(skill_cd));
-                        percentage = if (percentage > 1) 1 else if (percentage < 0) 0 else percentage;
-                        renderer.add_quad_border(BoundingBox(f32).from_bl_size(
-                            Vec2(usize).from(8 + (3*index) + (8*index), 8).to(f32),
-                            Vec2(f32).from(8*percentage,8)
-                        ), 1, RGBA.from_hex(0xff000077)) catch unreachable;
+                    // render the skill icon
+                    renderer.add_sprite_from_atlas_by_index(
+                        Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                        @constCast(&game.palette),
+                        Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
+                        skill_sprite,
+                        BoundingBox(f32).from_bl_size(
+                            Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
+                            Vec2(f32).from(8,8)
+                        ),
+                        .{ .mirror_horizontally = false, .blend = true, }
+                    ) catch unreachable;
+                    // render cd animation
+                    if (cds.get_cooldown(skill_id)) |cd| {
+                        const skill_cd = game.get_skill(cd.id).get_cd.?();
+                        if (cds.in_cooldown(cd.id, ud.frame, skill_cd)) {
+                            var percentage = @as(f32, @floatFromInt(ud.frame - cd.used_at)) / @as(f32, @floatFromInt(skill_cd));
+                            percentage = if (percentage > 1) 1 else if (percentage < 0) 0 else percentage;
+                            renderer.add_quad_border(BoundingBox(f32).from_bl_size(
+                                Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
+                                Vec2(f32).from(8*percentage,8)
+                            ), 1, RGBA.from_hex(0xff000077)) catch unreachable;
+                        }
                     }
-                };
+                    // render the key to be pressed
+                    renderer.add_text(Vec2(usize).from(offset_x-2 + (3*index) + (8*index), offset_y-2).to(f32), "{c}", .{ps.number_key}, RGBA.from_hex(0x00FF00FF)) catch unreachable;
+                }
 
                 break;
             }
@@ -786,6 +824,11 @@ const game = struct {
         pub fn in_cooldown(self: *Cooldowns, id: usize, frame: usize, cooldown: usize) bool {
             for (&self.times) |cd| if (cd.id == id) return frame - cd.used_at < cooldown;
             return false;
+        }
+
+        pub fn get_cooldown(self: *Cooldowns, id: usize) ?*Cooldown {
+            for (&self.times) |*cd| if (cd.id == id) return cd;
+            return null;
         }
 
         pub fn start_cooldown(self: *Cooldowns, id: usize, frame: usize) void {
