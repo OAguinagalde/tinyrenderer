@@ -144,6 +144,30 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             }
         }
 
+        var player_is_walking: bool = false;
+        if (ud.key_pressing('D')) {
+            // TODO walk animation for player
+            const phys = entities.require_component(game.Phys, player);
+            const dir = entities.require_component(game.LookDir, player);
+            phys.velocity.x += 0.010;
+            dir.* = .Right;
+            player_is_walking = true;
+        }
+        if (ud.key_pressing('A')) {
+            const phys = entities.require_component(game.Phys, player);
+            const dir = entities.require_component(game.LookDir, player);
+            phys.velocity.x -= 0.010;
+            dir.* = .Left;
+            player_is_walking = true;
+        }
+        if (player_is_walking) {
+            const casting = entities.require_component(game.CastingInfo, player);
+            if (casting.is_casting) {
+                casting.cast_cancel();
+            }
+            // TODO walk animation for player   
+        }
+
         if (player_target.entity) |target| {
             inline for (player_skills) |ps| {
                 if (ud.key_pressed(ps.number_key)) {
@@ -220,15 +244,52 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             viewport_matrix_m33
         );
 
-        game.entities_render(&renderer);
+        const entities = &state.entities;
+        const sprite_atlas = &state.resources.sprite_atlas;
 
         const player: Entity = label: {
-            var it = state.entities.iterator(.{game.GameTags});
+            var it = entities.iterator(.{game.GameTags});
             while (it.next()) |e| {
-                if (state.entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsPlayer))) break :label e;
+                if (entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsPlayer))) break :label e;
             }
             unreachable;
         };
+        const player_target: *game.Target = entities.require_component(game.Target, player);
+
+        // render entities with position and sprite
+        {
+            var it = entities.iterator(.{game.Pos, game.Sprite});
+            while (it.next()) |e| {
+                const pos = entities.require_component(game.Pos, e);
+                const sprite = entities.require_component(game.Sprite, e);
+                const final_position = pos.add(Vec2(f32).from(-4, 0)) ;
+                const dir = entities.require_component(game.LookDir, e);
+                renderer.add_sprite_from_atlas_by_index(
+                    Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                    @constCast(&game.palette),
+                    Buffer2D(u4).from(sprite_atlas, 16*8),
+                    @intCast(sprite.*),
+                    BoundingBox(f32).from_bl_size(
+                        final_position,
+                        Vec2(f32).from(8,8)
+                    ),
+                    .{ .mirror_horizontally = (dir.* == .Left) , .blend = true, }
+                ) catch unreachable;
+                if (player_target.entity) |t| if (e.id == t.id and e.version == t.version) {
+                    renderer.add_sprite_from_atlas_by_index(
+                        Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                        @constCast(&game.palette),
+                        Buffer2D(u4).from(sprite_atlas, 16*8),
+                        @intCast(207),
+                        BoundingBox(f32).from_bl_size(
+                            final_position.add(Vec2(f32).from(0, 8)),
+                            Vec2(f32).from(8,8)
+                        ),
+                        .{ .mirror_horizontally = false, .blend = true, }
+                    ) catch unreachable;
+                };
+            }
+        }
 
         // render the casting bar of the player
         {
@@ -253,62 +314,64 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             }
         }
 
-        var it = state.entities.iterator(.{game.Cooldowns});
-        while (it.next()) |e| {
-            var tags = state.entities.require_component(game.GameTags, e);
-            if (tags.isSet(@intFromEnum(game.Tag.IsPlayer))) {
-                var cds = state.entities.require_component(game.Cooldowns, e);
-                
-                const offset_y: usize = 8*3;
-                const offset_x: usize = 8*2;
-                // TODO make player skills non comptime lol
-                inline for (player_skills, 0..) |ps, index| {
-                    const skill_id = ps.skill.get_skill_id();
-                    const skill_sprite: usize = switch (skill_id) {
-                        @intFromEnum(game.skill_type.fireball) => 190,
-                        else => 189,
-                    };
-                    // render the skill placeholder
-                    renderer.add_sprite_from_atlas_by_index(
-                        Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
-                        @constCast(&game.palette),
-                        Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
-                        191,
-                        BoundingBox(f32).from_bl_size(
-                            Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
-                            Vec2(f32).from(8,8)
-                        ),
-                        .{ .mirror_horizontally = false, .blend = true, }
-                    ) catch unreachable;
-                    // render the skill icon
-                    renderer.add_sprite_from_atlas_by_index(
-                        Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
-                        @constCast(&game.palette),
-                        Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
-                        skill_sprite,
-                        BoundingBox(f32).from_bl_size(
-                            Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
-                            Vec2(f32).from(8,8)
-                        ),
-                        .{ .mirror_horizontally = false, .blend = true, }
-                    ) catch unreachable;
-                    // render cd animation
-                    if (cds.get_cooldown(skill_id)) |cd| {
-                        const skill_cd = game.get_skill(cd.id).get_cd.?();
-                        if (cds.in_cooldown(cd.id, ud.frame, skill_cd)) {
-                            var percentage = @as(f32, @floatFromInt(ud.frame - cd.used_at)) / @as(f32, @floatFromInt(skill_cd));
-                            percentage = if (percentage > 1) 1 else if (percentage < 0) 0 else percentage;
-                            renderer.add_quad_border(BoundingBox(f32).from_bl_size(
+        // render the player skill bar
+        {
+            var it = state.entities.iterator(.{game.Cooldowns});
+            while (it.next()) |e| {
+                var tags = state.entities.require_component(game.GameTags, e);
+                if (tags.isSet(@intFromEnum(game.Tag.IsPlayer))) {
+                    var cds = state.entities.require_component(game.Cooldowns, e);
+                    
+                    const offset_y: usize = 8*3;
+                    const offset_x: usize = 8*2;
+                    // TODO make player skills non comptime lol
+                    inline for (player_skills, 0..) |ps, index| {
+                        const skill_id = ps.skill.get_skill_id();
+                        const skill_sprite: usize = switch (skill_id) {
+                            @intFromEnum(game.skill_type.fireball) => 190,
+                            else => 189,
+                        };
+                        // render the skill placeholder
+                        renderer.add_sprite_from_atlas_by_index(
+                            Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                            @constCast(&game.palette),
+                            Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
+                            191,
+                            BoundingBox(f32).from_bl_size(
                                 Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
-                                Vec2(f32).from(8*percentage,8)
-                            ), 1, RGBA.from_hex(0xff000077)) catch unreachable;
+                                Vec2(f32).from(8,8)
+                            ),
+                            .{ .mirror_horizontally = false, .blend = true, }
+                        ) catch unreachable;
+                        // render the skill icon
+                        renderer.add_sprite_from_atlas_by_index(
+                            Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                            @constCast(&game.palette),
+                            Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
+                            skill_sprite,
+                            BoundingBox(f32).from_bl_size(
+                                Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
+                                Vec2(f32).from(8,8)
+                            ),
+                            .{ .mirror_horizontally = false, .blend = true, }
+                        ) catch unreachable;
+                        // render cd animation
+                        if (cds.get_cooldown(skill_id)) |cd| {
+                            const skill_cd = game.get_skill(cd.id).get_cd.?();
+                            if (cds.in_cooldown(cd.id, ud.frame, skill_cd)) {
+                                var percentage = @as(f32, @floatFromInt(ud.frame - cd.used_at)) / @as(f32, @floatFromInt(skill_cd));
+                                percentage = if (percentage > 1) 1 else if (percentage < 0) 0 else percentage;
+                                renderer.add_quad_border(BoundingBox(f32).from_bl_size(
+                                    Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
+                                    Vec2(f32).from(8*percentage,8)
+                                ), 1, RGBA.from_hex(0xff000077)) catch unreachable;
+                            }
                         }
+                        // render the key to be pressed
+                        renderer.add_text(Vec2(usize).from(offset_x-2 + (3*index) + (8*index), offset_y-2).to(f32), "{c}", .{ps.number_key}, RGBA.from_hex(0x00FF00FF)) catch unreachable;
                     }
-                    // render the key to be pressed
-                    renderer.add_text(Vec2(usize).from(offset_x-2 + (3*index) + (8*index), offset_y-2).to(f32), "{c}", .{ps.number_key}, RGBA.from_hex(0x00FF00FF)) catch unreachable;
+                    break;
                 }
-
-                break;
             }
         }
 
@@ -1189,64 +1252,6 @@ const game = struct {
         0x333c57
     };
 
-    pub fn entities_render(renderer: *Renderer(platform.OutPixelType)) void {
-        const entities = &state.entities;
-        const sprite_atlas = &state.resources.sprite_atlas;
-
-        const player: Entity = label: {
-            var it = entities.iterator(.{game.GameTags});
-            while (it.next()) |e| {
-                if (entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsPlayer))) break :label e;
-            }
-            unreachable;
-        };
-        const player_target: *game.Target = entities.require_component(game.Target, player);
-
-        var it = entities.iterator(.{Pos, Sprite});
-        while (it.next()) |e| {
-            const pos = entities.require_component(Pos, e);
-            const sprite = entities.require_component(Sprite, e);
-            const final_position = pos.add(Vec2(f32).from(-4, 0)) ;
-            renderer.add_sprite_from_atlas_by_index(
-                // sprite atlas descriptors
-                Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
-                // color palette
-                @constCast(&palette),
-                // sprite atlas
-                Buffer2D(u4).from(sprite_atlas, 16*8),
-                // sprite index into atlas
-                @intCast(sprite.*),
-                // the destination square on the render target
-                BoundingBox(f32).from_bl_size(
-                    final_position,
-                    Vec2(f32).from(8,8)
-                ),
-                // extra parameters
-                .{ .mirror_horizontally = false, .blend = true, }
-            ) catch unreachable;
-            if (player_target.entity) |t| if (e.id == t.id and e.version == t.version) {
-                renderer.add_sprite_from_atlas_by_index(
-                    // sprite atlas descriptors
-                    Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
-                    // color palette
-                    @constCast(&palette),
-                    // sprite atlas
-                    Buffer2D(u4).from(sprite_atlas, 16*8),
-                    // sprite index into atlas
-                    @intCast(207),
-                    // the destination square on the render target
-                    BoundingBox(f32).from_bl_size(
-                        final_position.add(Vec2(f32).from(0, 8)),
-                        Vec2(f32).from(8,8)
-                    ),
-                    // extra parameters
-                    .{ .mirror_horizontally = false, .blend = true, }
-                ) catch unreachable;
-            };
-        }
-
-    }
-    
     pub fn slime_spawn(position: Vec2(f32), frame: usize) void {
         const entities = &state.entities;
         const e = entities.new_entity();
