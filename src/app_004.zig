@@ -76,7 +76,8 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
 
     game.slime_spawn(Vec2(f32).from(5*8, 8*2), 0);
     game.slime_spawn(Vec2(f32).from(7*8, 8*2), 0);
-    game.player_spawn(Vec2(f32).from(4*8, 8*2), 0);
+    game.player_spawn(0, Vec2(f32).from(4*8, 8*2), 0);
+    game.player_spawn(1, Vec2(f32).from(4*8 + 6*8, 8*3), 0);
 
     for (&game.skill_registry.all_skills) |cs| log("skill > {?}", .{cs});
 }
@@ -92,91 +93,150 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     const real_hi: i32 = @intCast(ud.pixel_buffer.height);
     const real_wi: i32 = @intCast(ud.pixel_buffer.width);
 
-    const player_skills = & [_] struct { number_key: u8, skill: type } {
-        .{ .number_key = '0', .skill = game.skills.slime_melee },
-        .{ .number_key = '1', .skill = game.skills.unarmed_melee },
-        .{ .number_key = '2', .skill = game.skills.kick },
-        .{ .number_key = '3', .skill = game.skills.fireball },
+    const player_count = 2;
+    const KeyType = enum(u8) {select_next_target, move_left, move_right, action_0, action_1, action_2, action_3};
+    // const player_1_skills = &[_] struct { number_key: u8, skill: type } {
+    //     .{ .number_key = '0', .skill = game.skills.slime_melee },
+    //     .{ .number_key = '1', .skill = game.skills.unarmed_melee },
+    //     .{ .number_key = '2', .skill = game.skills.kick },
+    //     .{ .number_key = '3', .skill = game.skills.fireball },
+    // };
+    // const player_2_skills = &[_] struct { number_key: u8, skill: type } {
+    //     .{ .number_key = '0', .skill = game.skills.slime_melee },
+    //     .{ .number_key = '1', .skill = game.skills.unarmed_melee },
+    //     .{ .number_key = '2', .skill = game.skills.kick },
+    //     .{ .number_key = '3', .skill = game.skills.fireball },
+    // };
+    // const players_skills: [player_count][]const struct{ number_key: u8, skill: type } = .{&player_1_skills, player_2_skills};
+    const players_skills  = [player_count][4]struct { number_key: u8, skill: usize } {
+        .{
+            .{ .number_key = '0', .skill = game.skills.slime_melee.get_skill_id() },
+            .{ .number_key = '1', .skill = game.skills.unarmed_melee.get_skill_id() },
+            .{ .number_key = '2', .skill = game.skills.kick.get_skill_id() },
+            .{ .number_key = '3', .skill = game.skills.fireball.get_skill_id() },
+        },
+        .{
+            .{ .number_key = '0', .skill = game.skills.slime_melee.get_skill_id() },
+            .{ .number_key = '1', .skill = game.skills.unarmed_melee.get_skill_id() },
+            .{ .number_key = '2', .skill = game.skills.kick.get_skill_id() },
+            .{ .number_key = '3', .skill = game.skills.fireball.get_skill_id() },
+        }
     };
+    const players_keybinds: [player_count][]const u8 = .{
+        "QAD1234",
+        "UJL7890"
+    };
+    comptime for (players_keybinds) |keybinds| std.debug.assert(@typeInfo(KeyType).@"enum".fields.len == keybinds.len);
+
+    const entities = &state.entities;
 
     const ms_taken_update: f32 = blk: {
         const profile = Application.perf.profile_start();
 
         if (ud.key_pressed('G')) state.debug = !state.debug;
         
-        const entities = &state.entities;
-        
-        const player: Entity = label: {
+        const player_1: Entity = label: {
             var it = entities.iterator(.{game.GameTags});
             while (it.next()) |e| {
                 if (entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsPlayer))) break :label e;
             }
             unreachable;
         };
+        const player_2: Entity = label: {
+            var it = entities.iterator(.{game.GameTags});
+            while (it.next()) |e| {
+                if (entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsPlayer)) and e.id != player_1.id) break :label e;
+            }
+            unreachable;
+        };
+        const players: [player_count]Entity = .{player_1, player_2};
         
-        const player_target: *game.Target = entities.require_component(game.Target, player);
-        if (player_target.entity) |e| if (!entities.valid_entity(e)) { player_target.entity = null; };
-        
-        if (ud.key_pressed('Q')) {
-            const targets_capacity = 12;
-            var targets_len: usize = 0;
-            const targets_first_12: [targets_capacity]?Entity = label: {
-                var list: [targets_capacity]?Entity = undefined;
-                for (&list) |*i| i.* = null;
-                var index: usize = 0;
-                var it = entities.iterator(.{game.GameTags});
-                log("Looking for targets...", .{});
-                while (it.next()) |e| {
-                    if (entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsTarget))) {
-                        list[index] = e;
-                        log("- target {?}", .{e});
-                        index += 1;
-                        if (index == targets_capacity) break;
-                    }
+        const players_target: [player_count]*game.Target = .{
+            entities.require_component(game.Target, player_1),
+            entities.require_component(game.Target, player_2)
+        };
+        for (players_target) |player_target| {
+            if (player_target.entity) |e| {
+                if (!entities.valid_entity(e)) {
+                    player_target.entity = null;
                 }
-                targets_len = index;
-                break :label list;
-                // TODO order the target list based on position and select the next one
-            };
-            if (targets_len > 0) {
-                player_target.entity = targets_first_12[state.rng.u()%targets_len];
-                log("Target changed to {}", .{player_target.entity.?.id});
             }
         }
 
-        var player_is_walking: bool = false;
-        if (ud.key_pressing('D')) {
-            // TODO walk animation for player
-            const phys = entities.require_component(game.Phys, player);
-            const dir = entities.require_component(game.LookDir, player);
-            phys.velocity.x += 0.010;
-            dir.* = .Right;
-            player_is_walking = true;
-        }
-        if (ud.key_pressing('A')) {
-            const phys = entities.require_component(game.Phys, player);
-            const dir = entities.require_component(game.LookDir, player);
-            phys.velocity.x -= 0.010;
-            dir.* = .Left;
-            player_is_walking = true;
-        }
-        if (player_is_walking) {
-            const casting = entities.require_component(game.CastingInfo, player);
-            if (casting.is_casting) {
-                casting.cast_cancel();
+        for (players_target, 0..) |player_target, player_index| {
+            const keybind = players_keybinds[player_index][@intFromEnum(KeyType.select_next_target)];
+            if (ud.key_pressed(keybind)) {
+                const targets_capacity = 12;
+                var targets_len: usize = 0;
+                const targets_first_12: [targets_capacity]?Entity = label: {
+                    var list: [targets_capacity]?Entity = undefined;
+                    for (&list) |*i| i.* = null;
+                    var index: usize = 0;
+                    var it = entities.iterator(.{game.GameTags});
+                    log("Looking for targets...", .{});
+                    while (it.next()) |e| {
+                        if (entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsTarget))) {
+                            list[index] = e;
+                            log("- target {?}", .{e});
+                            index += 1;
+                            if (index == targets_capacity) break;
+                        }
+                    }
+                    targets_len = index;
+                    break :label list;
+                    // TODO order the target list based on position and select the next one
+                };
+                if (targets_len > 0) {
+                    player_target.entity = targets_first_12[state.rng.u()%targets_len];
+                    log("Target changed to {}", .{player_target.entity.?.id});
+                }
             }
-            // TODO walk animation for player   
         }
 
-        if (player_target.entity) |target| {
-            inline for (player_skills) |ps| {
-                if (ud.key_pressed(ps.number_key)) {
-                    if (ps.skill.check(player, target, ud.frame)) {
-                        const action = if (entities.try_component(game.ActionTargeted, player)) |a| a else entities.set_component(game.ActionTargeted, player);
-                        action.* = .{
-                            .skill = ps.skill.get_skill_id(),
-                            .target = target
-                        };
+        for (players, 0..) |player, i| {
+            const keybind_right = players_keybinds[i][@intFromEnum(KeyType.move_right)];
+            const keybind_left = players_keybinds[i][@intFromEnum(KeyType.move_left)];
+
+            var player_is_walking: bool = false;
+            if (ud.key_pressing(keybind_right)) {
+                const phys = entities.require_component(game.Phys, player);
+                const dir = entities.require_component(game.LookDir, player);
+                phys.velocity.x += 0.010;
+                dir.* = .Right;
+                player_is_walking = true;
+            }
+            if (ud.key_pressing(keybind_left)) {
+                const phys = entities.require_component(game.Phys, player);
+                const dir = entities.require_component(game.LookDir, player);
+                phys.velocity.x -= 0.010;
+                dir.* = .Left;
+                player_is_walking = true;
+            }
+            if (player_is_walking) {
+                const casting = entities.require_component(game.CastingInfo, player);
+                if (casting.is_casting) {
+                    casting.cast_cancel();
+                }
+                // TODO walk animation for player   
+            }
+        }
+
+        // fire up actions for each player
+        for (players, players_target, players_keybinds, players_skills) |player, player_target, keybinds, skills| {
+            if (player_target.entity) |target| {
+                for (skills, 0..) |ps, skill_positional_number| {
+                    // const skill_positional_number = ps.number_key;
+                    const skill_0_index_in_keybinds = @intFromEnum(KeyType.action_0);
+                    const skill_keybind = keybinds[skill_0_index_in_keybinds + skill_positional_number];
+                    if (ud.key_pressed(skill_keybind)) {
+                        const skill = game.get_skill(ps.skill);
+                        if (skill.check.?(player, target, ud.frame)) {
+                            const action = if (entities.try_component(game.ActionTargeted, player)) |a| a else entities.set_component(game.ActionTargeted, player);
+                            action.* = .{
+                                .skill = ps.skill,
+                                .target = target
+                            };
+                        }
                     }
                 }
             }
@@ -203,6 +263,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                 const skill = game.get_skill(a.skill);
                 const target = a.target;
                 const origin = e;
+                log("INFO: [{}] Processing skill {} from {} to {}", .{ud.frame, a.skill, origin, target});
                 if (skill.cast_start) |fn_cast_start| std.debug.assert(fn_cast_start(origin, target, ud.frame))
                 else if (skill.do) |fn_do| std.debug.assert(fn_do(origin, target, ud.frame))
                 else log("ERROR: failed to process skill!", .{});
@@ -244,17 +305,35 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
             viewport_matrix_m33
         );
 
-        const entities = &state.entities;
         const sprite_atlas = &state.resources.sprite_atlas;
 
-        const player: Entity = label: {
+        const player_1: Entity = label: {
             var it = entities.iterator(.{game.GameTags});
             while (it.next()) |e| {
                 if (entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsPlayer))) break :label e;
             }
             unreachable;
         };
-        const player_target: *game.Target = entities.require_component(game.Target, player);
+        const player_2: Entity = label: {
+            var it = entities.iterator(.{game.GameTags});
+            while (it.next()) |e| {
+                if (entities.require_component(game.GameTags, e).isSet(@intFromEnum(game.Tag.IsPlayer)) and e.id != player_1.id) break :label e;
+            }
+            unreachable;
+        };
+        const players: [player_count]Entity = .{player_1, player_2};
+        
+        const players_target: [player_count]*game.Target = .{
+            entities.require_component(game.Target, player_1),
+            entities.require_component(game.Target, player_2)
+        };
+        for (players_target) |player_target| {
+            if (player_target.entity) |e| {
+                if (!entities.valid_entity(e)) {
+                    player_target.entity = null;
+                }
+            }
+        }
 
         // render entities with position and sprite
         {
@@ -275,7 +354,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
                     ),
                     .{ .mirror_horizontally = (dir.* == .Left) , .blend = true, }
                 ) catch unreachable;
-                if (player_target.entity) |t| if (e.id == t.id and e.version == t.version) {
+                for (players_target) |player_target| if (player_target.entity) |t| if (e.id == t.id and e.version == t.version) {
                     renderer.add_sprite_from_atlas_by_index(
                         Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
                         @constCast(&game.palette),
@@ -292,7 +371,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
 
         // render the casting bar of the player
-        {
+        for (players) |player| { 
             const pos = state.entities.require_component(game.Pos, player);
             const final_position = pos.add(Vec2(f32).from(-4, 0)) ;
             // const cds = state.entities.require_component(game.Cooldowns);
@@ -315,63 +394,57 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         }
 
         // render the player skill bar
-        {
-            var it = state.entities.iterator(.{game.Cooldowns});
-            while (it.next()) |e| {
-                var tags = state.entities.require_component(game.GameTags, e);
-                if (tags.isSet(@intFromEnum(game.Tag.IsPlayer))) {
-                    var cds = state.entities.require_component(game.Cooldowns, e);
-                    
-                    const offset_y: usize = 8*3;
-                    const offset_x: usize = 8*2;
-                    // TODO make player skills non comptime lol
-                    inline for (player_skills, 0..) |ps, index| {
-                        const skill_id = ps.skill.get_skill_id();
-                        const skill_sprite: usize = switch (skill_id) {
-                            @intFromEnum(game.skill_type.fireball) => 190,
-                            else => 189,
-                        };
-                        // render the skill placeholder
-                        renderer.add_sprite_from_atlas_by_index(
-                            Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
-                            @constCast(&game.palette),
-                            Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
-                            191,
-                            BoundingBox(f32).from_bl_size(
-                                Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
-                                Vec2(f32).from(8,8)
-                            ),
-                            .{ .mirror_horizontally = false, .blend = true, }
-                        ) catch unreachable;
-                        // render the skill icon
-                        renderer.add_sprite_from_atlas_by_index(
-                            Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
-                            @constCast(&game.palette),
-                            Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
-                            skill_sprite,
-                            BoundingBox(f32).from_bl_size(
-                                Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
-                                Vec2(f32).from(8,8)
-                            ),
-                            .{ .mirror_horizontally = false, .blend = true, }
-                        ) catch unreachable;
-                        // render cd animation
-                        if (cds.get_cooldown(skill_id)) |cd| {
-                            const skill_cd = game.get_skill(cd.id).get_cd.?();
-                            if (cds.in_cooldown(cd.id, ud.frame, skill_cd)) {
-                                var percentage = @as(f32, @floatFromInt(ud.frame - cd.used_at)) / @as(f32, @floatFromInt(skill_cd));
-                                percentage = if (percentage > 1) 1 else if (percentage < 0) 0 else percentage;
-                                renderer.add_quad_border(BoundingBox(f32).from_bl_size(
-                                    Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
-                                    Vec2(f32).from(8*percentage,8)
-                                ), 1, RGBA.from_hex(0xff000077)) catch unreachable;
-                            }
-                        }
-                        // render the key to be pressed
-                        renderer.add_text(Vec2(usize).from(offset_x-2 + (3*index) + (8*index), offset_y-2).to(f32), "{c}", .{ps.number_key}, RGBA.from_hex(0x00FF00FF)) catch unreachable;
+        for (players, players_skills, 0..) |player, player_skills, player_index| {
+            const offset_extra = player_index*16;
+            var cds = state.entities.require_component(game.Cooldowns, player);
+            const offset_y: usize = 8*3 + offset_extra;
+            const offset_x: usize = 8*2;
+            // TODO make player skills non comptime lol
+            for (player_skills, 0..) |ps, index| {
+                
+                const skill_id = ps.skill;
+                const skill_sprite: usize = switch (skill_id) {
+                    @intFromEnum(game.skill_type.fireball) => 190,
+                    else => 189,
+                };
+                // render the skill placeholder
+                renderer.add_sprite_from_atlas_by_index(
+                    Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                    @constCast(&game.palette),
+                    Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
+                    191,
+                    BoundingBox(f32).from_bl_size(
+                        Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
+                        Vec2(f32).from(8,8)
+                    ),
+                    .{ .mirror_horizontally = false, .blend = true, }
+                ) catch unreachable;
+                // render the skill icon
+                renderer.add_sprite_from_atlas_by_index(
+                    Vec2(usize).from(8,8), Vec2(usize).from(16, 16),
+                    @constCast(&game.palette),
+                    Buffer2D(u4).from(&state.resources.sprite_atlas, 16*8),
+                    skill_sprite,
+                    BoundingBox(f32).from_bl_size(
+                        Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
+                        Vec2(f32).from(8,8)
+                    ),
+                    .{ .mirror_horizontally = false, .blend = true, }
+                ) catch unreachable;
+                // render cd animation
+                if (cds.get_cooldown(skill_id)) |cd| {
+                    const skill_cd = game.get_skill(cd.id).get_cd.?();
+                    if (cds.in_cooldown(cd.id, ud.frame, skill_cd)) {
+                        var percentage = @as(f32, @floatFromInt(ud.frame - cd.used_at)) / @as(f32, @floatFromInt(skill_cd));
+                        percentage = if (percentage > 1) 1 else if (percentage < 0) 0 else percentage;
+                        renderer.add_quad_border(BoundingBox(f32).from_bl_size(
+                            Vec2(usize).from(offset_x + (3*index) + (8*index), offset_y).to(f32),
+                            Vec2(f32).from(8*percentage,8)
+                        ), 1, RGBA.from_hex(0xff000077)) catch unreachable;
                     }
-                    break;
                 }
+                // render the key to be pressed
+                renderer.add_text(Vec2(usize).from(offset_x-2 + (3*index) + (8*index), offset_y-2).to(f32), "{c}", .{ps.number_key}, RGBA.from_hex(0x00FF00FF)) catch unreachable;
             }
         }
 
@@ -835,6 +908,7 @@ const game = struct {
     const Pos = Vec2(f32);
     const Hp = i32;
     const GameTags = std.bit_set.IntegerBitSet(32);
+    const PlayerId = u8;
     const Tag = enum { IsPlayer, IsTarget };
     const Sprite = usize;
     const Target = struct { entity: ?Entity };
@@ -907,7 +981,7 @@ const game = struct {
         target: Entity,
     };
     const ECS = Ecs(.{
-        Pos, Hp, LookDir, GameTags, Cooldowns, CastingInfo, Phys, Sprite, EntityStatus, Behaviour, CastingInfo, Target, ActionTargeted
+        Pos, Hp, LookDir, GameTags, Cooldowns, CastingInfo, Phys, Sprite, EntityStatus, Behaviour, CastingInfo, Target, ActionTargeted, PlayerId
     });
 
     const Weapon = struct {
@@ -1198,6 +1272,7 @@ const game = struct {
                 const target_casting_info = entities.require_component(CastingInfo, target);
                 const origin_pos = entities.require_component(Pos, origin);
                 const origin_look_dir = entities.require_component(LookDir, origin);
+                entities.remove_component(ActionTargeted, origin);
                 var origin_cooldowns = entities.require_component(Cooldowns, origin);
                 std.debug.assert(!origin_cooldowns.in_cooldown(self_id, frame, cooldown));
                 const origin_to_target = target_pos.x - origin_pos.x;
@@ -1278,7 +1353,7 @@ const game = struct {
         _ = frame;
     }
 
-    pub fn player_spawn(position: Vec2(f32), frame: usize) void {
+    pub fn player_spawn(player_id: u8, position: Vec2(f32), frame: usize) void {
         const entities = &state.entities;
         const e = entities.new_entity();
         
@@ -1291,6 +1366,7 @@ const game = struct {
         const sprite = entities.set_component(Sprite, e);
         const phys = entities.set_component(Phys, e);
         const target = entities.set_component(Target, e);
+        const id = entities.set_component(PlayerId, e);
         
         pos.* = position;
         phys.* = Phys.from(position, 0.7);
@@ -1302,6 +1378,7 @@ const game = struct {
         target.entity = null;
         for (&cooldowns.times) |*cd| cd.* = .{.id = 0, .used_at = 0};
         casting.is_casting = false;
+        id.* = player_id;
 
         _ = frame;
     }
