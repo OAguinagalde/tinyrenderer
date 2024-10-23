@@ -16,12 +16,12 @@ pub fn Ecs(comptime types: anytype) type {
         comptime {
             // Check that `types` is indeed a tuple...
             const tuple_info = @typeInfo(@TypeOf(types));
-            if (tuple_info != .Struct or tuple_info.Struct.is_tuple == false) {
+            if (tuple_info != .@"struct" or tuple_info.@"struct".is_tuple == false) {
                 @compileError("expected tuple, found " ++ @typeName(@TypeOf(types)));
             }
             
             // And that it is made out of `type`s only.
-            const tuple: std.builtin.Type.Struct = tuple_info.Struct;
+            const tuple: std.builtin.Type.Struct = tuple_info.@"struct";
             for (tuple.fields) |field| {
                 const ith_value = @field(types, field.name);
                 if (@TypeOf(ith_value) != type) @compileError("expected `type`s only, found  " ++ @typeName(@TypeOf(ith_value)));
@@ -32,7 +32,7 @@ pub fn Ecs(comptime types: anytype) type {
         const Self = @This();
         
         fn getComponentContainer(comptime T: type) *std.ArrayList(T) {
-            inline for (@typeInfo(@TypeOf(types)).Struct.fields) |field| {
+            inline for (@typeInfo(@TypeOf(types)).@"struct".fields) |field| {
                 const t = @field(types, field.name);
                 if (T == t) {
                     const magic = struct {
@@ -45,7 +45,7 @@ pub fn Ecs(comptime types: anytype) type {
         }
 
         pub fn getComponentId(comptime T: type) usize {
-            inline for (@typeInfo(@TypeOf(types)).Struct.fields, 0..) |field, i| {
+            inline for (@typeInfo(@TypeOf(types)).@"struct".fields, 0..) |field, i| {
                 const t = @field(types, field.name);
                 if (T == t) return i;
             } else @panic("The type " ++ @typeName(T) ++ " is not present in the tuple `types` provided");
@@ -67,7 +67,7 @@ pub fn Ecs(comptime types: anytype) type {
                 .allocator = allocator,
                 .capacity = capacity,
             };
-            inline for (@typeInfo(@TypeOf(types)).Struct.fields) |field| {
+            inline for (@typeInfo(@TypeOf(types)).@"struct".fields) |field| {
                 const t = @field(types, field.name);
                 const container = getComponentContainer(t);
                 container.* = try std.ArrayList(t).initCapacity(allocator, capacity);
@@ -222,11 +222,11 @@ pub fn Ecs(comptime types: anytype) type {
                     // Check that `view_types` is indeed a tuple of types
                     const type_of_tuple = @TypeOf(view_types);
                     const tuple_info = @typeInfo(type_of_tuple);
-                    if (tuple_info != .Struct or tuple_info.Struct.is_tuple == false) {
+                    if (tuple_info != .@"struct" or tuple_info.@"struct".is_tuple == false) {
                         @compileError("expected tuple, found " ++ @typeName(type_of_tuple));
                     }
                     
-                    const tuple: std.builtin.Type.Struct = tuple_info.Struct;
+                    const tuple: std.builtin.Type.@"struct" = tuple_info.@"struct";
                     var bit_field = set_without_components;
                     for (tuple.fields) |field| {
                         const ith_type = @field(view_types, field.name);
@@ -279,11 +279,11 @@ pub fn Ecs(comptime types: anytype) type {
                     // Check that `view_types` is indeed a tuple of types
                     const type_of_tuple = @TypeOf(view_types);
                     const tuple_info = @typeInfo(type_of_tuple);
-                    if (tuple_info != .Struct or tuple_info.Struct.is_tuple == false) {
+                    if (tuple_info != .@"struct" or tuple_info.@"struct".is_tuple == false) {
                         @compileError("expected tuple, found " ++ @typeName(type_of_tuple));
                     }
                     
-                    const tuple: std.builtin.Type.Struct = tuple_info.Struct;
+                    const tuple: std.builtin.Type.Struct = tuple_info.@"struct";
                     var bit_field = set_without_components;
                     for (tuple.fields) |field| {
                         const ith_type = @field(view_types, field.name);
@@ -326,7 +326,7 @@ pub fn Ecs(comptime types: anytype) type {
                 return;
             }
             std.debug.print("Entity {} on version {}\n", .{entity.id, entity.version});
-            inline for (@typeInfo(@TypeOf(types)).Struct.fields) |field| {
+            inline for (@typeInfo(@TypeOf(types)).@"struct".fields) |field| {
                 const t = @field(types, field.name);
                 const component_id = getComponentId(t);
                 if (entity_data.components.isSet(component_id)) {
@@ -341,7 +341,7 @@ pub fn Ecs(comptime types: anytype) type {
         pub fn debugPrintStats(self: *Self) void {
             std.debug.print("Entities {} out of {} (MAX_ENTITIES {})\n", .{self.entities.items.len, self.entities.capacity, self.capacity});
             std.debug.print("Size of Entity {}, total space allocated {} bytes ({} kb)\n", .{@sizeOf(EntityData), self.entities.capacity * @sizeOf(EntityData), self.entities.capacity * @sizeOf(EntityData) / 1024});
-            inline for (@typeInfo(@TypeOf(types)).Struct.fields) |field| {
+            inline for (@typeInfo(@TypeOf(types)).@"struct".fields) |field| {
                 const t = @field(types, field.name);
                 const container = getComponentContainer(t);
                 std.debug.print("container for {s} has {} / {} | total space allocated {} bytes ({} kb)\n", .{ @typeName(t), container.*.items.len, container.*.capacity, @sizeOf(t) * self.capacity, @sizeOf(t) * self.capacity / 1024});
@@ -354,7 +354,7 @@ pub fn Ecs(comptime types: anytype) type {
             max: usize,
             entity_size: usize,
             allocated_bytes_kb: usize,
-            container_stats: [@typeInfo(@TypeOf(types)).Struct.fields.len] ContainerStats,
+            container_stats: [@typeInfo(@TypeOf(types)).@"struct".fields.len] ContainerStats,
         };
 
         pub const ContainerStats = struct {
@@ -365,9 +365,9 @@ pub fn Ecs(comptime types: anytype) type {
 
         pub fn stats(self: *Self) Stats {
             
-            var container_stats: [@typeInfo(@TypeOf(types)).Struct.fields.len] ContainerStats = undefined;
+            var container_stats: [@typeInfo(@TypeOf(types)).@"struct".fields.len] ContainerStats = undefined;
 
-            inline for (@typeInfo(@TypeOf(types)).Struct.fields, 0..) |field, i| {
+            inline for (@typeInfo(@TypeOf(types)).@"struct".fields, 0..) |field, i| {
                 const t = @field(types, field.name);
                 const container = getComponentContainer(t);
                 container_stats[i] = ContainerStats {

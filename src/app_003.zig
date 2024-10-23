@@ -105,7 +105,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         const options: []const []const u8 = blk: {
             var opts: []const []const u8 = &[_][]const u8 {};
             opts = opts ++ &[_][]const u8{};
-            for (@typeInfo(assets.EntityType).Enum.fields) |field| {
+            for (@typeInfo(assets.EntityType).@"enum".fields) |field| {
                 opts = opts ++ &[_][]const u8{field.name};
             }
             opts = opts ++ &[_][]const u8{"delete spawner"};
@@ -119,7 +119,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         const options: []const []const u8 = blk: {
             var opts: []const []const u8 = &[_][]const u8 {};
             opts = opts ++ &[_][]const u8{};
-            for (@typeInfo(assets.ParticleEmitterType).Enum.fields) |field| {
+            for (@typeInfo(assets.ParticleEmitterType).@"enum".fields) |field| {
                 opts = opts ++ &[_][]const u8{field.name};
             }
             opts = opts ++ &[_][]const u8{"delete emitter"};
@@ -1802,7 +1802,7 @@ pub fn Renderer(comptime output_pixel_type: type) type {
             blend: bool = false,
         };
 
-        const total_number_of_renderer_types = @typeInfo(RendererType).Enum.fields.len;
+        const total_number_of_renderer_types = @typeInfo(RendererType).@"enum".fields.len;
         batches_created_per_type: [total_number_of_renderer_types] usize,
 
         allocator: std.mem.Allocator,

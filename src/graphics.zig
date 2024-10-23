@@ -70,7 +70,7 @@ pub const GraphicsPipelineConfiguration = struct {
             // .{ .name = "" },
         };
         const requirements = std.builtin.Type {
-            .Struct = .{
+            .@"struct" = .{
                 .is_tuple = false,
                 .fields = fields,
                 .layout = .Auto,
@@ -228,7 +228,7 @@ pub fn GraphicsPipeline(
                         var temp_vertex_list = VertexList.init(fba.allocator());
 
                         // for each plane `p`
-                        inline for (@typeInfo(Frustum).Struct.fields) |field| {
+                        inline for (@typeInfo(Frustum).@"struct".fields) |field| {
                             const p: Plane = @field(frustum, field.name);
 
                             // for each pair of vertices v1, v2
@@ -645,16 +645,16 @@ pub fn GraphicsPipeline(
             
             var interpolated_data: t = undefined;
 
-            inline for (@typeInfo(t).Struct.fields) |field| {
+            inline for (@typeInfo(t).@"struct".fields) |field| {
                 @field(interpolated_data, field.name) = blk: {
                     
                     const a: *const field.type = &@field(data[0], field.name);
                     const b: *const field.type = &@field(data[1], field.name);
                     const c: *const field.type = &@field(data[2], field.name);
                     const interpolated_result: field.type = switch (@typeInfo(field.type)) {
-                        .Float => a.* * w + b.* * u + c.* * v,
-                        .Int => @intFromFloat( @as(f32,@floatFromInt(a.*)) * w + @as(f32,@floatFromInt(b.*)) * u + @as(f32,@floatFromInt(c.*)) * v ),
-                        .Struct => |s| interpolate_struct: {
+                        .float => a.* * w + b.* * u + c.* * v,
+                        .int => @intFromFloat( @as(f32,@floatFromInt(a.*)) * w + @as(f32,@floatFromInt(b.*)) * u + @as(f32,@floatFromInt(c.*)) * v ),
+                        .@"struct" => |s| interpolate_struct: {
                             
                             var interpolated_struct_result: field.type = undefined;
                             inline for (s.fields) |sub_field| {
@@ -663,8 +663,8 @@ pub fn GraphicsPipeline(
                                     const sub_b: *const sub_field.type = &@field(b, sub_field.name);
                                     const sub_c: *const sub_field.type = &@field(c, sub_field.name);
                                     break :interpolate_struct_field switch (@typeInfo(sub_field.type)) {
-                                        .Float => sub_a.* * w + sub_b.* * u + sub_c.* * v,
-                                        .Int => @intFromFloat( @as(f32,@floatFromInt(sub_a.*)) * w + @as(f32,@floatFromInt(sub_b.*)) * u + @as(f32,@floatFromInt(sub_c.*)) * v ),
+                                        .float => sub_a.* * w + sub_b.* * u + sub_c.* * v,
+                                        .int => @intFromFloat( @as(f32,@floatFromInt(sub_a.*)) * w + @as(f32,@floatFromInt(sub_b.*)) * u + @as(f32,@floatFromInt(sub_c.*)) * v ),
                                         else => @panic("inner struct type " ++ @tagName(sub_field.type) ++ " is neither a Float, Int so it cant be interpolated!")
                                     };
                                 };
@@ -693,27 +693,27 @@ pub fn GraphicsPipeline(
 
             const correction = 1/correction_values[0] * w + 1/correction_values[1] * u + 1/correction_values[2] * v;
 
-            inline for (@typeInfo(t).Struct.fields) |field| {
+            inline for (@typeInfo(t).@"struct".fields) |field| {
                 @field(interpolated_data, field.name) = interpolate_field: {
                     
                     const a: *const field.type = &@field(data[0], field.name);
                     const b: *const field.type = &@field(data[1], field.name);
                     const c: *const field.type = &@field(data[2], field.name);
                     const interpolated_result: field.type = switch (@typeInfo(field.type)) {
-                        .Float => blk: {
+                        .float => blk: {
                             const fa: f32 = a.* / correction_values[0];
                             const fb: f32 = b.* / correction_values[1];
                             const fc: f32 = c.* / correction_values[2];
                             break :blk (fa * w + fb * u + fc * v) / correction;
                         },
-                        .Int => blk: {
+                        .int => blk: {
                             const fa: f32 = @as(f32, @floatFromInt(a.*)) / correction_values[0];
                             const fb: f32 = @as(f32, @floatFromInt(b.*)) / correction_values[1];
                             const fc: f32 = @as(f32, @floatFromInt(c.*)) / correction_values[2];
                             const result = (fa * w + fb * u + fc * v) / correction;
                             break :blk @intFromFloat(result);
                         },
-                        .Struct => |s| interpolate_struct: {
+                        .@"struct" => |s| interpolate_struct: {
                             
                             var interpolated_struct_result: field.type = undefined;
                             inline for (s.fields) |sub_field| {
@@ -723,13 +723,13 @@ pub fn GraphicsPipeline(
                                     const sub_b: *const sub_field.type = &@field(b, sub_field.name);
                                     const sub_c: *const sub_field.type = &@field(c, sub_field.name);
                                     break :interpolate_struct_field switch (@typeInfo(sub_field.type)) {
-                                        .Float => blk: {
+                                        .float => blk: {
                                             const fa: f32 = sub_a.* / correction_values[0];
                                             const fb: f32 = sub_b.* / correction_values[1];
                                             const fc: f32 = sub_c.* / correction_values[2];
                                             break :blk (fa * w + fb * u + fc * v) / correction;
                                         },
-                                        .Int => blk: {
+                                        .int => blk: {
                                             const fa: f32 = @as(f32, @floatFromInt(sub_a.*)) / correction_values[0];
                                             const fb: f32 = @as(f32, @floatFromInt(sub_b.*)) / correction_values[1];
                                             const fc: f32 = @as(f32, @floatFromInt(sub_c.*)) / correction_values[2];
@@ -823,7 +823,7 @@ pub const GraphicsPipelineQuads2DConfiguration = struct {
             },
         };
         if (self.do_scissoring) fields = fields ++ [_]std.builtin.Type.StructField {
-                std.builtin.Type.StructField {
+            std.builtin.Type.StructField {
                 .default_value = null,
                 .is_comptime = false,
                 .name = "scissor_rect",
@@ -833,7 +833,7 @@ pub const GraphicsPipelineQuads2DConfiguration = struct {
         };
         const declarations: []const std.builtin.Type.Declaration = &[_]std.builtin.Type.Declaration {};
         const requirements = std.builtin.Type {
-            .Struct = .{
+            .@"struct" = .{
                 .is_tuple = false,
                 .fields = fields,
                 .layout = .auto,
@@ -995,7 +995,7 @@ pub fn GraphicsPipelineQuads2D(
             
             var interpolated_data: t = undefined;
 
-            inline for (@typeInfo(t).Struct.fields) |field| {
+            inline for (@typeInfo(t).@"struct".fields) |field| {
                 @field(interpolated_data, field.name) = blk: {
                     
                     const bl: *const field.type = &@field(data[0], field.name);
@@ -1004,9 +1004,9 @@ pub fn GraphicsPipelineQuads2D(
                     const tl: *const field.type = &@field(data[3], field.name);
 
                     const interpolated_result: field.type = switch (@typeInfo(field.type)) {
-                        .Float => bilinear_interpolation(bl.*, br.*, tr.*, tl.*, x, y),
-                        .Int => @intFromFloat(bilinear_interpolation(@floatFromInt(bl.*), @floatFromInt(br.*), @floatFromInt(tr.*), @floatFromInt(tl.*), x, y)),
-                        .Struct => |s| interpolate_struct: {
+                        .float => bilinear_interpolation(bl.*, br.*, tr.*, tl.*, x, y),
+                        .int => @intFromFloat(bilinear_interpolation(@floatFromInt(bl.*), @floatFromInt(br.*), @floatFromInt(tr.*), @floatFromInt(tl.*), x, y)),
+                        .@"struct" => |s| interpolate_struct: {
                             
                             var interpolated_struct_result: field.type = undefined;
                             inline for (s.fields) |sub_field| {
@@ -1016,8 +1016,8 @@ pub fn GraphicsPipelineQuads2D(
                                     const sub_tr: *const sub_field.type = &@field(tr, sub_field.name);
                                     const sub_tl: *const sub_field.type = &@field(tl, sub_field.name);
                                     break :interpolate_struct_field switch (@typeInfo(sub_field.type)) {
-                                        .Float => bilinear_interpolation(sub_bl.*, sub_br.*, sub_tr.*, sub_tl.*, x, y),
-                                        .Int => @intFromFloat(bilinear_interpolation(@floatFromInt(sub_bl.*), @floatFromInt(sub_br.*), @floatFromInt(sub_tr.*), @floatFromInt(sub_tl.*), x, y)),
+                                        .float => bilinear_interpolation(sub_bl.*, sub_br.*, sub_tr.*, sub_tl.*, x, y),
+                                        .int => @intFromFloat(bilinear_interpolation(@floatFromInt(sub_bl.*), @floatFromInt(sub_br.*), @floatFromInt(sub_tr.*), @floatFromInt(sub_tl.*), x, y)),
                                         else => @panic("inner struct type " ++ @tagName(sub_field.type) ++ " is neither a Float, Int so it cant be interpolated!")
                                     };
                                 };

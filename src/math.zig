@@ -16,17 +16,17 @@ pub fn Vec2(comptime T: type) type {
         pub inline fn from(x: T, y: T) Self {
             return Self { .x = x, .y = y };
         }
-
+        const a:std.builtin.Type = undefined;
         pub inline fn to(self: Self, comptime OtherType: type) Vec2(OtherType) {
             return switch (@typeInfo(T)) {
-                .Float => switch (@typeInfo(OtherType)) {
-                    .Float => |_| Vec2(OtherType).from(@floatCast(self.x), @floatCast(self.y)),
-                    .Int => |_| Vec2(OtherType).from(@intFromFloat(self.x), @intFromFloat(self.y)),
+                .float => switch (@typeInfo(OtherType)) {
+                    .float => |_| Vec2(OtherType).from(@floatCast(self.x), @floatCast(self.y)),
+                    .int => |_| Vec2(OtherType).from(@intFromFloat(self.x), @intFromFloat(self.y)),
                     else => @panic("type not supported")
                 },
-                .Int => switch (@typeInfo(OtherType)) {
-                    .Int => |_| Vec2(OtherType).from(@intCast(self.x), @intCast(self.y)),
-                    .Float => |_| Vec2(OtherType).from(@floatFromInt(self.x), @floatFromInt(self.y)),
+                .int => switch (@typeInfo(OtherType)) {
+                    .int => |_| Vec2(OtherType).from(@intCast(self.x), @intCast(self.y)),
+                    .float => |_| Vec2(OtherType).from(@floatFromInt(self.x), @floatFromInt(self.y)),
                     else => @panic("type not supported")
                 },
                 else => @panic("type not supported")
@@ -63,7 +63,7 @@ pub fn Vec2(comptime T: type) type {
         
         pub fn normalized(self: Self) Self {
             switch (@typeInfo(T)) {
-                .Float => {
+                .float => {
                     const mag = self.magnitude();
                     return Self.from(self.x / mag, self.y / mag);
                 },
