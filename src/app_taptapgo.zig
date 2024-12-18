@@ -218,7 +218,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
     if (Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos).physical_tile.y == 28) try load_level(Vec2(u8).from(21, 29), ud.frame);
     if (Physics.PhysicalPosDecomposed.from(state.player.physical_component.physical_pos).physical_tile.x == 36) try load_level(Vec2(u8).from(21, 29), ud.frame);
 
-    if (player_floored) {
+    if (player_floored.floor) {
         state.player.jumps = 2;
         if (player_is_walking and (state.random.float(f32) > 0.8)) {
             try particle_create(&state.particles, particles_generators.walk(state.player.pos.add(Vector2f.from(0, 1))));

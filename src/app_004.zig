@@ -126,7 +126,7 @@ pub fn update(ud: *platform.UpdateData) anyerror!bool {
         "QAD1234",
         "UJL7890"
     };
-    comptime for (players_keybinds) |keybinds| std.debug.assert(@typeInfo(KeyType).@"enum".fields.len == keybinds.len);
+    comptime for (players_keybinds) |keybinds| std.debug.assert(@typeInfo(KeyType).Enum.fields.len == keybinds.len);
 
     const entities = &state.entities;
 

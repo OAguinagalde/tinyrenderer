@@ -78,7 +78,7 @@ const State = struct {
     resources: Resources,
     resource_file_name: []const u8,
     audio_tracks: [16] ?AudioTrack,
-    sound_library: [@typeInfo(sounds).Enum.fields.len]wav.Sound,
+    sound_library: [@typeInfo(sounds).Enum.fields.len]?wav.Sound,
     play_background_music: bool,
     ui: ImmediateModeGui,
     random_: core.Random,
@@ -124,7 +124,11 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
         for (&state.audio_tracks) |*at| at.* = null;
         for (wav_files, 0..) |wav_file, i| {
             // TODO make an scratch allocator for things like this since these are not necessary to be kept
-            const bytes = Application.read_file_sync(allocator, wav_file) catch continue;
+            const bytes = Application.read_file_sync(allocator, wav_file) catch {
+                std.log.warn("Failed to load wav file {s}", .{wav_file});
+                state.sound_library[i] = null;
+                continue;
+            };
             const sound = try wav.from_bytes(allocator, bytes);
             // TODO some of my audio resources have a range without any sound at all at the start.
             // Preprocess them to discard any samples of value 0 (or values under a threshold or something)
@@ -1455,7 +1459,7 @@ const AudioTrack = struct {
 };
 
 pub fn play(sound: sounds) void {
-    audio_play(&state.audio_tracks, state.sound_library[@intFromEnum(sound)]);
+    if (state.sound_library[@intFromEnum(sound)]) |actual_sound| audio_play(&state.audio_tracks, actual_sound);
 }
 
 pub fn audio_play(audio_tracks: []?AudioTrack, sound: wav.Sound) void {

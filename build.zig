@@ -220,7 +220,7 @@ fn run_coded_as_step(builder: *std.Build, comptime code: fn () void) *std.Build.
         .name = "Running some code",
         .owner = builder,
         .makeFn = struct {
-            fn code_runner(s: *std.Build.Step, n: Build.Step.MakeOptions) anyerror!void {
+            fn code_runner(s: *std.Build.Step, n: std.Progress.Node) anyerror!void {
                 _ = s;
                 _ = n;
                 code();

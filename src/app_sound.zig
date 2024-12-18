@@ -38,7 +38,7 @@ var state: struct {
     rng: Random,
     keyboard_sound: Sound,
     audio_tracks: [16] ?AudioTrack,
-    sound_library: [@typeInfo(sounds).Enum.fields.len]wav.Sound,
+    sound_library: [@typeInfo(sounds).Enum.fields.len]?wav.Sound,
 } = undefined;
 
 const AudioTrack = struct {
@@ -51,7 +51,7 @@ const AudioTrack = struct {
 };
 
 pub fn play(sound: sounds) void {
-    audio_play(&state.audio_tracks, state.sound_library[@intFromEnum(sound)]);
+    if (state.sound_library[@intFromEnum(sound)]) |actual_sound| audio_play(&state.audio_tracks, actual_sound);
 }
 
 pub fn audio_play(audio_tracks: []?AudioTrack, sound: wav.Sound) void {
@@ -111,7 +111,11 @@ pub fn init(allocator: std.mem.Allocator) anyerror!void {
 
     for (&state.audio_tracks) |*at| at.* = null;
     for (wav_files, 0..) |wav_file, i| {
-        const bytes = Application.read_file_sync(state.temp_fba.allocator(), wav_file) catch continue;
+        const bytes = Application.read_file_sync(allocator, wav_file) catch {
+            std.log.warn("Failed to load wav file {s}", .{wav_file});
+            state.sound_library[i] = null;
+            continue;
+        };
         defer state.temp_fba.reset();
         const sound = try wav.from_bytes(allocator, bytes);
         state.sound_library[i] = sound;
